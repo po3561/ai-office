@@ -209,7 +209,9 @@ export function repairOffices() {
       const vars = { ...templateVars({ ...o, honorific: office.honorific || getConfig().honorific }) };
       const tpl = JSON.parse(renderTemplate(readText(join(TEMPLATES, 'office', '.claude', 'settings.json')), vars));
       const wantHooks = JSON.stringify(tpl.hooks);
-      if (cur && JSON.stringify(cur.hooks) === wantHooks && (cur.permissions?.allow || []).some((a) => a.includes(vars.CLI))) continue;
+      // 새 버전이 더한 차단 규칙(deny)도 이미 있는 사무실에 채워 넣는다.
+      const denyOk = tpl.permissions.deny.every((d) => (cur?.permissions?.deny || []).includes(d));
+      if (cur && denyOk && JSON.stringify(cur.hooks) === wantHooks && (cur.permissions?.allow || []).some((a) => a.includes(vars.CLI))) continue;
       const next = cur || tpl;
       next.hooks = tpl.hooks;
       next.permissions ||= { allow: [], deny: [] };

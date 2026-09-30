@@ -121,7 +121,8 @@ export function readInstalledMarker(skillDir) {
 // ── 마켓 ──
 // home: 데이터 폴더(DATA_HOME). settings(): { enabled, repo, alias }. log(폴더, 구분, 이름, 내용): 변경 이력 기록.
 // identity: 테스트용 git 사용자({name,email}). 없으면 PC 의 git 설정을 쓴다.
-export function createMarket({ home, settings, log = () => {}, run = defaultRun, identity = null, useGh = true }) {
+// builtin(): AI-Office 가 모든 사무실에 기본으로 넣는 스킬 이름들(공유 대상이 아니다).
+export function createMarket({ home, settings, log = () => {}, run = defaultRun, identity = null, useGh = true, builtin = () => [] }) {
   const root = join(home, 'market');
   const stateFile = join(root, 'state.json');
   const gitEnv = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ALLOW_PROTOCOL: 'file:https:ssh', GIT_ASKPASS: '' };
@@ -161,7 +162,9 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     need(g, 'git 을 찾을 수 없습니다. git(또는 GitHub Desktop)을 설치한 뒤 다시 시도해 주세요.', 409);
     const id = identity ? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`] : [];
     const cred = repo ? await credArgs(repo) : [];
-    return run(g.path, ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.quotepath=off', '-c', 'core.longpaths=true', ...cred, ...id, ...args], { cwd, timeout, env: gitEnv });
+    // 저장소가 .gitattributes 로 외부 필터(git-lfs 등)를 부르지 못하게 끄고, 줄바꿈 변환을 막는다(해시가 달라지므로).
+    const safe = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.quotepath=off', '-c', 'core.longpaths=true', '-c', 'filter.lfs.required=false', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.process=', '-c', 'core.fsmonitor=false'];
+    return run(g.path, [...safe, ...cred, ...id, ...args], { cwd, timeout, env: gitEnv });
   }
   async function gitOk(args, opts, what) {
     const r = await git(args, opts);
@@ -217,6 +220,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
   }
 
   const conf = () => settings() || {};
+  const builtinIds = () => new Set([...builtin()].map((x) => String(x).toLowerCase()));
   const requireReady = () => {
     const s = conf();
     need(s.enabled && s.repo, '스킬 마켓이 연결되어 있지 않습니다. 「스킬 마켓 → 연결·설정」에서 저장소를 연결해 주세요.', 409);
@@ -324,6 +328,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
         const item = { id: k.id, marketId: k.id.toLowerCase(), category: k.category, name: k.id, description: '', status: 'private', version: '', reason: '' };
         const fm = (() => { try { return parseFrontmatter(readFileSync(join(k.dir, 'SKILL.md'), 'utf8').replace(/^﻿/, '')); } catch { return {}; } })();
         item.name = fm.name || k.id; item.description = fm.description || '';
+        if (builtinIds().has(item.marketId)) return { ...item, status: 'builtin', reason: 'AI-Office 기본 스킬입니다(모든 사무실에 이미 들어 있어 공유하지 않습니다).' };
         const mk = readInstalledMarker(k.dir);
         if (mk) return { ...item, status: 'from-market', version: mk.version, reason: `마켓에서 받은 스킬입니다(게시: ${mk.publisher || '알 수 없음'})` };
         if (!ID_RE.test(item.marketId)) return { ...item, status: 'unsharable', reason: '폴더 이름에 마켓에서 쓸 수 없는 문자가 있습니다(글자·숫자·하이픈만).' };
@@ -366,6 +371,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     need(s.enabled && s.repo, '스킬 마켓이 연결되어 있지 않습니다.', 409);
     need(isSemver(version), '버전은 1.0.0 처럼 숫자 세 개(점으로 구분)로 적어 주세요.');
     const marketId = String(id || '').toLowerCase();
+    need(!builtinIds().has(marketId), 'AI-Office 기본 스킬은 공유하지 않습니다.', 409);
     const info = await inspect({ skillDir, id: marketId, honorifics });
     need(!info.blockers.length, '공유할 수 없는 내용이 있어 게시하지 않았습니다.', 422, info);
     need(!info.warnings.length || confirmWarnings, '개인정보로 보이는 내용이 있습니다. 확인 후 다시 게시해 주세요.', 409, { ...info, needsConfirm: 'warnings' });

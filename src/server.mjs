@@ -4,7 +4,7 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS } from './paths.mjs';
+import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
@@ -150,7 +150,8 @@ route('POST', '/api/offices/:id/telegram/policy', async ({ p, body }) => { tg.se
 
 // ── 스킬 마켓 ──
 // 게시·설치·회수는 대시보드 화면에서 사용자가 직접 누를 때만 동작한다(텔레그램 메시지로는 불가). 자동 설치·업데이트는 없다.
-const market = createMarket({ home: DATA_HOME, settings: () => getConfig().market, log: logChange });
+const builtinSkills = () => findSkillDirs(join(TEMPLATES, 'office', '.claude', 'skills')).map((k) => k.id);   // 견본 사무실에 들어 있는 기본 스킬
+const market = createMarket({ home: DATA_HOME, settings: () => getConfig().market, log: logChange, builtin: builtinSkills });
 const honorificOf = (o) => { try { return loadOffice(o.folder).honorific; } catch { return ''; } };
 // 마켓에서 다루는 사무실: 읽기 전용(Hermes)은 제외한다.
 const marketOffices = () => listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))

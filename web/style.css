@@ -215,6 +215,22 @@ details.dtl > summary small { display: inline; font-weight: 400; color: var(--mu
 .changes li { display: grid; grid-template-columns: 82px 1fr; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
 .changes time { color: var(--faint); }
 
+/* 스킬 마켓 */
+.mk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.mk-grid .mk-card { margin: 0; }
+.mk-card[hidden] { display: none; }
+.mk-card h3 { font-size: 15px; letter-spacing: -.2px; }
+.mk-card h3 small { font-weight: 500; }
+.mk-card .desc { margin: 8px 0; }
+.badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.faint { color: var(--faint); }
+pre.mk-pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 34vh; overflow: auto; background: var(--panel-2); padding: 10px 12px; border-radius: 10px; user-select: text; }
+ul.find { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+ul.find li { display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border-radius: 10px; background: var(--panel-2); }
+ul.find li.block, ul.find li.risk { background: var(--bad-soft); }
+ul.find li.warn { background: var(--warn-soft); }
+ul.find code { font-size: 12px; }
+
 /* 연결 화면 */
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 700; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); }

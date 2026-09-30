@@ -19,7 +19,7 @@ async function api(method, path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(j.error || `오류 ${res.status}`);
+  if (!res.ok) { const e = new Error(j.error || `오류 ${res.status}`); e.status = res.status; e.details = j.details; throw e; }
   return j;
 }
 
@@ -41,12 +41,14 @@ const S = {
   ov: null, detail: null, details: {}, presets: null, found: null, ok: false,
   view: (location.hash || '#home').slice(1), officeId: localStorage.getItem('office') || '', restartNeeded: {},
   themePref: localStorage.getItem('theme') || 'auto', last: '',
+  market: null, marketTab: localStorage.getItem('marketTab') || 'browse', marketQuery: '', marketDirty: true, marketAt: 0,
 };
 const VIEWS = {
   home: { title: '홈', icon: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>' },
   board: { title: '현황판', icon: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>' },
   teams: { title: '부서 관리', icon: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.4c1.9.8 3 2.6 3 5.6"/>' },
   skills: { title: '봇 · 스킬트리', icon: '<circle cx="12" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M12 7.5V12M12 12l-5 5M12 12l5 5"/>' },
+  market: { title: '스킬 마켓', icon: '<path d="M4 9l1.5-5h13L20 9"/><path d="M4 9h16v2a2.67 2.67 0 0 1-5.33 0 2.67 2.67 0 0 1-5.34 0A2.67 2.67 0 0 1 4 11z"/><path d="M5 13.5V20h14v-6.5M10 20v-4h4v4"/>' },
   connect: { title: '연결 · 계정', icon: '<path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/>' },
   settings: { title: '설정', icon: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>' },
 };
@@ -72,12 +74,20 @@ async function tick() {
     S.details = {};
     targets.forEach((id, i) => { if (results[i]) S.details[id] = results[i]; });
     S.detail = S.details[S.officeId] || null;
+    // 스킬 마켓: git 을 부르는 일이라 20초에 한 번(또는 동작 직후)만 새로 읽는다. 네트워크 접속은 하지 않고 복제본만 읽는다.
+    if (S.view === 'market' && (S.marketDirty || Date.now() - S.marketAt > 20000)) {
+      S.marketDirty = false; S.marketAt = Date.now();
+      const status = await api('GET', '/api/market/status').catch(() => null);
+      let skills = null, share = null;
+      if (status && status.enabled && status.ready) [skills, share] = await Promise.all([api('GET', '/api/market/skills').catch(() => null), api('GET', '/api/market/shareable').catch(() => null)]);
+      S.market = { status, skills, share };
+    }
   } catch { S.ok = false; }
   paint();
 }
 
 function paint(force = false) {
-  const sig = JSON.stringify([S.ov, S.details, S.view, S.officeId, S.ok, S.restartNeeded]);
+  const sig = JSON.stringify([S.ov, S.details, S.view, S.officeId, S.ok, S.restartNeeded, S.market, S.marketTab]);
   if (!force && sig === S.last) { renderClock(); return; }
   const a = document.activeElement;
   const typing = a && $('#content').contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'checkbox';
@@ -101,7 +111,9 @@ function renderChrome() {
   $('#title').textContent = (VIEWS[S.view] || VIEWS.home).title;
   $('#nav').innerHTML = Object.keys(VIEWS).map((k) => {
     const extra = k === 'teams' && o && !o.readonly ? `<span class="count">${o.teamsCount}</span>`
-      : k === 'skills' ? `<span class="count">${offices().length}</span>` : needs[k] ? '<i class="flag"></i>' : '';
+      : k === 'skills' ? `<span class="count">${offices().length}</span>`
+      : k === 'market' ? (marketUpdates() ? `<span class="count" title="업데이트 있는 스킬">${marketUpdates()}</span>` : '')
+      : needs[k] ? '<i class="flag"></i>' : '';
     return `<button class="nav-item${S.view === k ? ' on' : ''}" data-go="${k}">${ic(k)}<span>${VIEWS[k].title}</span>${extra}</button>`;
   }).join('');
   const sel = $('#officeSel');
@@ -140,7 +152,7 @@ function renderBanners(o) {
 function renderContent() {
   const el = $('#content');
   if (!S.ov) { el.innerHTML = '<div class="empty"><div class="big">⏳</div><b>불러오는 중…</b></div>'; return; }
-  const fn = { home: vHome, board: vBoard, teams: vTeams, skills: vSkills, connect: vConnect, settings: vSettings }[S.view] || vHome;
+  const fn = { home: vHome, board: vBoard, teams: vTeams, skills: vSkills, market: vMarket, connect: vConnect, settings: vSettings }[S.view] || vHome;
   el.innerHTML = fn();
 }
 
@@ -247,7 +259,7 @@ function skillTree(skills, empty) {
   if (!skills.length) return `<p class="small muted">${empty}</p>`;
   const cats = new Map();
   for (const s of skills) { if (!cats.has(s.category)) cats.set(s.category, []); cats.get(s.category).push(s); }
-  return `<ul class="tree">${[...cats].map(([c, list]) => `<li><span class="lv">📁 ${esc(c)}</span> <small style="display:inline">${list.length}</small><ul>${list.map((s) => `<li><div class="sk-name">🧩 <b>${esc(s.name)}</b>${s.createdBy === 'telegram' ? pill('accent', '📱 텔레그램 지시로 생성') : (s.createdBy ? pill('', esc(s.createdBy)) : '')}<small style="display:inline">${dshort(s.created)}</small></div>${s.description ? `<small title="${esc(s.description)}">${esc(clip(s.description, 120))}</small>` : ''}${s.request ? `<small>요청: ${esc(clip(s.request, 90))}</small>` : ''}</li>`).join('')}</ul></li>`).join('')}</ul>`;
+  return `<ul class="tree">${[...cats].map(([c, list]) => `<li><span class="lv">📁 ${esc(c)}</span> <small style="display:inline">${list.length}</small><ul>${list.map((s) => `<li><div class="sk-name">🧩 <b>${esc(s.name)}</b>${s.createdBy === 'telegram' ? pill('accent', '📱 텔레그램 지시로 생성') : (s.createdBy ? pill('', esc(s.createdBy)) : '')}${s.market ? pill('accent', `🛒 마켓 v${esc(s.market.version)}`) : ''}<small style="display:inline">${dshort(s.created)}</small></div>${s.description ? `<small title="${esc(s.description)}">${esc(clip(s.description, 120))}</small>` : ''}${s.request ? `<small>요청: ${esc(clip(s.request, 90))}</small>` : ''}</li>`).join('')}</ul></li>`).join('')}</ul>`;
 }
 function vSkills() {
   const list = offices();
@@ -267,6 +279,154 @@ function vSkills() {
   }).join('');
   return `${stats}<div class="grid cols-2" style="align-items:start">${cards}</div>
     <div class="card"><h2>읽기 전용에 대해</h2><p class="sub">Hermes(라피스 등) 같은 별개의 봇은 자기 환경에서 따로 일합니다. 이 프로그램은 그 봇의 폴더를 읽어 스킬을 보여 주기만 하고, 켜거나 끄거나 파일을 바꾸지 않습니다.</p></div>`;
+}
+
+// ── 스킬 마켓 ──
+// 여러 PC 가 같은 비공개 git 저장소를 통해 스킬을 골라서 주고받는다. 게시·설치는 항상 여기서 직접 누를 때만 동작한다.
+const semverGt = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+const RISK_PILL = { safe: () => pill('ok', '위험 요소 없음'), caution: () => pill('warn', '확인 필요'), danger: () => pill('bad', '⚠️ 위험 표시') };
+const LEVEL_ICON = { block: '⛔', warn: '⚠️', risk: '🚨' };
+const marketOffices = () => offices().filter((o) => !o.readonly);
+const marketUpdates = () => ((S.market && S.market.skills) || []).reduce((n, e) => n + e.installs.filter((i) => semverGt(e.version, i.version) && !e.revoked).length, 0);
+const markMarket = () => { S.marketDirty = true; return refresh(); };
+
+function findingsHtml(list) {
+  if (!list || !list.length) return '';
+  return `<ul class="find">${list.map((f) => `<li class="${esc(f.level)}"><span>${LEVEL_ICON[f.level] || '•'}</span><div>${esc(f.message)}${f.file ? ` <span class="path">${esc(f.file)}${f.line ? `:${f.line}` : ''}</span>` : ''}${f.sample ? ` <code>${esc(f.sample)}</code>` : ''}</div></li>`).join('')}</ul>`;
+}
+const ago2 = (iso) => { if (!iso) return '아직 없음'; const s = Math.floor((Date.now() - new Date(iso)) / 1000); return s < 60 ? '방금' : s < 3600 ? `${Math.floor(s / 60)}분 전` : s < 86400 ? `${Math.floor(s / 3600)}시간 전` : `${Math.floor(s / 86400)}일 전`; };
+
+function vMarket() {
+  const m = S.market;
+  if (!m || !m.status) return '<div class="empty"><div class="big">⏳</div><b>불러오는 중…</b></div>';
+  const st = m.status;
+  if (!st.git.available) return `<div class="card"><h2>git 이 필요합니다</h2><p class="sub">스킬 마켓은 git 저장소로 스킬을 주고받습니다. <b>git</b>(또는 GitHub Desktop)을 설치한 뒤 이 화면을 다시 열어 주세요.</p></div>`;
+  if (!st.enabled || !st.ready) return mkConnect(st);
+  const upd = marketUpdates();
+  const tabs = [['browse', '둘러보기'], ['share', '내 스킬 공유'], ['installed', `설치된 스킬${upd ? ` · 업데이트 ${upd}` : ''}`], ['settings', '연결 · 설정']];
+  const head = `<div class="row" style="margin-bottom:12px"><div class="tabs" style="margin:0">${tabs.map(([k, l]) => `<button class="${S.marketTab === k ? 'on' : ''}" data-act="market-tab" data-tab="${k}">${esc(l)}</button>`).join('')}</div><span class="spacer"></span><span class="small muted">마지막 새로고침 ${esc(ago2(st.lastSync))}</span><button class="btn sm" data-act="market-refresh">새로고침</button></div>`;
+  const vis = st.visibility === 'public' ? '<div class="banner bad" style="margin-bottom:12px"><span class="ic">🌐</span><div class="txt"><b>연결한 저장소가 공개(public)입니다</b><span class="muted">누구나 게시한 스킬을 볼 수 있습니다. 비공개(private) 저장소로 바꾸는 것을 강력히 권합니다.</span></div></div>' : '';
+  const body = { browse: mkBrowse, share: mkShare, installed: mkInstalled, settings: mkSettings }[S.marketTab] || mkBrowse;
+  return head + vis + body(m);
+}
+
+function mkConnect(st) {
+  return `<div class="card"><div class="card-head"><div><h2>스킬 마켓 연결</h2><p class="sub">한 PC에서 만든 스킬을 <b>내가 고른 것만</b> 올리면, 같은 저장소에 연결한 다른 PC(메인 PC 등)에서 보고 골라 설치할 수 있습니다.</p></div>${pill('', '연결 안 됨')}</div>
+    <form data-form="market-connect" autocomplete="off"><div class="formgrid">
+      <div class="field full"><label>마켓 저장소</label><input type="text" name="repo" required placeholder="내계정/ai-office-skills" value="${esc(st.repo)}" spellcheck="false"><span class="hint">GitHub의 <b>비공개(private)</b> 저장소를 추천합니다. 형식: <code>계정/저장소</code>, <code>https://…</code>, 또는 공유 폴더 경로</span></div>
+      <div class="field"><label>이 PC의 별칭</label><input type="text" name="alias" required maxlength="20" placeholder="서브PC" value="${esc(st.alias)}"><span class="hint">스킬을 올린 곳을 표시할 이름입니다. (예: 메인PC, 서브PC)</span></div></div>
+      <div class="row end" style="margin-top:14px"><button class="btn primary" type="submit">연결하기</button></div></form></div>
+    <div class="card"><h2>안전하게 쓰는 방법</h2><ol class="guide">
+      <li>이 프로그램은 <b>비밀번호·토큰을 받거나 저장하지 않습니다.</b> 이 PC에 이미 로그인된 <code>git</code>·<code>gh</code> 를 그대로 씁니다. 처음이면 터미널에서 <code>gh auth login</code> 을 한 번 해 주세요.</li>
+      <li>스킬을 올릴 때는 개인정보·토큰이 들어 있는지 <b>자동으로 검사</b>하고, 걸리면 올라가지 않습니다.</li>
+      <li>스킬을 받을 때는 내용을 <b>미리 보고</b> 직접 누른 것만 설치됩니다. 스크립트나 수상한 지시문이 있으면 경고하고 기본으로 막습니다.</li>
+      <li>업무 데이터(회사정보 등), 부서 설정, 봇 토큰은 <b>공유 대상이 아닙니다.</b> 스킬 폴더만 공유합니다.</li>
+      <li>게시·설치·회수는 이 화면에서만 가능하고, 텔레그램 메시지로는 할 수 없습니다.</li></ol></div>`;
+}
+
+function mkCard(e) {
+  const text = `${e.name} ${e.id} ${e.description} ${e.category} ${(e.tags || []).join(' ')} ${e.publisher} ${e.sourceAlias}`.toLowerCase();
+  const q = S.marketQuery.trim().toLowerCase();
+  const inst = e.installs.map((i) => `${pill('accent', `설치됨 · ${esc(i.officeName)} v${esc(i.version)}`)}${i.modified ? pill('warn', '내가 고침') : ''}${semverGt(e.version, i.version) && !e.revoked ? pill('ok', '업데이트 있음') : ''}`).join('');
+  return `<div class="card mk-card" data-text="${esc(text)}"${q && !text.includes(q) ? ' hidden' : ''}><div class="top-row"><div><h3>🧩 ${esc(e.name)} <small class="muted">v${esc(e.version)}</small></h3><div class="badges">${e.revoked ? pill('bad', '회수됨') : RISK_PILL[e.riskLevel]()}${e.category ? pill('', esc(e.category)) : ''}${inst}</div></div></div>
+    ${e.description ? `<p class="desc">${esc(clip(e.description, 160))}</p>` : ''}${e.revoked && e.revokedReason ? `<p class="small" style="color:var(--bad)">회수 사유: ${esc(e.revokedReason)}</p>` : ''}
+    <div class="small muted">게시: ${esc(e.publisher)}${e.sourceAlias ? ` (${esc(e.sourceAlias)})` : ''} · ${esc(dshort(e.publishedAt))} · 파일 ${e.fileCount}개</div>
+    <div class="row" style="margin-top:10px"><button class="btn sm primary" data-act="market-detail" data-id="${esc(e.id)}">내용 보기 · 설치</button></div></div>`;
+}
+
+function mkBrowse(m) {
+  const list = m.skills || [];
+  const filter = `<div class="row" style="margin-bottom:12px"><input type="search" data-filter="market" placeholder="스킬 검색 (이름·설명·분류·게시자)" value="${esc(S.marketQuery)}" style="flex:1;min-width:220px"></div>`;
+  if (!list.length) return `${filter}<div class="card"><div class="empty"><div class="big">🛒</div><b>아직 마켓에 올라온 스킬이 없습니다</b><p>「내 스킬 공유」에서 이 PC의 스킬을 골라 올려 보세요. 다른 PC에서도 여기에 나타납니다.</p></div></div>`;
+  return `${filter}<div class="mk-grid">${list.map(mkCard).join('')}</div>`;
+}
+
+function mkShare(m) {
+  const rows = { private: () => pill('', '비공개(이 PC 전용)'), published: () => pill('ok', '게시됨'), changed: () => pill('warn', '게시 후 바뀜'), 'from-market': () => pill('accent', '마켓에서 받음'), builtin: () => pill('', '기본 스킬'), conflict: () => pill('bad', '이름 충돌'), unsharable: () => pill('warn', '공유 불가'), revoked: () => pill('bad', '회수됨') };
+  const share = m.share || [];
+  if (!share.length) return '<div class="card"><p class="muted">공유할 수 있는 사무실이 없습니다.</p></div>';
+  return `<div class="banner info" style="margin-bottom:12px"><span class="ic">🔒</span><div class="txt"><b>공유는 내가 고른 스킬만, 내가 누를 때만</b><span class="muted">모든 스킬의 기본값은 “이 PC 전용”입니다. 게시하기 전에 개인정보·토큰이 들어 있는지 자동으로 검사합니다.</span></div></div>` + share.map((o) => `<div class="card"><h2>${esc(o.officeName)}</h2>
+    ${o.skills.length ? `<table class="tbl"><thead><tr><th>스킬</th><th>상태</th><th></th></tr></thead><tbody>${o.skills.map((s) => `<tr><td><b>${esc(s.name)}</b>${s.name !== s.id ? ` <span class="small muted">${esc(s.id)}</span>` : ''}<div class="small muted">${esc(clip(s.description, 80))}</div></td>
+      <td>${(rows[s.status] || rows.private)()}${s.version ? ` <span class="small muted">v${esc(s.version)}</span>` : ''}${s.reason ? `<div class="small muted">${esc(s.reason)}</div>` : ''}</td>
+      <td class="row end">${s.status === 'private' || s.status === 'changed' ? `<button class="btn sm primary" data-act="market-publish" data-office="${esc(o.office)}" data-skill="${esc(s.id)}">${s.status === 'changed' ? '새 버전 게시' : '마켓에 게시'}</button>` : ''}${s.status === 'published' || s.status === 'changed' ? `<button class="btn sm danger" data-act="market-revoke" data-id="${esc(s.marketId)}">회수</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">이 사무실에는 아직 스킬이 없습니다. 텔레그램에서 "앞으로 ○○할 때는 이렇게 해"라고 하면 봇이 만들어 여기에 나타납니다.</p>'}</div>`).join('');
+}
+
+function mkInstalled(m) {
+  const market = new Map((m.skills || []).map((e) => [e.id, e]));
+  const rows = [];
+  for (const o of m.share || []) for (const s of o.skills) if (s.status === 'from-market') rows.push({ office: o, s, e: market.get(s.marketId) });
+  if (!rows.length) return '<div class="card"><div class="empty"><div class="big">📦</div><b>마켓에서 받은 스킬이 없습니다</b><p>「둘러보기」에서 스킬을 골라 설치해 보세요.</p></div></div>';
+  return `<div class="card"><table class="tbl"><thead><tr><th>스킬</th><th>사무실</th><th>설치한 버전</th><th></th></tr></thead><tbody>${rows.map(({ office, s, e }) => {
+    const inst = e && e.installs.find((i) => i.office === office.office);
+    const newer = e && !e.revoked && semverGt(e.version, s.version);
+    return `<tr><td><b>${esc(s.name)}</b><div class="small muted">${esc(clip(s.description, 70))}</div></td><td>${esc(office.officeName)}</td>
+      <td>v${esc(s.version)}${inst && inst.modified ? ` ${pill('warn', '내가 고침')}` : ''}${newer ? ` ${pill('ok', `새 버전 v${esc(e.version)}`)}` : ''}${!e ? ` ${pill('warn', '마켓에 없음')}` : e.revoked ? ` ${pill('bad', '회수됨')}` : ''}</td>
+      <td class="row end">${newer ? `<button class="btn sm primary" data-act="market-update" data-office="${esc(office.office)}" data-id="${esc(s.marketId)}">업데이트</button>` : ''}<button class="btn sm danger" data-act="market-uninstall" data-office="${esc(office.office)}" data-id="${esc(s.marketId)}">제거</button></td></tr>`;
+  }).join('')}</tbody></table><p class="small muted" style="margin-top:10px">제거해도 파일은 지워지지 않고 사무실의 <code>보관함/스킬제거</code> 폴더로 옮겨집니다. 설치·업데이트·제거는 사무실을 다시 출근시킨 뒤부터 적용됩니다.</p></div>`;
+}
+
+function mkSettings(m) {
+  const st = m.status;
+  const vis = { private: pill('ok', '비공개'), public: pill('bad', '공개 — 주의'), unknown: pill('', '확인 못 함') }[st.visibility] || '';
+  return `<div class="card"><div class="card-head"><div><h2>연결 정보</h2><p class="sub">토큰은 저장하지 않습니다. 이 PC에 로그인된 git·gh 로 접속합니다.</p></div>${pill('ok', '연결됨')}</div>
+    <div class="setting" style="border:0"><div><b>저장소</b><span class="sub path">${esc(st.repo)}</span></div>${vis}</div>
+    <div class="setting"><div><b>이 PC의 별칭 · 게시자</b><span class="sub">${esc(st.alias)} · git 사용자 ${st.publisher ? `<b>${esc(st.publisher)}</b>` : '<span style="color:var(--bad)">설정 안 됨 (터미널에서 git config --global user.name "이름")</span>'}</span></div></div>
+    <div class="setting"><div><b>도구</b><span class="sub">${esc(st.git.version)} · gh 로그인 ${st.gh ? '됨' : '안 됨(GitHub 저장소는 gh auth login 필요)'}</span></div></div>
+    <div class="setting"><div><b>마켓 스킬 수</b><span class="sub">${st.entries}개 · 마지막 새로고침 ${esc(ago2(st.lastSync))}</span></div></div></div>
+    <div class="card"><h2>저장소·별칭 바꾸기</h2><form data-form="market-connect" autocomplete="off"><div class="formgrid"><div class="field full"><label>마켓 저장소</label><input type="text" name="repo" required value="${esc(st.repo)}" spellcheck="false"></div><div class="field"><label>이 PC의 별칭</label><input type="text" name="alias" required maxlength="20" value="${esc(st.alias)}"></div></div><div class="row end" style="margin-top:12px"><button class="btn primary" type="submit">저장하고 다시 연결</button></div></form></div>
+    <div class="card"><div class="setting" style="border:0;padding:0"><div><b>연결 해제</b><span class="sub">이 PC에서 마켓을 끕니다. 이미 설치한 스킬과 저장소의 게시 내용은 그대로입니다.</span></div><button class="btn danger" data-act="market-disconnect">연결 해제</button></div></div>`;
+}
+
+const errDlg = (title, e) => openDlg(`<div class="dlg-head"><h2>${esc(title)}</h2><p>${esc(e.message)}</p></div><div class="dlg-foot"><button class="btn primary" data-act="dlg-close">닫기</button></div>`);
+
+async function dlgMarketDetail(id) {
+  openDlg('<div class="dlg-head"><h2>불러오는 중…</h2></div>');
+  let d;
+  try { d = await api('GET', `/api/market/skills/${encodeURIComponent(id)}`); } catch (e) { errDlg('스킬을 불러오지 못했습니다', e); return; }
+  const offs = marketOffices();
+  const risks = d.findings.filter((f) => f.level === 'risk');
+  const bad = d.revoked || !d.verified || d.findings.some((f) => f.level === 'block');
+  openDlg(`<form data-form="market-install" data-id="${esc(d.id)}"><div class="dlg-head"><h2>🧩 ${esc(d.name)} <small class="muted">v${esc(d.version)}</small></h2><p>${esc(d.description)}</p></div>
+    <div class="dlg-body"><div class="badges" style="margin-bottom:10px">${d.revoked ? pill('bad', '회수됨') : RISK_PILL[d.riskLevel]()}${d.verified ? pill('ok', '무결성 확인') : pill('bad', '무결성 실패')}${pill('', `게시 ${esc(d.publisher)}${d.sourceAlias ? ` (${esc(d.sourceAlias)})` : ''}`)}${pill('', esc(dshort(d.publishedAt)))}</div>
+      ${d.revoked ? `<div class="banner bad" style="margin-bottom:10px"><span class="ic">⛔</span><div class="txt"><b>회수된 스킬이라 설치할 수 없습니다</b><span class="muted">${esc(d.revokedReason)}</span></div></div>` : ''}
+      ${d.notes ? `<p class="small"><b>게시 메모</b> ${esc(d.notes)}</p>` : ''}
+      ${d.findings.length ? `<div class="group-title">검사 결과</div>${findingsHtml(d.findings)}` : ''}
+      <div class="group-title">파일 ${d.files.length}개</div><div class="small muted">${d.files.map((f) => `${esc(f.path)} <span class="faint">(${f.size}B${f.kind === 'script' ? ' · 스크립트' : ''})</span>`).join(' · ')}</div>
+      <div class="group-title">SKILL.md 미리보기</div><pre class="mk-pre">${esc(d.skillMd)}</pre>
+      ${offs.length ? `<div class="group-title">설치할 사무실</div><div class="row"><select name="office">${offs.map((o) => `<option value="${esc(o.id)}"${o.id === S.officeId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
+        ${risks.length ? '<label class="row" style="margin-top:10px;font-weight:600"><input type="checkbox" name="allowRisk" required> 위 위험 표시를 모두 확인했고, 그래도 설치합니다</label>' : ''}` : '<p class="muted">설치할 수 있는 사무실이 없습니다.</p>'}
+      <p class="small muted" style="margin-top:8px">설치한 스킬은 사무실을 <b>다시 출근</b>시킨 뒤부터 적용됩니다.</p></div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">닫기</button><button class="btn primary" type="submit"${bad || !offs.length ? ' disabled' : ''}>설치하기</button></div></form>`);
+}
+
+async function marketInstall(id, office, allowRisk, overwrite) {
+  try {
+    const r = await api('POST', '/api/market/install', { id, office, allowRisk, overwrite });
+    if (r.needsRestart) S.restartNeeded[office] = true;
+    closeDlg(); toast(r.updated ? `v${r.version}(으)로 업데이트했습니다. 사무실을 다시 출근시키면 적용됩니다.` : '설치했습니다. 사무실을 다시 출근시키면 적용됩니다.');
+  } catch (e) {
+    if (e.details && e.details.needsConfirm === 'overwrite') {
+      dlgConfirm({ title: '직접 고친 내용을 덮어쓸까요?', body: `설치한 뒤 바뀐 파일: <code>${(e.details.changed || []).map(esc).join(', ')}</code><br>덮어쓰면 고친 내용은 사무실의 <code>보관함/맞춤설정_백업</code> 폴더로 옮겨 둡니다.`, ok: '덮어쓰기', danger: true, onOk: async () => { await doing(null, () => marketInstall(id, office, allowRisk, true)); } });
+      return;
+    }
+    throw e;
+  }
+}
+
+async function dlgPublish(officeId, skillId) {
+  openDlg('<div class="dlg-head"><h2>검사하는 중…</h2><p>개인정보·비밀값이 들어 있는지 확인합니다.</p></div>');
+  let info;
+  try { info = await api('POST', '/api/market/inspect', { office: officeId, skillId }); } catch (e) { errDlg('검사하지 못했습니다', e); return; }
+  const ex = info.existing;
+  openDlg(`<form data-form="market-publish" data-office="${esc(officeId)}" data-skill="${esc(skillId)}"><div class="dlg-head"><h2>🚀 「${esc(skillId)}」 마켓에 게시</h2><p>올라가는 파일은 아래 ${info.files.length}개뿐입니다. 사무실의 업무 데이터·설정·토큰은 포함되지 않습니다.</p></div>
+    <div class="dlg-body"><div class="small muted">${info.files.map((f) => `${esc(f.path)} <span class="faint">(${f.size}B)</span>`).join(' · ')}</div>
+      <div class="group-title">검사 결과 ${info.findings.length ? '' : '— 문제 없음 ✅'}</div>${findingsHtml(info.findings)}
+      ${ex ? `<p class="small" style="margin-top:8px">마켓에 이미 <b>v${esc(ex.version)}</b> (게시: ${esc(ex.publisher)})가 있습니다.${ex.mine ? '' : ' <span style="color:var(--bad)">다른 게시자의 스킬이라 같은 이름으로 올릴 수 없습니다.</span>'}${ex.revoked ? ' <span style="color:var(--bad)">회수된 이름은 다시 쓸 수 없습니다.</span>' : ''}</p>` : ''}
+      <div class="formgrid" style="margin-top:12px"><div class="field"><label>버전</label><input type="text" name="version" required pattern="\\d{1,4}\\.\\d{1,4}\\.\\d{1,4}" value="${esc(info.suggestedVersion)}"><span class="hint">1.0.0 처럼 숫자 세 개. 고칠 때마다 올립니다.</span></div>
+      <div class="field full"><label>게시 메모 (선택)</label><textarea name="notes" maxlength="500" style="min-height:70px" placeholder="무엇을 하는 스킬인지, 무엇이 바뀌었는지"></textarea></div></div>
+      ${info.warnings.length ? '<label class="row" style="margin-top:10px;font-weight:600"><input type="checkbox" name="cw" required> 개인정보로 보이는 위 내용을 확인했고, 공유해도 괜찮습니다</label>' : ''}
+      ${info.risks.length ? '<label class="row" style="margin-top:8px;font-weight:600"><input type="checkbox" name="cr" required> 스크립트 등 위험 표시가 붙는 것을 알고 있고, 그대로 게시합니다</label>' : ''}</div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit"${info.publishable && !(ex && (!ex.mine || ex.revoked)) ? '' : ' disabled'}>게시하기</button></div></form>`);
 }
 
 // ── 연결 · 계정 ──
@@ -456,6 +616,14 @@ const ACT = {
   'tg-remove': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/remove`, { senderId: b.dataset.id }); toast('허용을 해제했습니다.'); refresh(); }),
   'diag-refresh': (b) => doing(b, async () => { await api('POST', '/api/diagnostics/refresh'); refresh(); }),
   'diag-clean': (b) => dlgConfirm({ title: '가로채는 프로세스를 정리할까요?', body: '사무실이 아닌 곳에서 텔레그램 수신을 잡고 있는 프로세스만 종료합니다. 그 Claude 창의 텔레그램 기능만 꺼지고, 창 자체는 그대로입니다.', ok: '정리하기', onOk: async () => { try { const r = await api('POST', '/api/diagnostics/clean-pollers'); toast(`${r.rogue}개를 정리했습니다.`); } catch (e) { toast(e.message, true); } refresh(); } }),
+  'market-tab': (b) => { S.marketTab = b.dataset.tab; localStorage.setItem('marketTab', S.marketTab); paint(true); },
+  'market-refresh': (b) => doing(b, async () => { const r = await api('POST', '/api/market/refresh'); toast(`마켓을 새로 불러왔습니다 (스킬 ${r.entries}개)`); await markMarket(); }),
+  'market-detail': (b) => dlgMarketDetail(b.dataset.id),
+  'market-publish': (b) => dlgPublish(b.dataset.office, b.dataset.skill),
+  'market-update': (b) => doing(b, async () => { await marketInstall(b.dataset.id, b.dataset.office, false, false); await markMarket(); }),
+  'market-uninstall': (b) => dlgConfirm({ title: '이 스킬을 제거할까요?', body: '사무실의 스킬 폴더에서 <b>보관함/스킬제거</b> 로 옮깁니다(지우지 않습니다). 다시 받으려면 마켓에서 설치하면 됩니다.', ok: '제거', danger: true, onOk: async () => { try { const r = await api('POST', '/api/market/uninstall', { office: b.dataset.office, id: b.dataset.id }); if (r.needsRestart) S.restartNeeded[b.dataset.office] = true; toast('제거했습니다. 사무실을 다시 출근시키면 적용됩니다.'); } catch (e) { toast(e.message, true); } markMarket(); } }),
+  'market-revoke': (b) => dlgConfirm({ title: '마켓에서 회수할까요?', body: `이 스킬을 마켓에서 내립니다. 이미 설치한 PC에는 “회수됨” 경고가 표시되고 새로 설치할 수 없게 됩니다. (내 PC의 스킬 파일은 그대로입니다)<div class="field" style="margin-top:10px"><label>회수 사유 (선택)</label><input type="text" id="revokeReason" maxlength="200" placeholder="예: 개인정보가 들어 있었음"></div>`, ok: '회수', danger: true, onOk: async () => { try { await api('POST', '/api/market/revoke', { id: b.dataset.id, reason: ($('#revokeReason') || {}).value || '' }); toast('회수했습니다.'); } catch (e) { toast(e.message, true); } markMarket(); } }),
+  'market-disconnect': () => dlgConfirm({ title: '스킬 마켓 연결을 해제할까요?', body: '이 PC에서 마켓을 끕니다. 이미 설치한 스킬과 저장소의 게시 내용은 그대로 남습니다. 다시 연결하면 바로 쓸 수 있습니다.', ok: '연결 해제', danger: true, onOk: async () => { try { await api('POST', '/api/market/disconnect', { purge: true }); toast('연결을 해제했습니다.'); } catch (e) { toast(e.message, true); } S.market = null; markMarket(); } }),
   'diag-global-off': () => dlgConfirm({ title: '전역에서 텔레그램 플러그인을 끌까요?', body: '사용자 설정(<code>~/.claude/settings.json</code>)에서 텔레그램 플러그인을 끕니다. 원본은 <code>settings.json.bak-ai-office</code> 로 백업하고, 사무실 폴더의 설정은 그대로라 사무실은 계속 텔레그램을 받습니다.', ok: '끄기', onOk: async () => { try { await api('POST', '/api/diagnostics/disable-global-plugin'); toast('전역에서 껐습니다.'); } catch (e) { toast(e.message, true); } refresh(); } }),
 };
 
@@ -509,14 +677,34 @@ document.addEventListener('submit', async (e) => {
       const r = await api('PATCH', `/api/offices/${oid()}/teams/${encodeURIComponent(f.dataset.key)}`, { name: fd.get('name'), emoji: fd.get('emoji'), role: fd.get('role'), instructions: fd.get('instructions') });
       if (r.needsRestart) S.restartNeeded[S.officeId] = true;
       closeDlg(); toast('저장했습니다.');
+    } else if (kind === 'market-connect') {
+      const r = await api('POST', '/api/market/connect', { repo: fd.get('repo'), alias: fd.get('alias') });
+      S.marketTab = 'browse'; S.marketDirty = true;
+      toast(r.visibility === 'public' ? '⚠️ 연결했지만 이 저장소는 공개(public)입니다. 비공개로 바꾸는 것을 권합니다.' : `마켓에 연결했습니다 (스킬 ${r.entries}개)`, r.visibility === 'public');
+    } else if (kind === 'market-install') {
+      await marketInstall(f.dataset.id, fd.get('office'), fd.get('allowRisk') === 'on', false);
+      S.marketDirty = true;
+    } else if (kind === 'market-publish') {
+      const r = await api('POST', '/api/market/publish', { office: f.dataset.office, skillId: f.dataset.skill, version: fd.get('version'), notes: fd.get('notes'), confirmWarnings: fd.get('cw') === 'on', confirmRisks: fd.get('cr') === 'on' });
+      closeDlg(); S.marketDirty = true; toast(`v${r.version} 을(를) 마켓에 게시했습니다.`);
     }
     await refresh();
   });
 });
 
+// 마켓 검색: 다시 그리지 않고 카드만 숨겨서 입력 중에도 커서가 유지된다.
+document.addEventListener('input', (e) => {
+  if (e.target.dataset && e.target.dataset.filter === 'market') {
+    S.marketQuery = e.target.value;
+    const q = S.marketQuery.trim().toLowerCase();
+    document.querySelectorAll('.mk-card').forEach((c) => { c.hidden = Boolean(q) && !c.dataset.text.includes(q); });
+  }
+});
+
 function navigate(view) {
   if (!VIEWS[view]) view = 'home';
   S.view = view; location.hash = view; document.body.classList.remove('menu-open');
+  if (view === 'market') S.marketDirty = true;
   paint(true); tick();
 }
 window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS[v] && v !== S.view) navigate(v); });

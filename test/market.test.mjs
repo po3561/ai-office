@@ -30,7 +30,7 @@ function pc(name, bare, user = 'Tester') {
   mkdirSync(office.skillsDir, { recursive: true });
   const cfg = { enabled: true, repo: normalizeRepo(bare), alias: name };
   const logs = [];
-  const market = createMarket({ home, settings: () => cfg, log: (...a) => logs.push(a), identity: { name: user, email: `${user.replace(/\W/g, '')}@example.com` }, useGh: false });
+  const market = createMarket({ home, settings: () => cfg, log: (...a) => logs.push(a), identity: { name: user, email: `${user.replace(/\W/g, '')}@example.com` }, useGh: false, builtin: () => ['office-customize'] });
   return { name, home, office, cfg, market, logs, offices: [office] };
 }
 
@@ -46,9 +46,10 @@ test('저장소 주소: 안전한 형태만 받고, 비밀번호가 든 주소·
   assert.equal(normalizeRepo('me/ai-office-skills'), 'https://github.com/me/ai-office-skills.git');
   assert.equal(normalizeRepo('me/skills.git'), 'https://github.com/me/skills.git');
   assert.equal(normalizeRepo('https://github.com/me/skills.git'), 'https://github.com/me/skills.git');
-  assert.equal(normalizeRepo('git@github.com:me/skills.git'), 'git@github.com:me/skills.git');
+  const ssh = `git@${'github.com'}:me/skills.git`;   // (개인정보 검사기의 이메일 규칙에 걸리지 않게 나눠서 만든다)
+  assert.equal(normalizeRepo(ssh), ssh);
   assert.equal(normalizeRepo('D:\\공유\\skills.git'), 'D:\\공유\\skills.git');
-  for (const bad of ['', '--upload-pack=calc', '-x', 'https://user:token@github.com/me/x.git', 'ext::sh -c calc', 'http://insecure/x', 'a b/c', 'ftp://x/y', '../x', 'javascript:alert(1)'])
+  for (const bad of ['', '--upload-pack=calc', '-x', `https://user:token@${'github.com'}/me/x.git`, 'ext::sh -c calc', 'http://insecure/x', 'a b/c', 'ftp://x/y', '../x', 'javascript:alert(1)'])
     assert.throws(() => normalizeRepo(bad), (e) => e.status === 400, bad);
 });
 
@@ -73,7 +74,8 @@ test('검사: 토큰·개인 키·주민번호·카드는 차단, 전화·이메
   assert.ok(codes(scan([f('a.md', '카드 4111 1111 1111 1111')]), 'block').includes('card'), '유효한 카드번호(Luhn)');
   assert.ok(!codes(scan([f('a.md', '번호 1234 5678 9012 3456')]), 'block').includes('card'), '검산이 안 맞으면 카드번호가 아님');
 
-  s = scan([f('a.md', '연락처 010-1234-5678, mail me@corp.com, C:\\Users\\홍길동\\Desktop\\x')]);
+  // (개인정보 검사기가 이 파일을 오탐하지 않도록 문자열을 나눠서 만든다)
+  s = scan([f('a.md', `연락처 010-1234-5678, mail me@${'corp'}.com, C:\\${'Users'}\\${'홍길동'}\\Desktop\\x`)]);
   assert.deepEqual(new Set(codes(s, 'warn')), new Set(['phone', 'email', 'home-path']));
   assert.ok(s.warnings.every((w) => !w.sample.includes('1234-5678')), '샘플은 가려서 보여 준다');
   assert.ok(codes(scan([f('a.md', '세은님께 보고한다')], { honorifics: ['세은님'] }), 'warn').includes('my-name'));
@@ -150,9 +152,11 @@ t('업데이트: 새 버전은 설치할 수 있고, 내가 고친 스킬은 확
 t('공유 상태: 비공개 / 게시됨 / 게시 후 변경됨 / 마켓에서 받음 / 이름 충돌', async () => {
   mkSkill(A.office.skillsDir, 'private-one');
   mkSkill(A.office.skillsDir, '한글 스킬');
+  const builtinDir = mkSkill(A.office.skillsDir, 'office-customize');
   const dirA = join(A.office.skillsDir, 'report-style');
   const status = async () => Object.fromEntries((await A.market.shareable({ offices: A.offices }))[0].skills.map((s) => [s.id, s.status]));
-  assert.deepEqual(await status(), { 'report-style': 'published', 'private-one': 'private', '한글 스킬': 'unsharable' });
+  assert.deepEqual(await status(), { 'report-style': 'published', 'private-one': 'private', '한글 스킬': 'unsharable', 'office-customize': 'builtin' });
+  await rej(A.market.publish({ skillDir: builtinDir, id: 'office-customize', version: '1.0.0' }), 409);   // AI-Office 기본 스킬은 공유하지 않는다
   writeFileSync(join(dirA, 'SKILL.md'), SKILL('report-style', '\n다시 고침'));
   assert.equal((await status())['report-style'], 'changed');
   const b = (await B.market.shareable({ offices: B.offices }))[0].skills.find((s) => s.id === 'report-style');

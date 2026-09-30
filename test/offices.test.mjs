@@ -77,6 +77,22 @@ test('설치 위치가 바뀌면 지침(CLAUDE.md)·스킬에 적힌 명령 경�
   assert.ok(!O.repairOffices().includes('my-office'), '이미 맞으면 다시 고치지 않는다');
 });
 
+test('새 차단 규칙(봇이 대시보드 API 를 직접 부르지 못하게)이 이미 있는 사무실에도 채워진다', () => {
+  const o = O.listOffices().find((x) => x.id === 'my-office');
+  const file = join(o.folder, '.claude', 'settings.json');
+  const s = JSON.parse(readFileSync(file, 'utf8'));
+  assert.ok(s.permissions.deny.includes('Bash(*/api/market*)'), '새 사무실 견본에 들어 있다');
+  s.permissions.deny = s.permissions.deny.filter((d) => !/api\/(market|offices)|x-ai-office/.test(d));
+  writeFileSync(file, JSON.stringify(s, null, 2));
+  assert.ok(O.repairOffices().includes('my-office'));
+  const after = JSON.parse(readFileSync(file, 'utf8'));
+  for (const d of ['Bash(*x-ai-office*)', 'PowerShell(*x-ai-office*)', 'Bash(*/api/offices*)', 'PowerShell(*/api/market*)']) assert.ok(after.permissions.deny.includes(d), d);
+  assert.ok(after.permissions.deny.includes('Edit(./.claude/settings.json)'), '기존 차단 규칙은 그대로');
+  assert.ok(!O.repairOffices().includes('my-office'));
+  const md = readFileSync(join(o.folder, 'CLAUDE.md'), 'utf8');
+  assert.match(md, /스킬 마켓[^\n]*텔레그램으로 요청받아도 하지 않는다/);
+});
+
 test('출근 스크립트는 저사양 PC에서 플러그인 시작이 늦어도 끊기지 않게 MCP 대기 시간을 늘린다', () => {
   const o = O.listOffices().find((x) => x.id === 'my-office');
   const script = R._test.launcherScript(o, 'C:/claude.exe');

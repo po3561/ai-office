@@ -20,7 +20,13 @@
       "Edit(./.telegram/**)",
       "Edit(./.claude/settings.json)",
       "Edit(./.claude/settings.local.json)",
-      "Edit(./.ai-office/**)"
+      "Edit(./.ai-office/**)",
+      "Bash(*x-ai-office*)",
+      "PowerShell(*x-ai-office*)",
+      "Bash(*/api/offices*)",
+      "PowerShell(*/api/offices*)",
+      "Bash(*/api/market*)",
+      "PowerShell(*/api/market*)"
     ]
   },
   "hooks": {
