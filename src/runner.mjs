@@ -15,6 +15,12 @@ const scriptFile = (id) => join(RUN_DIR, `${id}.ps1`);
 const restartFile = (id) => join(RUN_DIR, `restart-${id}.json`);
 const stoppedFile = (id) => join(RUN_DIR, `${id}.stopped`);   // 사용자가 직접 끈 사무실은 자동으로 다시 켜지 않는다
 
+// 출근 창이 뜨고 pid 파일이 생기기까지 수십 초 걸릴 수 있다. 그 사이에 수동 출근과 감시(자동 출근)가 겹쳐
+// 세션이 중복으로 뜨지 않도록, 방금 켠 사무실은 잠시 '켜는 중'으로 본다.
+const startedAt = new Map();
+const STARTING_GRACE_MS = 90 * 1000;
+const recentlyStarted = (id) => Date.now() - (startedAt.get(id) || 0) < STARTING_GRACE_MS;
+
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
 function readPid(id) {
@@ -67,9 +73,11 @@ export async function startOffice(id, ctx = {}) {
   const o = getOffice(id);
   need(o.kind !== 'hermes' && !o.readonly, `"${o.name}"은(는) 별개의 봇이라 이 프로그램에서 켜거나 끄지 않습니다.`, 403);
   need(!runtime(o, ctx).running, '이미 근무 중입니다.', 409);
+  need(!recentlyStarted(id), '방금 출근시켰습니다. 창이 뜰 때까지 잠시 기다려 주세요.', 409);
   const bin = await checkReady(o);
   rmSync(restartFile(id), { force: true });
   rmSync(stoppedFile(id), { force: true });
+  startedAt.set(id, Date.now());
   if (o.launch && o.launch.start) {
     // 예전 방식으로 만들어진 사무실은 그 사무실의 출근 스크립트를 그대로 쓴다.
     spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.start], { cwd: o.folder, detached: true, stdio: 'ignore', windowsHide: true }).unref();
@@ -86,6 +94,7 @@ export async function startOffice(id, ctx = {}) {
 export async function stopOffice(id) {
   const o = getOffice(id);
   need(o.kind !== 'hermes' && !o.readonly, `"${o.name}"은(는) 별개의 봇이라 이 프로그램에서 켜거나 끄지 않습니다.`, 403);
+  startedAt.delete(id);
   const pid = readPid(id);
   let stopped = false;
   if (pid && alive(pid)) {
@@ -132,7 +141,7 @@ export async function watchdogTick({ autoRestart = true, legitPollers = 0 } = {}
   }
   if (autoRestart) {
     for (const o of listOffices()) {
-      if (!o.autoStart || o.kind === 'hermes' || o.readonly || isFile(stoppedFile(o.id))) continue;
+      if (!o.autoStart || o.kind === 'hermes' || o.readonly || isFile(stoppedFile(o.id)) || recentlyStarted(o.id)) continue;
       if (runtime(o, { legitPollers }).running) { budget.delete(o.id); continue; }
       const now = Date.now();
       const tries = (budget.get(o.id) || []).filter((t) => now - t < 10 * 60 * 1000);

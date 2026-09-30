@@ -177,10 +177,31 @@ export function discover() {
 
 // 프로그램을 다른 위치로 옮기거나 다시 설치해도 사무실이 계속 돌아가도록,
 // 이 프로그램이 만든 사무실의 훅·허용 명령 경로를 현재 설치 위치로 다시 맞춘다.
+// 비서실장 지침(CLAUDE.md)과 스킬 설명에 적힌 `ai-office.mjs` 경로도 현재 설치 위치로 맞춘다.
+// (허용 목록의 경로만 바뀌고 지침의 명령 경로가 옛 위치로 남으면 봇이 부서 관리 명령을 실행하다 막힌다.)
+function repairDocPaths(folder) {
+  const cli = fwd(CLI);
+  const files = [join(folder, 'CLAUDE.md')];
+  try {
+    const skills = join(folder, '.claude', 'skills');
+    for (const e of readdirSync(skills, { withFileTypes: true })) if (e.isDirectory()) files.push(join(skills, e.name, 'SKILL.md'));
+  } catch { /* 스킬 폴더가 없으면 지침 파일만 고친다 */ }
+  const re = /"[A-Za-z]:[\\/][^"\r\n]*?[\\/]bin[\\/]ai-office\.mjs"/g;
+  let changed = false;
+  for (const f of files) {
+    if (!isFile(f)) continue;
+    const text = readText(f);
+    const next = text.replace(re, (m) => (fwd(m.slice(1, -1)) === cli ? m : `"${cli}"`));
+    if (next !== text) { writeAtomic(f, next); changed = true; }
+  }
+  return changed;
+}
+
 export function repairOffices() {
   const fixed = [];
   for (const o of listOffices()) {
     if (!o.managed || o.kind !== 'claude-office' || !isDir(o.folder)) continue;
+    try { if (repairDocPaths(o.folder)) fixed.push(o.id); } catch { /* 지침 경로 보정이 실패해도 설정 점검은 계속한다 */ }
     try {
       const file = join(o.folder, '.claude', 'settings.json');
       const cur = readJson(file, null);
