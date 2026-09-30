@@ -45,6 +45,7 @@ function launcherScript(o, claudePath) {
     `$Host.UI.RawUI.WindowTitle = ${psQuote(`AI-Office · ${o.name}`)}`,
     `Set-Location -LiteralPath ${psQuote(o.folder)}`,
     `$env:TELEGRAM_STATE_DIR = ${psQuote(o.stateDir)}`,
+    "$env:MCP_TIMEOUT = '180000'",   // 저사양 PC에서는 텔레그램 플러그인 시작(bun install)이 30초를 넘겨 연결이 끊기므로 대기 시간을 늘린다.
     `New-Item -ItemType Directory -Force -Path ${psQuote(RUN_DIR)} | Out-Null`,
     `Set-Content -Path ${psQuote(pidFile(o.id))} -Value $PID`,
     `try { & ${psQuote(claudePath)} --channels plugin:${TG_PLUGIN} --permission-mode auto } finally { Remove-Item ${psQuote(pidFile(o.id))} -ErrorAction SilentlyContinue }`,
@@ -77,7 +78,8 @@ export async function startOffice(id, ctx = {}) {
   mkdirSync(RUN_DIR, { recursive: true });
   writeFileSync(scriptFile(id), '﻿' + launcherScript(o, bin.path), 'utf8');
   const cmd = `Start-Process powershell.exe -WindowStyle Minimized -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${psQuote(scriptFile(id))})`;
-  spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  // stdio를 'ignore'로 두면 일부 Windows에서 최소화 창이 뜨지 않으므로 파이프 방식(run)으로 띄운다.
+  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { timeout: 15000 });
   return { started: true, via: 'launcher' };
 }
 

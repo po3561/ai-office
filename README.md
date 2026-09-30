@@ -97,6 +97,7 @@ ai-office team remove --office my-office --key hr
 대시보드 「연결 · 계정 → 수신 진단」에서 확인하고 **가로채는 프로세스 정리**와 **전역에서 끄기**를 누르세요. 사무실 폴더는 설정으로 따로 플러그인을 켜 두므로 사무실은 영향받지 않습니다. 자세한 설명은 [docs/TELEGRAM.md](docs/TELEGRAM.md).
 
 **출근을 눌렀는데 아무 일도 없어요** — 「연결 · 계정」에서 Claude 로그인, 봇 토큰이 모두 준비됐는지, `bun`이 설치돼 있는지 확인하세요. `ai-office doctor`로 한 번에 점검할 수 있습니다.
+저사양 PC나 두 번째 PC에 설치했다면 [docs/TROUBLESHOOTING-WINDOWS-LOWSPEC.md](docs/TROUBLESHOOTING-WINDOWS-LOWSPEC.md)(실행 정책, 플러그인 미설치, 연결 시간 초과, 세션 중복 등)도 확인하세요.
 
 ## 보안 원칙
 
