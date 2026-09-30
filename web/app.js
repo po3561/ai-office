@@ -292,9 +292,15 @@ const marketUpdates = () => ((S.market && S.market.skills) || []).reduce((n, e) 
 const marketRequests = () => ((S.market && S.market.share) || []).reduce((n, o) => n + (o.requests || []).length, 0);
 const markMarket = () => { S.marketDirty = true; return refresh(); };
 
+// 차단 → 위험 → 확인 순으로 보여 주고, 맨 위에 개수를 요약한다(많을 때 차단 항목이 묻히지 않게).
+const LEVEL_ORDER = { block: 0, risk: 1, warn: 2 };
 function findingsHtml(list) {
   if (!list || !list.length) return '';
-  return `<ul class="find">${list.map((f) => `<li class="${esc(f.level)}"><span>${LEVEL_ICON[f.level] || '•'}</span><div>${esc(f.message)}${f.file ? ` <span class="path">${esc(f.file)}${f.line ? `:${f.line}` : ''}</span>` : ''}${f.sample ? ` <code>${esc(f.sample)}</code>` : ''}</div></li>`).join('')}</ul>`;
+  const n = (lv) => list.filter((f) => f.level === lv).length;
+  const sum = [['block', '⛔ 차단', 'bad'], ['risk', '🚨 위험', 'warn'], ['warn', '⚠️ 확인', '']].filter(([lv]) => n(lv)).map(([lv, t, c]) => pill(c, `${t} ${n(lv)}`)).join('');
+  const block = n('block') ? '<p class="small" style="color:var(--bad);margin:6px 0">차단 항목을 고치기 전에는 게시·설치할 수 없습니다. (예: 시험용 가짜 값이라도 주민번호·카드번호 모양이면 막힙니다 — 값을 지우거나 <code>000000-0000000</code> 처럼 바꿔 주세요)</p>' : '';
+  const sorted = [...list].sort((a, b) => (LEVEL_ORDER[a.level] ?? 3) - (LEVEL_ORDER[b.level] ?? 3));
+  return `<div class="badges" style="margin:4px 0">${sum}</div>${block}<ul class="find">${sorted.map((f) => `<li class="${esc(f.level)}"><span>${LEVEL_ICON[f.level] || '•'}</span><div>${esc(f.message)}${f.file ? ` <span class="path">${esc(f.file)}${f.line ? `:${f.line}` : ''}</span>` : ''}${f.sample ? ` <code>${esc(f.sample)}</code>` : ''}</div></li>`).join('')}</ul>`;
 }
 const ago2 = (iso) => { if (!iso) return '아직 없음'; const s = Math.floor((Date.now() - new Date(iso)) / 1000); return s < 60 ? '방금' : s < 3600 ? `${Math.floor(s / 60)}분 전` : s < 86400 ? `${Math.floor(s / 3600)}시간 전` : `${Math.floor(s / 86400)}일 전`; };
 
