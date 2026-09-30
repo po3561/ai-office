@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 테스트
+        run: npm test
+      - name: 개인정보·토큰 검사
+        run: npm run privacy-check
+      - name: 설치 파일 빌드 확인
+        run: npm run build:installer

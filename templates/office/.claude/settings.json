@@ -1,0 +1,49 @@
+{
+  "enabledPlugins": {
+    "telegram@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "mcp__plugin_telegram_telegram__reply",
+      "mcp__plugin_telegram_telegram__react",
+      "mcp__plugin_telegram_telegram__edit_message",
+      "mcp__plugin_telegram_telegram__download_attachment",
+      "WebSearch",
+      "WebFetch",
+      "Bash(node \"{{CLI}}\" team *)",
+      "PowerShell(node \"{{CLI}}\" team *)",
+      "Bash(node \"{{CLI}}\" office restart *)",
+      "PowerShell(node \"{{CLI}}\" office restart *)"
+    ],
+    "deny": [
+      "Read(./.telegram/**)",
+      "Edit(./.telegram/**)",
+      "Edit(./.claude/settings.json)",
+      "Edit(./.claude/settings.local.json)",
+      "Edit(./.ai-office/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [{ "type": "command", "command": "node \"{{HOOK}}\" team_start", "async": true }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [{ "type": "command", "command": "node \"{{HOOK}}\" team_done", "async": true }]
+      }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node \"{{HOOK}}\" team_stop", "async": true }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"{{HOOK}}\" chief_task", "async": true }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"{{HOOK}}\" chief_idle", "async": true }] }
+    ]
+  }
+}

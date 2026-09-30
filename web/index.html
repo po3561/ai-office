@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-Office</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)"/><path d="M9 22V11.5L16 8l7 3.5V22M13 22v-6h6v6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>AI-Office</span>
+    </div>
+    <div class="switcher">
+      <label for="officeSel">사무실</label>
+      <div class="switcher-row">
+        <select id="officeSel" aria-label="사무실 선택"></select>
+        <button class="icon-btn" id="newOffice" title="사무실 추가" aria-label="사무실 추가">＋</button>
+      </div>
+    </div>
+    <nav id="nav" aria-label="메뉴"></nav>
+    <div class="side-foot" id="acct"></div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <button class="icon-btn menu-btn" id="menuBtn" aria-label="메뉴 열기">☰</button>
+      <h1 id="title"></h1>
+      <div class="top-right">
+        <span class="conn" id="conn"><i class="dot"></i><span>연결 중…</span></span>
+        <button class="icon-btn" id="themeBtn" title="화면 색상 바꾸기" aria-label="화면 색상 바꾸기">◐</button>
+      </div>
+    </header>
+    <div id="banners"></div>
+    <main id="content" class="content"></main>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<dialog id="dlg"></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/app.js" type="module"></script>
+</body>
+</html>

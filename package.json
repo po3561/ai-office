@@ -1,0 +1,21 @@
+{
+  "name": "ai-office",
+  "version": "0.1.0",
+  "description": "Telegram으로 지시하는 나만의 AI 사무실. 본인의 Claude Code 계정만 있으면 부서(에이전트)를 꾸려 업무를 맡길 수 있습니다.",
+  "type": "module",
+  "bin": {
+    "ai-office": "bin/ai-office.mjs"
+  },
+  "scripts": {
+    "start": "node bin/ai-office.mjs serve",
+    "open": "node bin/ai-office.mjs open",
+    "test": "node --test",
+    "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
+    "privacy-check": "node scripts/privacy-check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "keywords": ["claude-code", "telegram", "ai-agents", "dashboard", "office"]
+}

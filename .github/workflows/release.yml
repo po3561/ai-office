@@ -1,0 +1,26 @@
+name: Release
+
+# v0.1.0 같은 태그를 올리면 설치 파일(AI-Office-Setup.exe)과 zip 을 만들어 릴리스에 붙인다.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - run: npm run build:installer
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/AI-Office-Setup.exe
+            dist/ai-office-app.zip
+          generate_release_notes: true

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+# 실행 중 생기는 개인 데이터는 저장소에 넣지 않는다
+.env
+.telegram/
+.ai-office/
+offices/
+config.json
+offices.json
+install.json
