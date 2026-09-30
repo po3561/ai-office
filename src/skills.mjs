@@ -2,7 +2,7 @@
 // 이 모듈은 폴더를 "읽기만" 한다. Hermes(라피스) 같은 외부 봇 폴더도 이 함수로 읽는다.
 import { readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { readText, isDir } from './util.mjs';
+import { readText, readJson, isDir } from './util.mjs';
 
 const unq = (s) => String(s ?? '').trim().replace(/^(['"])(.*)\1$/, '$2');
 
@@ -36,7 +36,10 @@ function skillFrom(file, folderName, category) {
   const fm = parseFrontmatter(text);
   const st = statSync(file);
   const tag = /^\[?\s*([^,\]]+)/.exec(fm.meta.tags || '');
+  // 스킬 마켓에서 받은 스킬이면 출처를 함께 보여 준다(.market-installed.json).
+  const mk = readJson(join(file, '..', '.market-installed.json'), null);
   return {
+    market: mk && mk.schema === 1 ? { id: String(mk.id || ''), version: String(mk.version || ''), publisher: String(mk.publisher || '') } : null,
     id: folderName,
     name: fm.name || folderName,
     description: fm.description || '',

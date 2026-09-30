@@ -26,10 +26,11 @@ export const slug = (s) => String(s || '').toLowerCase().normalize('NFKD')
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
 
 // 웹 화면의 요청 오류: status 가 응답 코드가 된다.
+// details: 화면이 그대로 보여 줄 수 있는 추가 정보(예: 스킬 검사 결과 목록)
 export class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, details) { super(message); this.status = status; if (details !== undefined) this.details = details; }
 }
-export function need(cond, message, status = 400) { if (!cond) throw new HttpError(status, message); }
+export function need(cond, message, status = 400, details) { if (!cond) throw new HttpError(status, message, details); }
 
 // 명령 실행(창 없이). 시간 초과 시 강제 종료한다.
 export function run(cmd, args = [], { timeout = 15000, input, cwd, env, verbatim = false } = {}) {

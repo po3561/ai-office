@@ -10,7 +10,8 @@ import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, updateOffice, discover, repairOffices, migrateOffice } from './offices.mjs';
-import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice } from './teams.mjs';
+import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
+import { createMarket, findSkillDirs } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
 import { readStatus, summarize } from './status.mjs';
 import { runtime, startOffice, stopOffice, requestRestart, watchdogTick } from './runner.mjs';
@@ -147,6 +148,42 @@ route('POST', '/api/offices/:id/telegram/deny', async ({ p, body }) => { tg.deny
 route('POST', '/api/offices/:id/telegram/remove', async ({ p, body }) => { tg.removeSender(mutable(p.id).stateDir, body.senderId); return { ok: true }; });
 route('POST', '/api/offices/:id/telegram/policy', async ({ p, body }) => { tg.setPolicy(mutable(p.id).stateDir, body.mode); return { ok: true }; });
 
+// ── 스킬 마켓 ──
+// 게시·설치·회수는 대시보드 화면에서 사용자가 직접 누를 때만 동작한다(텔레그램 메시지로는 불가). 자동 설치·업데이트는 없다.
+const market = createMarket({ home: DATA_HOME, settings: () => getConfig().market, log: logChange });
+const honorificOf = (o) => { try { return loadOffice(o.folder).honorific; } catch { return ''; } };
+// 마켓에서 다루는 사무실: 읽기 전용(Hermes)은 제외한다.
+const marketOffices = () => listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
+  .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) }));
+const marketOffice = (id) => { const o = marketOffices().find((x) => x.id === id); need(o, '사무실을 찾을 수 없습니다.', 404); return o; };
+const localSkill = (o, skillId) => { const k = findSkillDirs(o.skillsDir).find((x) => x.id === skillId); need(k, '이 사무실에 없는 스킬입니다.', 404); return k; };   // 화면이 보낸 이름으로 경로를 만들지 않고 목록에서 찾는다
+const marketRestart = (o, r) => ({ ...r, needsRestart: runtime(getOffice(o.id)).running });
+
+route('GET', '/api/market/status', async () => market.status());
+route('POST', '/api/market/connect', async ({ body }) => {
+  const r = await market.connect({ repo: body.repo, alias: body.alias });
+  setConfig({ market: { repo: r.repo, alias: r.alias, enabled: true } });
+  return { ...r, status: await market.status() };
+});
+route('POST', '/api/market/disconnect', async ({ body }) => {
+  const repo = getConfig().market.repo;
+  setConfig({ market: { enabled: false } });
+  if (body.purge && repo) market.purgeCache(repo);
+  return market.status();
+});
+route('POST', '/api/market/refresh', async () => { await market.refresh(); return market.status(); });
+route('GET', '/api/market/skills', async () => market.list({ offices: marketOffices() }));
+route('GET', '/api/market/skills/:id', async ({ p }) => market.detail(p.id, { offices: marketOffices() }));
+route('GET', '/api/market/shareable', async () => market.shareable({ offices: marketOffices() }));
+route('POST', '/api/market/inspect', async ({ body }) => { const o = marketOffice(body.office); const k = localSkill(o, body.skillId); return market.inspect({ skillDir: k.dir, id: k.id, honorifics: o.honorifics }); });
+route('POST', '/api/market/publish', async ({ body }) => {
+  const o = marketOffice(body.office), k = localSkill(o, body.skillId);
+  return market.publish({ skillDir: k.dir, id: k.id, version: body.version, notes: body.notes, honorifics: o.honorifics, confirmWarnings: body.confirmWarnings === true, confirmRisks: body.confirmRisks === true });
+});
+route('POST', '/api/market/revoke', async ({ body }) => market.revoke({ id: body.id, reason: body.reason }));
+route('POST', '/api/market/install', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
+route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
+
 route('POST', '/api/diagnostics/refresh', async () => { const v = await diagnostics(true); return { pollers: v.pollers }; });
 route('POST', '/api/diagnostics/clean-pollers', async () => { const r = await tg.cleanRoguePollers(); await diagnostics(true); return r; });
 route('POST', '/api/diagnostics/disable-global-plugin', async () => tg.disableGlobalPlugin());
@@ -187,7 +224,7 @@ export function startServer({ port } = {}) {
       }
       send(res, 200, (await hit.handler({ p: params, body, url })) ?? { ok: true });
     } catch (e) {
-      if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+      if (e instanceof HttpError) return send(res, e.status, e.details === undefined ? { error: e.message } : { error: e.message, details: e.details });
       console.error('[ai-office]', e);
       send(res, 500, { error: '처리 중 오류가 났습니다. 로그를 확인해 주세요.' });
     }

@@ -1,10 +1,16 @@
 // 프로그램 설정(config.json)
 import { FILES } from './paths.mjs';
 import { readJson, writeJson, need } from './util.mjs';
+import { normalizeRepo } from './market.mjs';
 
-export const DEFAULTS = { port: 3300, honorific: '사용자님', theme: 'auto', autoRestart: true };
+// market: 스킬 마켓 연결 정보. 토큰은 저장하지 않는다(PC 의 git·gh 로그인을 그대로 쓴다).
+export const DEFAULTS = { port: 3300, honorific: '사용자님', theme: 'auto', autoRestart: true, market: { enabled: false, repo: '', alias: '' } };
 
-export const getConfig = () => ({ ...DEFAULTS, ...readJson(FILES.config, {}) });
+export const getConfig = () => {
+  const c = { ...DEFAULTS, ...readJson(FILES.config, {}) };
+  c.market = { ...DEFAULTS.market, ...(c.market && typeof c.market === 'object' ? c.market : {}) };
+  return c;
+};
 
 export function setConfig(patch = {}) {
   const cur = getConfig();
@@ -24,6 +30,18 @@ export function setConfig(patch = {}) {
     next.theme = patch.theme;
   }
   if ('autoRestart' in patch) next.autoRestart = Boolean(patch.autoRestart);
+  if ('market' in patch) {
+    const m = patch.market || {};
+    const nm = { ...cur.market };
+    if ('repo' in m) nm.repo = m.repo ? normalizeRepo(m.repo) : '';
+    if ('alias' in m) {
+      const a = String(m.alias || '').trim();
+      need(a.length <= 20 && !/[<>&"\r\n]/.test(a), 'PC 별칭은 20자 이하, 특수기호(<>&")는 쓸 수 없습니다.');
+      nm.alias = a;
+    }
+    if ('enabled' in m) nm.enabled = Boolean(m.enabled) && Boolean(nm.repo);
+    next.market = nm;
+  }
   writeJson(FILES.config, next);
   return next;
 }
