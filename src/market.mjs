@@ -113,6 +113,36 @@ export function findSkillDirs(skillsDir) {
   return out;
 }
 
+// ── 게시 요청(승인 대기함) ──
+// 봇은 마켓을 직접 다루지 않는다. 사용자가 텔레그램으로 "이 스킬 마켓에 올려줘"라고 하면
+// 봇은 사무실의 업무데이터/마켓요청/<스킬 폴더 이름>.txt 에 요청 이유만 적고, 사용자가 대시보드에서 검사 결과를 보고 승인(게시)하거나 거절한다.
+export const REQUEST_DIR = ['업무데이터', '마켓요청'];
+const REQ_EXT = /\.(txt|md)$/i;
+export function readRequests(folder) {
+  const dir = join(folder, ...REQUEST_DIR);
+  let entries = [];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const e of entries) {
+    if (!e.isFile() || !REQ_EXT.test(e.name) || e.name.startsWith('.')) continue;
+    const p = join(dir, e.name);
+    let note = '', at = '';
+    try { const st = statSync(p); at = st.mtime.toISOString(); if (st.size <= 64_000) note = readFileSync(p, 'utf8').replace(/^﻿/, ''); } catch { continue; }
+    out.push({ skillId: e.name.replace(REQ_EXT, ''), file: e.name, note: clean(note), at });
+    if (out.length >= 50) break;
+  }
+  return out.sort((a, b) => (a.at < b.at ? 1 : -1));
+}
+// 처리한 요청 파일은 지우지 않고 보관함/마켓요청_처리 로 옮긴다. 화면이 보낸 이름으로 경로를 만들지 않고 목록에서 찾는다.
+export function resolveRequest(folder, skillId, outcome) {
+  const hit = readRequests(folder).filter((r) => r.skillId.toLowerCase() === String(skillId || '').toLowerCase());
+  if (!hit.length) return 0;
+  const bak = join(folder, '보관함', '마켓요청_처리');
+  mkdirSync(bak, { recursive: true });
+  for (const r of hit) renameSync(join(folder, ...REQUEST_DIR, r.file), join(bak, `${r.skillId}_${stamp()}_${outcome}${r.file.slice(r.skillId.length)}`));
+  return hit.length;
+}
+
 export function readInstalledMarker(skillDir) {
   const m = readJson(join(skillDir, INSTALLED_FILE), null);
   return m && m.schema === 1 && typeof m.id === 'string' && isSemver(m.version) && HEX64.test(m.sha256 || '') ? m : null;
@@ -264,7 +294,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
   // ── 공개 기능 ──
   async function status() {
     const s = conf(), g = await findGit(), st = state();
-    const out = { enabled: Boolean(s.enabled && s.repo), repo: s.repo || '', alias: s.alias || '', git: g ? { available: true, version: g.version } : { available: false }, gh: await ghReady(), ready: false, entries: 0, lastSync: '', visibility: st.visibility || 'unknown', publisher: '' };
+    const out = { enabled: Boolean(s.enabled && s.repo), repo: s.repo || '', alias: s.alias || '', git: g ? { available: true, version: g.version } : { available: false }, gh: await ghReady(), ready: false, entries: 0, lastSync: '', visibility: st.visibility || 'unknown', publisher: '', lastError: st.lastError || '' };
     if (g) out.publisher = await myName();
     if (out.enabled) {
       const dir = cacheDirFor(s.repo);
@@ -280,17 +310,30 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     need(a.length >= 1 && a.length <= 20 && !/[<>&"\r\n]/.test(a), 'PC 별칭은 1~20자, 특수기호(<>&")는 쓸 수 없습니다. (예: 메인PC, 서브PC)');
     const dir = await syncDir(r);
     const vis = await visibility(r);
-    saveState({ visibility: vis });
+    saveState({ visibility: vis, lastError: '' });
     return { repo: r, alias: a, entries: readEntries(dir).length, visibility: vis };
   });
 
   const refresh = () => locked(async () => {
     const s = conf();
     need(s.enabled && s.repo, '스킬 마켓이 연결되어 있지 않습니다.', 409);
-    const dir = await syncDir(s.repo);
-    saveState({ visibility: await visibility(s.repo) });
-    return { entries: readEntries(dir).length };
+    try {
+      const dir = await syncDir(s.repo);
+      saveState({ visibility: await visibility(s.repo), lastError: '' });
+      return { entries: readEntries(dir).length };
+    } catch (e) { saveState({ lastError: clean(e.message), lastErrorAt: nowIso() }); throw e; }
   });
+
+  // 대시보드 서버가 주기적으로 부른다: 연결되어 있고 마지막 새로고침이 오래됐으면 원격의 새 스킬·새 버전을 받아 온다(설치는 하지 않는다).
+  async function autoSync(maxAgeMs = 10 * 60 * 1000) {
+    const s = conf();
+    if (!s.enabled || !s.repo || !isDir(join(cacheDirFor(s.repo), '.git'))) return false;
+    const st = state();
+    const last = Math.max(Date.parse(st.lastSync || '') || 0, Date.parse(st.lastErrorAt || '') || 0);
+    if (Date.now() - last < maxAgeMs) return false;
+    await refresh();
+    return true;
+  }
 
   function list({ offices = [] } = {}) {
     const { dir } = requireReady();
@@ -322,10 +365,15 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     const entries = dir ? readEntries(dir) : [];
     const revoked = dir ? readRevoked(dir) : {};
     const me = dir ? await myName() : '';
-    return offices.map((o) => ({
+    return offices.map((o) => {
+      const reqs = o.folder ? readRequests(o.folder) : [];
+      const dirs = findSkillDirs(o.skillsDir);
+      const reqOf = (id) => reqs.find((r) => r.skillId.toLowerCase() === id.toLowerCase()) || null;
+      return {
       office: o.id, officeName: o.name,
-      skills: findSkillDirs(o.skillsDir).map((k) => {
-        const item = { id: k.id, marketId: k.id.toLowerCase(), category: k.category, name: k.id, description: '', status: 'private', version: '', reason: '' };
+      requests: reqs.map((r) => ({ skillId: r.skillId, note: r.note, at: r.at, known: dirs.some((k) => k.id.toLowerCase() === r.skillId.toLowerCase()) })),
+      skills: dirs.map((k) => {
+        const item = { id: k.id, marketId: k.id.toLowerCase(), category: k.category, name: k.id, description: '', status: 'private', version: '', reason: '', requested: reqOf(k.id) };
         const fm = (() => { try { return parseFrontmatter(readFileSync(join(k.dir, 'SKILL.md'), 'utf8').replace(/^﻿/, '')); } catch { return {}; } })();
         item.name = fm.name || k.id; item.description = fm.description || '';
         if (builtinIds().has(item.marketId)) return { ...item, status: 'builtin', reason: 'AI-Office 기본 스킬입니다(모든 사무실에 이미 들어 있어 공유하지 않습니다).' };
@@ -341,7 +389,8 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
         if (me && e.publisher !== me) return { ...item, status: 'conflict', reason: `같은 이름의 스킬을 다른 게시자(${e.publisher})가 이미 올렸습니다.` };
         return { ...item, status: packageHash(files) === e.sha256 ? 'published' : 'changed' };
       }),
-    }));
+      };
+    });
   }
 
   // 게시 전 검사(저장소에 아무것도 올리지 않는다)
@@ -514,5 +563,5 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
   // 연결을 끊는다. 복제본(cache)은 마켓에서 내려받은 사본일 뿐이라 지워도 스킬·게시 내용에는 영향이 없다.
   const purgeCache = (repo) => { rmSync(cacheDirFor(repo), { recursive: true, force: true }); };
 
-  return { status, connect, refresh, list, detail, shareable, inspect, publish, revoke, install, uninstall, purgeCache, _test: { cacheDirFor, readEntries, syncDir } };
+  return { status, connect, refresh, autoSync, list, detail, shareable, inspect, publish, revoke, install, uninstall, purgeCache, _test: { cacheDirFor, readEntries, syncDir } };
 }

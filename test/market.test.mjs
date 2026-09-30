@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createMarket, normalizeRepo, safeParts, semverCmp, nextPatch, collectPackage, packageHash, INSTALLED_FILE } from '../src/market.mjs';
+import { createMarket, normalizeRepo, safeParts, semverCmp, nextPatch, collectPackage, packageHash, INSTALLED_FILE, REQUEST_DIR, readRequests, resolveRequest } from '../src/market.mjs';
 import { scanFiles } from '../src/market-scan.mjs';
 import { scanSkills } from '../src/skills.mjs';
 
@@ -250,4 +250,35 @@ t('연결 상태: 꺼져 있으면 목록·설치를 거부하고, 잘못된 저
   assert.equal(s.enabled, false); assert.equal(s.git.available, true);
   await rej(A.market.connect({ repo: join(root, 'no-such.git'), alias: 'x' }), 502);
   await rej(A.market.connect({ repo: bare, alias: '<b>' }), 400);
+});
+
+t('게시 요청(승인 대기함): 봇이 남긴 요청이 보이고, 처리하면 지우지 않고 보관함으로 옮긴다', async () => {
+  mkSkill(A.office.skillsDir, 'req-skill');
+  const reqDir = join(A.office.folder, ...REQUEST_DIR);
+  mkdirSync(reqDir, { recursive: true });
+  writeFileSync(join(reqDir, 'req-skill.txt'), '메인PC에서도 쓰고 싶다고 하심');
+  writeFileSync(join(reqDir, 'ghost.md'), '없는 스킬');
+  writeFileSync(join(reqDir, 'note.docx'), '무시');
+  const share = (await A.market.shareable({ offices: A.offices }))[0];
+  assert.deepEqual(share.requests.map((r) => [r.skillId, r.known]).sort(), [['ghost', false], ['req-skill', true]]);
+  assert.match(share.skills.find((s) => s.id === 'req-skill').requested.note, /메인PC/);
+  assert.equal(resolveRequest(A.office.folder, '../req-skill', '거절'), 0, '목록에 없는 이름으로는 아무것도 옮기지 않는다');
+  assert.equal(resolveRequest(A.office.folder, 'REQ-SKILL', '게시'), 1);
+  assert.deepEqual(readRequests(A.office.folder).map((r) => r.skillId), ['ghost']);
+  const moved = readdirSync(join(A.office.folder, '보관함', '마켓요청_처리'));
+  assert.ok(moved.some((f) => /^req-skill_.*_게시\.txt$/.test(f)), moved.join(','));
+});
+
+t('자동 새로고침: 오래됐을 때만 원격을 다시 받고, 실패하면 오류를 기록해 화면에 알린다', async () => {
+  assert.equal(await A.market.autoSync(), false, '방금 새로고침했으면 건너뛴다');
+  const c = mkSkill(B.office.skillsDir, 'auto-new');
+  await B.market.publish({ skillDir: c, id: 'auto-new', version: '1.0.0' });
+  assert.ok(!A.market.list({ offices: A.offices }).some((x) => x.id === 'auto-new'));
+  assert.equal(await A.market.autoSync(0), true);
+  assert.ok(A.market.list({ offices: A.offices }).some((x) => x.id === 'auto-new'), '다른 PC 가 올린 스킬이 자동으로 보인다');
+  const broken = createMarket({ home: A.home, settings: () => ({ ...A.cfg, repo: A.cfg.repo }), useGh: false, identity: { name: 'x', email: 'x@example.com' }, run: async (cmd, args, opts) => (args.includes('fetch') ? { code: 128, stdout: '', stderr: 'network down' } : (await import('../src/util.mjs')).run(cmd, args, opts)) });
+  await rej(broken.autoSync(0), 502);
+  assert.match((await broken.status()).lastError, /network down/);
+  await A.market.refresh();
+  assert.equal((await A.market.status()).lastError, '', '다시 성공하면 오류 표시가 사라진다');
 });

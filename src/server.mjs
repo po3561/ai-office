@@ -11,7 +11,7 @@ import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, updateOffice, discover, repairOffices, migrateOffice } from './offices.mjs';
 import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
-import { createMarket, findSkillDirs } from './market.mjs';
+import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
 import { readStatus, summarize } from './status.mjs';
 import { runtime, startOffice, stopOffice, requestRestart, watchdogTick } from './runner.mjs';
@@ -179,7 +179,17 @@ route('GET', '/api/market/shareable', async () => market.shareable({ offices: ma
 route('POST', '/api/market/inspect', async ({ body }) => { const o = marketOffice(body.office); const k = localSkill(o, body.skillId); return market.inspect({ skillDir: k.dir, id: k.id, honorifics: o.honorifics }); });
 route('POST', '/api/market/publish', async ({ body }) => {
   const o = marketOffice(body.office), k = localSkill(o, body.skillId);
-  return market.publish({ skillDir: k.dir, id: k.id, version: body.version, notes: body.notes, honorifics: o.honorifics, confirmWarnings: body.confirmWarnings === true, confirmRisks: body.confirmRisks === true });
+  const r = await market.publish({ skillDir: k.dir, id: k.id, version: body.version, notes: body.notes, honorifics: o.honorifics, confirmWarnings: body.confirmWarnings === true, confirmRisks: body.confirmRisks === true });
+  try { if (resolveRequest(o.folder, k.id, '게시')) logChange(o.folder, '마켓 요청', k.id, `봇의 게시 요청을 승인해 v${r.version} 게시`, ''); } catch { /* 요청 파일 정리가 실패해도 게시는 끝났다 */ }
+  return r;
+});
+// 봇이 남긴 게시 요청을 거절한다(요청 파일은 보관함으로 옮긴다).
+route('POST', '/api/market/requests/dismiss', async ({ body }) => {
+  const o = marketOffice(body.office);
+  const n = resolveRequest(o.folder, String(body.skillId || ''), '거절');
+  need(n, '해당 게시 요청이 없습니다.', 404);
+  logChange(o.folder, '마켓 요청', String(body.skillId), '봇의 게시 요청을 거절', '');
+  return { ok: true };
 });
 route('POST', '/api/market/revoke', async ({ body }) => market.revoke({ id: body.id, reason: body.reason }));
 route('POST', '/api/market/install', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
@@ -241,6 +251,9 @@ export function startServer({ port } = {}) {
     } catch (e) { console.error('[ai-office] 감시 오류', e.message); }
   }, 15000);
   timer.unref?.();
+  // 스킬 마켓이 연결되어 있으면 10분마다 원격의 새 스킬·새 버전 목록만 받아 온다(설치·업데이트는 사용자가 누를 때만).
+  const marketTimer = setInterval(() => { market.autoSync().catch((e) => console.error('[ai-office] 마켓 새로고침 실패', e.message)); }, 60000);
+  marketTimer.unref?.();
 
   return new Promise((ok, fail) => {
     server.once('error', fail);

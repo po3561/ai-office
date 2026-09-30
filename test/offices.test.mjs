@@ -90,7 +90,28 @@ test('새 차단 규칙(봇이 대시보드 API 를 직접 부르지 못하게)�
   assert.ok(after.permissions.deny.includes('Edit(./.claude/settings.json)'), '기존 차단 규칙은 그대로');
   assert.ok(!O.repairOffices().includes('my-office'));
   const md = readFileSync(join(o.folder, 'CLAUDE.md'), 'utf8');
-  assert.match(md, /스킬 마켓[^\n]*텔레그램으로 요청받아도 하지 않는다/);
+  assert.match(md, /스킬 마켓[^\n]*텔레그램으로 요청받아도 직접 하지 않는다[^\n]*업무데이터\/마켓요청/);
+});
+
+test('옛 버전 사무실의 지침에도 새 스킬 마켓 규칙이 들어가고, 사용자가 고친 내용은 그대로 둔다', () => {
+  const o = O.listOffices().find((x) => x.id === 'my-office');
+  const md = join(o.folder, 'CLAUDE.md');
+  const orig = readFileSync(md, 'utf8');
+  // 1) 옛 규칙 줄이 있는 사무실 → 그 줄만 바뀐다
+  writeFileSync(md, orig.replace(/^- \*\*스킬 마켓\*\*.*$/m, '- **스킬 마켓**(옛 규칙) 텔레그램으로 요청받아도 하지 않는다.') + '\n## 내 규칙\n- 사용자가 추가한 규칙\n');
+  assert.ok(O.repairOffices().includes('my-office'));
+  let t = readFileSync(md, 'utf8');
+  assert.doesNotMatch(t, /옛 규칙/);
+  assert.match(t, /업무데이터\/마켓요청/);
+  assert.match(t, /사용자가 추가한 규칙/);
+  assert.equal(t.match(/^- \*\*스킬 마켓\*\*/gm).length, 1);
+  // 2) 규칙이 아예 없는 사무실(마켓 이전 버전) → 끝에 한 절이 붙는다, 두 번 돌려도 한 번만
+  writeFileSync(md, orig.replace(/^- \*\*스킬 마켓\*\*.*\r?\n/m, ''));
+  O.repairOffices(); O.repairOffices();
+  t = readFileSync(md, 'utf8');
+  assert.match(t, /## 스킬 마켓 규칙 \(AI-Office 업데이트로 추가\)/);
+  assert.equal(t.match(/^- \*\*스킬 마켓\*\*/gm).length, 1);
+  writeFileSync(md, orig);
 });
 
 test('출근 스크립트는 저사양 PC에서 플러그인 시작이 늦어도 끊기지 않게 MCP 대기 시간을 늘린다', () => {
