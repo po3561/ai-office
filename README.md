@@ -32,7 +32,7 @@
 **소스에서 설치**
 
 ```powershell
-git clone https://github.com/<OWNER>/ai-office.git
+git clone https://github.com/po3561/ai-office.git
 cd ai-office
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```

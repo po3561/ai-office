@@ -18,7 +18,7 @@ const rules = [
 ];
 const extra = process.argv.slice(2);
 const me = [userInfo().username, homedir().split(/[\\/]/).pop()].filter(Boolean);
-for (const w of [...extra, ...me]) if (w.length >= 3) rules.push({ name: `내 정보 "${w}"`, re: new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });
+for (const w of [...extra, ...me]) if (w.length >= 3) rules.push({ name: `내 정보 "${w}"`, re: new RegExp(`(?<![A-Za-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`, 'i') });
 
 const hits = [];
 (function walk(dir) {
