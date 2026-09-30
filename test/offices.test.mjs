@@ -23,6 +23,15 @@ test('새 사무실을 만들면 견본이 복사되고 부서가 생긴다', ()
   assert.ok(settings.permissions.deny.includes('Edit(./.claude/settings.json)'), '봇이 자기 권한 설정을 못 고치게 막아야 한다');
 });
 
+test('새 사무실 지침은 플러그인이 지원하는 서식만 쓰게 하고, 전달 전 정확성 확인 규칙이 있다', () => {
+  const md = readFileSync(join(O.listOffices().find((x) => x.id === 'my-office').folder, 'CLAUDE.md'), 'utf8');
+  assert.doesNotMatch(md, /\*\*항상 `format: "html"`\*\*/, 'html 을 무조건 쓰라고 하면 지원하지 않는 플러그인에서 태그가 글자로 보인다');
+  assert.match(md, /`html`이 있으면/);
+  assert.match(md, /태그를 절대 쓰지 않는다/);
+  assert.match(md, /## 결과 정확성/);
+  assert.match(md, /직접 열어서 내용을 확인/);
+});
+
 test('같은 이름의 사무실을 또 만들면 다른 폴더가 된다', () => {
   const a = O.createOffice({ name: 'My Office', presets: [] });
   assert.equal(a.id, 'my-office-2');
