@@ -276,11 +276,11 @@ function vConnect() {
     ${c.installed ? (c.auth.loggedIn ? pill('ok', '로그인됨') : pill('warn', '로그인 필요')) : pill('bad', '설치 필요')}</div>`;
   if (!c.installed) {
     const br = c.broken;
-    html += `${br ? `<div class="banner warn" style="margin-bottom:12px"><span class="ic">🔍</span><div class="txt"><b>Claude Code 파일은 있지만 실행되지 않습니다</b><span class="muted">${esc(br.error)}</span><div class="path" style="margin-top:4px">${esc(br.path)}</div></div></div>` : ''}<div class="row"><button class="btn primary" data-act="claude-install">${br ? 'Claude Code 다시 설치' : 'Claude Code 설치'}</button><button class="btn" data-act="claude-refresh">설치했어요, 다시 확인</button></div><p class="small muted" style="margin-top:10px">설치 창이 열리고 <code>npm install -g @anthropic-ai/claude-code</code> 가 실행됩니다. Node.js가 필요합니다.</p>`;
+    html += `${br ? `<div class="banner warn" style="margin-bottom:12px"><span class="ic">🔍</span><div class="txt"><b>Claude Code 파일은 있지만 실행되지 않습니다</b><span class="muted">${esc(br.error)}</span><div class="path" style="margin-top:4px">${esc(br.path)}</div></div></div>` : ''}<div class="row"><button class="btn primary" data-act="claude-install">${br ? 'Claude Code 다시 설치' : 'Claude Code 설치'}</button><button class="btn" data-act="claude-refresh">설치했어요, 다시 확인</button><button class="btn sm ghost" data-act="claude-diagnose">진단 정보 보기</button></div><p class="small muted" style="margin-top:10px">설치 창이 열리고 <code>npm install -g @anthropic-ai/claude-code</code> 가 실행됩니다. Node.js가 필요합니다.</p>`;
   } else if (c.auth.loggedIn) {
     html += `<div class="row"><div class="avatar">${esc((c.auth.email || 'C')[0].toUpperCase())}</div><div><b>${esc(c.auth.email || '')}</b><div class="small muted">${esc(planLabel(c.auth))}${c.auth.org ? ` · ${esc(c.auth.org)}` : ''} · Claude Code ${esc(c.version)}</div></div><span class="spacer"></span><button class="btn sm" data-act="claude-refresh">새로고침</button><button class="btn sm" data-act="claude-login">다른 계정으로 로그인</button><button class="btn sm danger" data-act="claude-logout">로그아웃</button></div>`;
   } else {
-    html += `<div class="row"><button class="btn primary" data-act="claude-login">Claude 구독 계정으로 로그인</button><button class="btn" data-act="claude-login-console">Anthropic Console(API 요금)으로 로그인</button><button class="btn sm ghost" data-act="claude-refresh">로그인했어요, 다시 확인</button></div>
+    html += `<div class="row"><button class="btn primary" data-act="claude-login">Claude 구독 계정으로 로그인</button><button class="btn" data-act="claude-login-console">Anthropic Console(API 요금)으로 로그인</button><button class="btn sm ghost" data-act="claude-refresh">로그인했어요, 다시 확인</button><button class="btn sm ghost" data-act="claude-diagnose">진단 정보 보기</button></div>
     ${c.auth.error ? `<p class="small" style="margin-top:10px;color:var(--warn)">상태 확인 메시지: ${esc(c.auth.error)}</p>` : ''}
     <ol class="guide"><li>버튼을 누르면 새 창이 열리고 브라우저에서 로그인 화면이 나옵니다.</li><li>로그인을 마치면 창이 안내하는 대로 닫고, 이 화면에서 「다시 확인」을 누르세요.</li><li>Claude <b>데스크톱 앱</b>에 로그인한 것과 <b>Claude Code</b> 로그인은 따로입니다. 여기서는 위 버튼으로 Claude Code에 로그인해야 합니다.</li></ol>`;
   }
@@ -396,6 +396,28 @@ async function dlgTeamEdit(key) {
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit">저장</button></div></form>`);
 }
 
+async function dlgDiagnose() {
+  openDlg('<div class="dlg-head"><h2>Claude 진단 정보</h2><p>확인하는 중입니다…</p></div>');
+  let d;
+  try { d = await api('GET', '/api/claude/diagnose'); } catch (e) { openDlg(`<div class="dlg-head"><h2>Claude 진단 정보</h2><p>${esc(e.message)}</p></div><div class="dlg-foot"><button class="btn" data-act="dlg-close">닫기</button></div>`); return; }
+  const L = [];
+  L.push(`사용자: ${d.user}   홈: ${d.home}`, `Node ${d.node} / ${d.platform}`, '');
+  L.push(`Claude Code: ${d.bin ? `${d.bin.path}  (버전 ${d.bin.version})` : '실행 가능한 파일 없음'}`);
+  if (d.broken) L.push(`실행 실패: ${d.broken.path} → ${d.broken.error}`);
+  L.push(`후보 경로: ${d.candidates.length ? d.candidates.join('  |  ') : '없음'}`, '');
+  L.push(`CLAUDE_CONFIG_DIR: ${d.claudeConfigDirEnv}`, `ANTHROPIC_API_KEY: ${d.envKeys.ANTHROPIC_API_KEY} / ANTHROPIC_AUTH_TOKEN: ${d.envKeys.ANTHROPIC_AUTH_TOKEN} / CLAUDE_CODE_OAUTH_TOKEN: ${d.envKeys.CLAUDE_CODE_OAUTH_TOKEN}`);
+  if (d.status) {
+    L.push('', `claude auth status → 종료 코드 ${d.status.exitCode}${d.status.timedOut ? ' (시간 초과)' : ''}`, d.status.stdout || '(출력 없음)');
+    if (d.status.stderr) L.push(`[오류 출력] ${d.status.stderr}`);
+    L.push('', `설정 폴더: ${d.configDir} (${d.configDirExists ? '있음' : '없음'})   로그인 파일: ${d.credentialsFile}`);
+  }
+  const text = L.join('\n');
+  openDlg(`<div class="dlg-head"><h2>Claude 진단 정보</h2><p>로그인이 안 잡힐 때 원인을 찾는 정보입니다. 비밀번호·토큰은 포함되지 않습니다.</p></div>
+    <div class="dlg-body"><pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:55vh;overflow:auto;user-select:text">${esc(text)}</pre></div>
+    <div class="dlg-foot"><button class="btn" id="diagCopy">복사</button><button class="btn primary" data-act="dlg-close">닫기</button></div>`);
+  $('#diagCopy').onclick = async () => { try { await navigator.clipboard.writeText(text); toast('복사했습니다.'); } catch { toast('복사하지 못했습니다. 드래그해서 복사해 주세요.', true); } };
+}
+
 function dlgConfirm({ title, body, ok = '확인', danger = false, onOk }) {
   openDlg(`<div class="dlg-head"><h2>${esc(title)}</h2><p>${body}</p></div><div class="dlg-foot"><button class="btn" data-act="dlg-close">취소</button><button class="btn ${danger ? 'danger' : 'primary'}" id="confirmOk">${esc(ok)}</button></div>`);
   $('#confirmOk').onclick = async (e) => { e.target.disabled = true; await onOk(); closeDlg(); };
@@ -414,6 +436,7 @@ const ACT = {
   'claude-login': (b) => doing(b, async () => { await api('POST', '/api/claude/login', { method: 'claudeai' }); toast('로그인 창을 열었습니다. 브라우저에서 로그인한 뒤 「다시 확인」을 눌러 주세요.'); }),
   'claude-login-console': (b) => doing(b, async () => { await api('POST', '/api/claude/login', { method: 'console' }); toast('로그인 창을 열었습니다. 로그인한 뒤 「다시 확인」을 눌러 주세요.'); }),
   'claude-logout': (b) => dlgConfirm({ title: 'Claude 로그아웃', body: '이 PC의 Claude Code에서 로그아웃합니다. 실행 중인 사무실은 다시 로그인할 때까지 일하지 못합니다.', ok: '로그아웃', danger: true, onOk: async () => { try { await api('POST', '/api/claude/logout'); toast('로그아웃했습니다.'); } catch (e) { toast(e.message, true); } refresh(); } }),
+  'claude-diagnose': () => dlgDiagnose(),
   'claude-refresh': (b) => doing(b, async () => { await api('POST', '/api/claude/refresh'); await refresh(); toast('계정 상태를 다시 확인했습니다.'); }),
   'claude-install': (b) => doing(b, async () => { await api('POST', '/api/claude/install'); toast('설치 창을 열었습니다. 설치가 끝나면 「다시 확인」을 눌러 주세요.'); }),
   'office-start': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/start`); toast('출근시켰습니다. 처음에는 작업 표시줄의 사무실 창에서 폴더 신뢰 질문에 Enter(Yes)를 눌러야 할 수 있습니다.'); S.restartNeeded[S.officeId] = false; setTimeout(refresh, 2500); }),

@@ -8,7 +8,7 @@ import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS } from './paths.mj
 import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
-import { claudeInfo, startLogin, logout, startInstall } from './claude.mjs';
+import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, updateOffice, discover, repairOffices, migrateOffice } from './offices.mjs';
 import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice } from './teams.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
@@ -120,6 +120,7 @@ route('GET', '/api/offices/:id/teams/:key', async ({ p }) => getTeamDetail(getOf
 route('PATCH', '/api/config', async ({ body }) => setConfig(body));
 
 route('POST', '/api/claude/refresh', async () => claudeInfo({ fresh: true }));
+route('GET', '/api/claude/diagnose', async () => claudeDiagnose());
 route('POST', '/api/claude/login', async ({ body }) => startLogin(body.method));
 route('POST', '/api/claude/logout', async () => logout());
 route('POST', '/api/claude/install', async () => startInstall());

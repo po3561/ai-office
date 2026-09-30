@@ -71,15 +71,39 @@ export async function claudeInfo({ fresh = false } = {}) {
     const j = JSON.parse(a.stdout);
     auth = {
       loggedIn: Boolean(j.loggedIn), method: j.authMethod || '', email: j.email || '', org: j.orgName || '',
-      plan: j.subscriptionType || '', provider: j.apiProvider || '',
+      plan: j.subscriptionType || '', provider: j.apiProvider || '', configDir: j.configDirectory || '',
     };
   } catch {
-    // 출력을 읽지 못하면 로그인 안 됨으로 보되, 이유를 함께 알려 준다.
-    auth = { loggedIn: false, error: firstLine(a.stderr) || firstLine(a.stdout) || (a.timedOut ? '로그인 상태 확인이 시간 안에 끝나지 않았습니다.' : '') };
+    // 출력을 읽지 못하면 로그인 안 됨으로 보되, 이유를 함께 알려 준다(빈 출력이어도 종료 코드를 보여 준다).
+    auth = { loggedIn: false, error: firstLine(a.stderr) || firstLine(a.stdout) || (a.timedOut ? '로그인 상태 확인이 시간 안에 끝나지 않았습니다.' : `상태 확인 명령이 출력 없이 끝났습니다(종료 코드 ${a.code}). Claude Code가 너무 오래된 버전일 수 있습니다.`) };
   }
   const value = { installed: true, path: bin.path, version: bin.version, auth };
   authCache = { at: Date.now(), value };
   return value;
+}
+
+// 로그인이 안 잡힐 때 원인을 가려내기 위한 진단 정보. 토큰·비밀번호는 읽지 않고, 값이 있는지 여부만 본다.
+export async function claudeDiagnose() {
+  cachedBin = null;
+  const bin = await findClaude();
+  const env = process.env;
+  const flag = (k) => (env[k] ? '설정됨' : '없음');
+  const d = {
+    node: process.version, platform: `${process.platform} ${process.arch}`, user: env.USERNAME || env.USER || '',
+    home: homedir(), claudeConfigDirEnv: env.CLAUDE_CONFIG_DIR || '(기본값 사용)',
+    envKeys: { ANTHROPIC_API_KEY: flag('ANTHROPIC_API_KEY'), ANTHROPIC_AUTH_TOKEN: flag('ANTHROPIC_AUTH_TOKEN'), CLAUDE_CODE_OAUTH_TOKEN: flag('CLAUDE_CODE_OAUTH_TOKEN') },
+    candidates: await candidates(), bin: bin ? { path: bin.path, version: bin.version } : null, broken: brokenBin,
+  };
+  if (bin) {
+    const a = await exec(bin, ['auth', 'status', '--json'], { timeout: 20000 });
+    d.status = { exitCode: a.code, timedOut: a.timedOut, stdout: a.stdout.trim().slice(0, 1500), stderr: a.stderr.trim().slice(0, 1500) };
+    let dir = env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+    try { const j = JSON.parse(a.stdout); if (j.configDirectory) dir = j.configDirectory; } catch { }
+    d.configDir = dir;
+    d.configDirExists = isDir(dir);
+    d.credentialsFile = isFile(join(dir, '.credentials.json')) ? '있음' : '없음(Windows는 다른 저장소를 쓸 수도 있음)';
+  }
+  return d;
 }
 
 // 보이는 PowerShell 창에서 스크립트를 실행한다. 한글·공백 경로가 깨지지 않도록 인코딩된 명령으로 넘긴다.
@@ -102,7 +126,11 @@ export async function startLogin(method = 'claudeai') {
   launchConsole('Claude 로그인', [
     `& ${psQuote(bin.path)} auth login ${flag}`,
     "Write-Host ''",
-    "Write-Host '로그인이 끝났으면 이 창을 닫고, 대시보드에서 「다시 확인」을 눌러 주세요.'",
+    "Write-Host '── 로그인 결과 확인 ──' -ForegroundColor Cyan",
+    `$st = (& ${psQuote(bin.path)} auth status --json 2>&1 | Out-String)`,
+    'Write-Host $st',
+    "if ($st -match 'loggedIn.{1,4}true') { Write-Host '로그인되었습니다. 이 창을 닫고 대시보드에서 「다시 확인」을 눌러 주세요.' -ForegroundColor Green }",
+    "else { Write-Host '아직 로그인되지 않았습니다. 브라우저에서 로그인을 끝내고(화면에 코드가 나오면 이 창에 붙여넣기) 다시 시도해 주세요. 위 내용을 대시보드 「진단 정보」와 함께 알려 주시면 원인을 찾을 수 있습니다.' -ForegroundColor Yellow }",
   ]);
   authCache = { at: 0, value: null };
   return { started: true };
