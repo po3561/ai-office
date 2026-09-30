@@ -32,12 +32,12 @@ export class HttpError extends Error {
 export function need(cond, message, status = 400) { if (!cond) throw new HttpError(status, message); }
 
 // 명령 실행(창 없이). 시간 초과 시 강제 종료한다.
-export function run(cmd, args = [], { timeout = 15000, input, cwd, env } = {}) {
+export function run(cmd, args = [], { timeout = 15000, input, cwd, env, verbatim = false } = {}) {
   return new Promise((resolve) => {
     let out = '', err = '', done = false, timedOut = false;
     let child;
     try {
-      child = spawn(cmd, args, { cwd, env: env ? { ...process.env, ...env } : process.env, windowsHide: true });
+      child = spawn(cmd, args, { cwd, env: env ? { ...process.env, ...env } : process.env, windowsHide: true, windowsVerbatimArguments: verbatim });
     } catch (e) { return resolve({ code: -1, stdout: '', stderr: String(e.message), timedOut: false }); }
     const finish = (code) => { if (done) return; done = true; clearTimeout(timer); resolve({ code, stdout: out, stderr: err, timedOut }); };
     const timer = setTimeout(() => { timedOut = true; try { child.kill(); } catch { } finish(-1); }, timeout);

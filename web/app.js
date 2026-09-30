@@ -125,7 +125,10 @@ function renderBanners(o) {
   const b = [];
   const ov = S.ov;
   if (ov) {
-    if (!ov.claude.installed) b.push(`<div class="banner bad"><span class="ic">⛔</span><div class="txt"><b>Claude Code가 설치되어 있지 않습니다</b><span class="muted">사무실을 움직이려면 Claude Code가 필요합니다.</span></div><button class="btn sm primary" data-act="claude-install">설치하기</button></div>`);
+    if (!ov.claude.installed) {
+      const br = ov.claude.broken;
+      b.push(`<div class="banner bad"><span class="ic">⛔</span><div class="txt"><b>${br ? 'Claude Code가 있지만 실행되지 않습니다' : 'Claude Code가 설치되어 있지 않습니다'}</b><span class="muted">${br ? `${esc(clip(br.error, 140))} — 다시 설치하면 해결되는 경우가 많습니다.` : '사무실을 움직이려면 Claude Code가 필요합니다.'}</span></div><button class="btn sm primary" data-act="claude-install">${br ? '다시 설치' : '설치하기'}</button></div>`);
+    }
     else if (!ov.claude.auth.loggedIn) b.push(`<div class="banner warn"><span class="ic">🔑</span><div class="txt"><b>Claude에 로그인해 주세요</b><span class="muted">본인의 Claude 계정으로 로그인하면 사무실이 그 계정의 사용량으로 일합니다.</span></div><button class="btn sm primary" data-act="claude-login">로그인</button></div>`);
     if (ov.diag.rogue) b.push(`<div class="banner bad"><span class="ic">📡</span><div class="txt"><b>텔레그램 메시지를 가로채는 프로세스가 ${ov.diag.rogue}개 있습니다</b><span class="muted">일반 Claude 창이 봇의 수신권을 빼앗으면 지시가 사무실에 도착하지 않습니다.</span></div><button class="btn sm primary" data-act="diag-clean">정리하기</button></div>`);
     if (ov.diag.globalPlugin) b.push(`<div class="banner warn"><span class="ic">⚠️</span><div class="txt"><b>텔레그램 플러그인이 모든 Claude 창에서 켜져 있습니다</b><span class="muted">새 Claude 창을 열 때마다 봇 수신권을 가로챕니다. 사무실 폴더에서는 따로 켜지므로 전역 설정은 꺼도 됩니다.</span></div><button class="btn sm" data-act="diag-global-off">전역에서 끄기</button></div>`);
@@ -272,12 +275,14 @@ function vConnect() {
   let html = `<div class="card"><div class="card-head"><div><h2>Claude 계정</h2><p class="sub">사무실은 본인의 Claude Code 계정으로 일합니다. 로그인은 Claude 공식 로그인 창(브라우저 인증)에서 진행하며, 이 프로그램은 비밀번호나 토큰을 받거나 저장하지 않습니다.</p></div>
     ${c.installed ? (c.auth.loggedIn ? pill('ok', '로그인됨') : pill('warn', '로그인 필요')) : pill('bad', '설치 필요')}</div>`;
   if (!c.installed) {
-    html += `<div class="row"><button class="btn primary" data-act="claude-install">Claude Code 설치</button><button class="btn" data-act="claude-refresh">설치했어요, 다시 확인</button></div><p class="small muted" style="margin-top:10px">설치 창이 열리고 <code>npm install -g @anthropic-ai/claude-code</code> 가 실행됩니다. Node.js가 필요합니다.</p>`;
+    const br = c.broken;
+    html += `${br ? `<div class="banner warn" style="margin-bottom:12px"><span class="ic">🔍</span><div class="txt"><b>Claude Code 파일은 있지만 실행되지 않습니다</b><span class="muted">${esc(br.error)}</span><div class="path" style="margin-top:4px">${esc(br.path)}</div></div></div>` : ''}<div class="row"><button class="btn primary" data-act="claude-install">${br ? 'Claude Code 다시 설치' : 'Claude Code 설치'}</button><button class="btn" data-act="claude-refresh">설치했어요, 다시 확인</button></div><p class="small muted" style="margin-top:10px">설치 창이 열리고 <code>npm install -g @anthropic-ai/claude-code</code> 가 실행됩니다. Node.js가 필요합니다.</p>`;
   } else if (c.auth.loggedIn) {
     html += `<div class="row"><div class="avatar">${esc((c.auth.email || 'C')[0].toUpperCase())}</div><div><b>${esc(c.auth.email || '')}</b><div class="small muted">${esc(planLabel(c.auth))}${c.auth.org ? ` · ${esc(c.auth.org)}` : ''} · Claude Code ${esc(c.version)}</div></div><span class="spacer"></span><button class="btn sm" data-act="claude-refresh">새로고침</button><button class="btn sm" data-act="claude-login">다른 계정으로 로그인</button><button class="btn sm danger" data-act="claude-logout">로그아웃</button></div>`;
   } else {
     html += `<div class="row"><button class="btn primary" data-act="claude-login">Claude 구독 계정으로 로그인</button><button class="btn" data-act="claude-login-console">Anthropic Console(API 요금)으로 로그인</button><button class="btn sm ghost" data-act="claude-refresh">로그인했어요, 다시 확인</button></div>
-    <ol class="guide"><li>버튼을 누르면 새 창이 열리고 브라우저에서 로그인 화면이 나옵니다.</li><li>로그인을 마치면 창이 안내하는 대로 닫고, 이 화면에서 「다시 확인」을 누르세요.</li></ol>`;
+    ${c.auth.error ? `<p class="small" style="margin-top:10px;color:var(--warn)">상태 확인 메시지: ${esc(c.auth.error)}</p>` : ''}
+    <ol class="guide"><li>버튼을 누르면 새 창이 열리고 브라우저에서 로그인 화면이 나옵니다.</li><li>로그인을 마치면 창이 안내하는 대로 닫고, 이 화면에서 「다시 확인」을 누르세요.</li><li>Claude <b>데스크톱 앱</b>에 로그인한 것과 <b>Claude Code</b> 로그인은 따로입니다. 여기서는 위 버튼으로 Claude Code에 로그인해야 합니다.</li></ol>`;
   }
   html += '</div>';
 
@@ -290,8 +295,11 @@ function vConnect() {
       ${tg.set ? '<button class="btn sm danger" data-act="tg-token-clear">토큰 지우기</button>' : ''}</div>
       <form class="row" data-form="tg-token" autocomplete="off"><input type="password" name="token" placeholder="123456789:AAH…" style="flex:1;min-width:220px" autocomplete="off" spellcheck="false"><button class="btn primary" type="submit">${tg.set ? '토큰 바꾸기' : '토큰 저장'}</button></form>
       <p class="small muted">토큰은 이 PC의 사무실 폴더 <code>.telegram/.env</code> 에만 저장되고, 화면과 로그에는 앞뒤 일부만 보입니다.</p>
+      <div class="banner info"><span class="ic">⚠️</span><div class="txt"><b>다른 PC·다른 사무실에서 쓰는 봇 토큰은 넣지 마세요</b><span class="muted">봇 하나는 한 곳에서만 메시지를 받을 수 있습니다. 같은 토큰을 두 곳에 넣으면 서로 가로채서 지시가 사라집니다. 사무실마다 @BotFather 에서 새 봇을 만드세요.</span></div></div>
       <hr class="sep">
-      <div><b>2. 내 텔레그램 계정 허용(페어링)</b><p class="sub">사무실을 출근시킨 뒤 텔레그램에서 봇에게 아무 메시지나 보내면 6자리 코드를 알려 줍니다. 그 코드를 입력하세요.</p></div>
+      <div><b>2. 내 텔레그램 계정 허용(페어링)</b><p class="sub">사무실을 <b>출근시킨 뒤</b> 텔레그램에서 <b>이 사무실의 봇</b>에게 아무 메시지나 보내면 6자리 코드를 알려 줍니다. 그 코드를 입력하세요.</p></div>
+      ${!o.running ? '<div class="banner warn"><span class="ic">⏸</span><div class="txt"><b>사무실이 꺼져 있어서 봇이 코드를 보낼 수 없습니다</b><span class="muted">봇은 사무실이 켜져 있는 동안에만 메시지를 받습니다. 먼저 「출근시키기」를 눌러 주세요(Claude 로그인과 봇 토큰이 준비돼 있어야 합니다).</span></div><button class="btn sm primary" data-act="office-start">출근시키기</button></div>' : ''}
+      ${ac.allowFrom.length && !ac.pending.length ? '<p class="small muted">이미 허용된 계정이 있어서, 그 계정이 보내는 /start 에는 새 코드가 나오지 않을 수 있습니다. 새 계정을 추가하려면 그 계정으로 보내 주세요.</p>' : ''}
       ${ac.pending.length ? `<table class="tbl"><thead><tr><th>코드</th><th>보낸 사람 ID</th><th>경과</th><th></th></tr></thead><tbody>${ac.pending.map((p) => `<tr><td><span class="code">${esc(p.code)}</span></td><td class="mono">${esc(p.senderId)}</td><td>${Math.round(p.ageSec / 60)}분 전</td><td class="row end"><button class="btn sm primary" data-act="tg-pair" data-code="${esc(p.code)}">허용</button><button class="btn sm" data-act="tg-deny" data-code="${esc(p.code)}">거절</button></td></tr>`).join('')}</tbody></table>` : ''}
       <form class="row" data-form="tg-pair" autocomplete="off"><input type="text" name="code" placeholder="6자리 코드" maxlength="10" style="max-width:190px" autocomplete="off"><button class="btn" type="submit">코드로 허용</button></form>
       ${ac.allowFrom.length ? `<div><div class="small muted" style="margin-bottom:6px">허용된 계정</div><div class="row">${ac.allowFrom.map((id) => `<span class="pill">${esc(id)} <button class="btn sm ghost" style="padding:0 4px" data-act="tg-remove" data-id="${esc(id)}" title="허용 해제">✕</button></span>`).join('')}</div></div>` : ''}
