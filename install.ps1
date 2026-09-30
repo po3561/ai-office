@@ -87,9 +87,16 @@ if (-not $NoShortcuts) {
     Say '  ✓ 바로가기  시작 메뉴 · 바탕화면'
 }
 if (-not $NoAutostart) {
-    $tr = "`"$env:SystemRoot\System32\wscript.exe`" `"$vbs`" `"$node`" `"$cli`" serve"
-    schtasks /Create /F /SC ONLOGON /TN 'AI-Office Dashboard' /TR $tr /RL LIMITED | Out-Null
-    Say '  ✓ 로그인할 때 자동으로 대시보드 서버 시작'
+    # 경로에 공백이 있어도 안전하도록 schtasks 대신 작업 스케줄러 cmdlet 을 쓴다.
+    try {
+        $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument "`"$vbs`" `"$node`" `"$cli`" serve"
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+        Register-ScheduledTask -TaskName 'AI-Office Dashboard' -Action $action -Trigger $trigger -Settings $settings -Description 'AI-Office 대시보드 서버 자동 시작' -Force | Out-Null
+        Say '  ✓ 로그인할 때 자동으로 대시보드 서버 시작'
+    } catch {
+        Say "  ✗ 자동 시작을 등록하지 못했습니다: $($_.Exception.Message)" 'Yellow'
+    }
 }
 
 # 4) 함께 필요한 도구 점검
