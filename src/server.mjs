@@ -174,6 +174,7 @@ route('POST', '/api/offices/:id/telegram/rooms/refresh', async ({ p }) => tg.ref
 route('POST', '/api/offices/:id/telegram/rooms/task', async ({ p, body }) => tg.setRoomTask(newRooms(p.id), body.chatId, body.threadId, body.task));
 route('POST', '/api/offices/:id/telegram/rooms/default-task', async ({ p, body }) => tg.setDefaultTask(newRooms(p.id), body.task));
 route('POST', '/api/offices/:id/telegram/rooms/connect', async ({ p, body }) => tg.connectRoom(newRooms(p.id), body.chatId));
+route('POST', '/api/offices/:id/telegram/rooms/mention', async ({ p, body }) => tg.setRoomMention(mutable(p.id).stateDir, body.chatId, body.requireMention === true));
 route('POST', '/api/offices/:id/telegram/rooms/disconnect', async ({ p, body }) => { tg.disconnectRoom(newRooms(p.id), body.chatId); return { ok: true }; });
 route('POST', '/api/offices/:id/telegram/rooms/forget', async ({ p, body }) => { tg.forgetRoom(newRooms(p.id), body.chatId); return { ok: true }; });
 

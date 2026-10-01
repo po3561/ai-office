@@ -374,11 +374,12 @@ const nameOf = (u: { username?: string; first_name?: string; last_name?: string;
   u.username ? `@${u.username}` : [u.first_name, u.last_name].filter(Boolean).join(' ') || String(u.id)
 
 // 방을 허용 목록에 올리고 업무 기본값을 붙인다. by는 이미 허용 목록에 있는 본인(소유자).
-// 기본값은 보수적: 멘션해야 응답하고, 발언자도 by 한 명으로 제한한다. 다른 사람도 쓰게
-// 하려면 /telegram:access 로 allowFrom을 넓히면 된다.
+// 기본값: 허용된 본인(by) 한 명의 모든 말에 응답한다(멘션 불필요). 다른 사람의 말은 무시한다.
+// 다른 사람도 쓰게 하려면 /telegram:access 로 allowFrom을 넓히고, 멘션이 있어야 응답하게
+// 바꾸려면 대시보드 「그룹방」 카드의 스위치를 쓴다.
 function enrollGroup(access: Access, chat: ChatLike, by: string, announce: boolean): GroupPolicy {
   const id = String(chat.id)
-  const policy: GroupPolicy = { requireMention: true, allowFrom: [by] }
+  const policy: GroupPolicy = { requireMention: false, allowFrom: [by] }
   access.groups[id] = policy
   saveAccess(access)
   const r = upsertRoom(chat)
@@ -388,7 +389,10 @@ function enrollGroup(access: Access, chat: ChatLike, by: string, announce: boole
   if (announce) {
     void bot.api.sendMessage(
       id,
-      `✅ 이 방이 연결되었습니다.\n호출: @${botUsername} 멘션 또는 제 메시지에 답장\n` +
+      `✅ 이 방이 연결되었습니다.\n` +
+      ((bot as unknown as { botInfo?: { can_read_all_group_messages?: boolean } }).botInfo?.can_read_all_group_messages === false
+        ? `⚠️ 지금은 봇의 개인정보 보호 모드가 켜져 있어 @${botUsername} 멘션이나 답장만 전달됩니다. 멘션 없이 쓰려면 @BotFather → /setprivacy → Disable 후 저를 방에서 내보냈다가 다시 초대해 주세요.\n`
+        : `호출: 이 방에서 그냥 말씀하세요(멘션 불필요, 허용된 본인의 말에만 응답)\n`) +
       `업무: ${r.task ?? '(미지정) — "/task 업무내용"으로 지정하세요'}`,
     ).catch(e => process.stderr.write(`telegram channel: enroll notice to ${id} failed: ${e}\n`))
   }
