@@ -126,6 +126,8 @@ type Access = {
   textChunkLimit?: number
   /** Split on paragraph boundaries instead of hard char count. */
   chunkMode?: 'length' | 'newline'
+  /** 예전 기본값(멘션해야 응답)으로 연결된 방을 한 번 "멘션 없이 응답"으로 옮겼는지. */
+  mentionFreeMigrated?: boolean
 }
 
 function defaultAccess(): Access {
@@ -170,6 +172,7 @@ function readAccessFile(): Access {
       replyToMode: parsed.replyToMode,
       textChunkLimit: parsed.textChunkLimit,
       chunkMode: parsed.chunkMode,
+      mentionFreeMigrated: parsed.mentionFreeMigrated,
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
@@ -231,6 +234,25 @@ function pruneExpired(a: Access): boolean {
   return changed
 }
 
+// 예전 기본값(멘션해야 응답)으로 연결된 본인 전용 방을 한 번만 "멘션 없이 응답"으로 옮긴다.
+// 발언자가 본인(허용 목록)뿐인 방만 대상이고, 그 뒤에 다시 멘션을 켠 방은 건드리지 않는다.
+;(() => {
+  if (STATIC) return
+  const a = readAccessFile()
+  if (a.mentionFreeMigrated) return
+  let n = 0
+  for (const g of Object.values(a.groups)) {
+    const owners = g.allowFrom ?? []
+    if (g.requireMention !== false && owners.length > 0 && owners.every(id => a.allowFrom.includes(id))) {
+      g.requireMention = false
+      n++
+    }
+  }
+  a.mentionFreeMigrated = true
+  saveAccess(a)
+  if (n) process.stderr.write(`telegram channel: ${n} room(s) switched to mention-free replies\n`)
+})()
+
 // ── 방(그룹) 레지스트리 ──────────────────────────────────────────────────────
 // 봇이 초대된 방·주제와 방별 업무를 rooms.json에 기록한다. Bot API에는 "내가 들어간
 // 방 목록"이나 "주제 목록"을 돌려주는 호출이 없어서, 봇이 직접 본 이벤트
@@ -273,6 +295,24 @@ function readRooms(): RoomsDb {
 }
 
 let roomsDb: RoomsDb = readRooms()
+
+// 주제(포럼)방: 비서실장이 reply에 thread_id를 빠뜨리면 답장이 「일반」 주제로 가서 사용자는 답이
+// 없다고 느낀다. 받은 메시지의 주제를 기억해 두었다가 빠졌을 때 채운다.
+const threadOfMsg = new Map<string, number | undefined>()   // `${chat}:${message_id}` → 주제
+const lastThreadOfChat = new Map<string, number | undefined>()
+function rememberThread(chatId: string, msgId: number | undefined, threadId: number | undefined): void {
+  lastThreadOfChat.set(chatId, threadId)
+  if (msgId == null) return
+  threadOfMsg.set(`${chatId}:${msgId}`, threadId)
+  if (threadOfMsg.size > 2000) threadOfMsg.delete(threadOfMsg.keys().next().value!)
+}
+function inferThread(chatId: string, replyTo: number | undefined): number | undefined {
+  if (replyTo != null) {
+    const key = `${chatId}:${replyTo}`
+    if (threadOfMsg.has(key)) return threadOfMsg.get(key)
+  }
+  return lastThreadOfChat.get(chatId)
+}
 let roomsDirty = false
 
 // AI-Office 대시보드도 rooms.json(업무 지정·정리)을 고친다. 메모리 사본이 그걸 덮어쓰지
@@ -833,7 +873,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const chat_id = args.chat_id as string
         const text = args.text as string
         const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
-        const thread_id = args.thread_id != null && args.thread_id !== '' ? Number(args.thread_id) : undefined
+        const thread_id = args.thread_id != null && args.thread_id !== '' ? Number(args.thread_id) : inferThread(chat_id, reply_to)
         const threadOpt = thread_id != null && Number.isFinite(thread_id) ? { message_thread_id: thread_id } : {}
         const files = (args.files as string[] | undefined) ?? []
         const format = (args.format as string | undefined) ?? 'text'
@@ -1461,8 +1501,11 @@ async function handleInbound(
     return
   }
 
+  const inTopic = (ctx.chat!.type === 'supergroup' && ctx.message?.is_topic_message) ? ctx.message.message_thread_id : undefined
+  rememberThread(chat_id, msgId, inTopic)
+
   // Typing indicator — signals "processing" until we reply (or ~5s elapses).
-  void bot.api.sendChatAction(chat_id, 'typing').catch(() => {})
+  void bot.api.sendChatAction(chat_id, 'typing', inTopic != null ? { message_thread_id: inTopic } : {}).catch(() => {})
 
   // Ack reaction — lets the user know we're processing. Fire-and-forget.
   // Telegram only accepts a fixed emoji whitelist — if the user configures
