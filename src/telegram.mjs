@@ -25,7 +25,7 @@ async function getMe(token) {
     const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: ctl.signal });
     const j = await r.json().catch(() => ({}));
     if (!j.ok) return { ok: false, error: j.description || `오류 ${r.status}` };
-    return { ok: true, username: j.result.username, name: j.result.first_name, id: j.result.id };
+    return { ok: true, username: j.result.username, name: j.result.first_name, id: j.result.id, canReadAll: j.result.can_read_all_group_messages === true };
   } catch (e) {
     return { ok: false, error: e.name === 'AbortError' ? '텔레그램에 연결하지 못했습니다(시간 초과).' : '텔레그램에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.' };
   } finally { clearTimeout(timer); }
@@ -38,7 +38,7 @@ export async function botInfo(stateDir) {
   const hit = botCache.get(token);
   if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.value;
   const me = await getMe(token);
-  const value = me.ok ? { username: me.username, name: me.name } : { error: me.error };
+  const value = me.ok ? { username: me.username, name: me.name, canReadAllGroupMessages: me.canReadAll } : { error: me.error };
   botCache.set(token, { at: Date.now(), value });
   return value;
 }
@@ -124,7 +124,8 @@ export function setPolicy(stateDir, mode) {
 // ── 그룹방·주제별 업무 ──
 // 봇(플러그인)이 초대된 방과 본 주제를 rooms.json 에 기록하고, 대시보드는 그걸 읽어 보여 주며
 // 업무 지정·연결(허용)·정리를 한다. 봇은 파일이 바뀌면 다시 읽으므로 서로 덮어쓰지 않는다.
-// 방 연결 = access.json 의 groups 에 올리는 것. 기본값은 플러그인과 같다(멘션해야 응답, 허용된 계정만 발언).
+// 방 연결 = access.json 의 groups 에 올리는 것. 기본값은 플러그인과 같다(허용된 계정이 하는 모든 말에 응답, 다른 사람의 말은 무시).
+// 멘션이 있어야 응답하게 바꾸고 싶으면 방마다 setRoomMention 으로 전환한다.
 const roomsFile = (d) => join(d, 'rooms.json');
 const MAX_TASK = 800;
 const CHAT_ID_RE = /^-?\d{1,20}$/;
@@ -196,11 +197,22 @@ export function connectRoom(stateDir, chatId) {
   if (!a.groups[chatId]) {
     const db = loadRoomsRaw(stateDir);
     need(db.rooms[chatId], '봇이 아직 모르는 방입니다. 봇을 방에 초대하거나, 방에서 봇을 @멘션해 주세요.', 404);
-    a.groups[chatId] = { requireMention: true, allowFrom: [...a.allowFrom] };
+    a.groups[chatId] = { requireMention: false, allowFrom: [...a.allowFrom] };
     writeJson(accessFile(stateDir), a);
     if (db.defaultTask && !db.rooms[chatId].task) { db.rooms[chatId].task = db.defaultTask; writeJson(roomsFile(stateDir), db, 0o600); }
   }
   return { ok: true };
+}
+
+// 연결된 방의 응답 방식: true = 봇을 @멘션하거나 답장할 때만, false = 허용된 계정의 모든 말에. 봇은 access.json 이 바뀌면 다시 읽는다.
+export function setRoomMention(stateDir, chatId, requireMention) {
+  chatId = String(chatId);
+  need(CHAT_ID_RE.test(chatId), '방 ID가 올바르지 않습니다.');
+  const a = loadAccess(stateDir);
+  need(a.groups[chatId], '연결된 방이 아닙니다. 먼저 연결해 주세요.', 404);
+  a.groups[chatId].requireMention = Boolean(requireMention);
+  writeJson(accessFile(stateDir), a);
+  return { requireMention: Boolean(requireMention) };
 }
 
 export function disconnectRoom(stateDir, chatId) {

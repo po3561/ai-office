@@ -583,6 +583,11 @@ function roomTaskForm(chatId, threadId, task, teams, placeholder) {
 function roomsCard(o, d) {
   const rm = (d.telegram && d.telegram.rooms) || { rooms: [], defaultTask: '' };
   const teams = d.teams || [];
+  const bot = d.telegram && d.telegram.bot;
+  // 텔레그램 봇의 「개인정보 보호 모드」가 켜져 있으면 그룹에서 멘션·답장·명령만 전달된다. 멘션 없이 쓰는 방이 있으면 알려 준다.
+  const privacyWarn = bot && bot.canReadAllGroupMessages === false && rm.rooms.some((r) => r.connected && !r.requireMention)
+    ? `<div class="banner warn" style="margin-bottom:12px"><span class="ic">🔒</span><div class="txt"><b>멘션 없는 말은 아직 봇에게 도착하지 않습니다</b><span class="muted">텔레그램 봇의 「개인정보 보호 모드」가 켜져 있습니다. 텔레그램에서 <b>@BotFather</b> → <code>/setprivacy</code> → 이 봇 선택 → <b>Disable</b> 로 바꾼 뒤, 봇을 방에서 한 번 내보냈다가 다시 초대해야 적용됩니다(텔레그램 규칙). 봇을 방의 관리자로 올려도 됩니다.</span></div></div>`
+    : '';
   const items = rm.rooms.map((r) => {
     const present = r.botStatus !== 'left' && r.botStatus !== 'kicked';
     const pills = [
@@ -599,11 +604,13 @@ function roomsCard(o, d) {
     return `<div class="room" style="padding:14px 0;border-top:1px solid var(--line)">
       <div class="row"><div><b>${esc(r.title)}</b> ${pills}<div class="small muted"><span class="mono">${esc(r.id)}</span>${r.invitedBy ? ` · 초대: ${esc(r.invitedBy.name)}${r.invitedAt ? ' ' + dshort(r.invitedAt) : ''}` : ''}${r.connected ? ` · ${r.requireMention ? '멘션해야 응답' : '모든 메시지 응답'}, 허용된 계정 ${r.allowFromCount ? r.allowFromCount + '명만' : '제한 없음'}` : ''}</div>
         ${r.checkError ? `<div class="small" style="color:var(--warn)">확인 메시지: ${esc(r.checkError)}</div>` : ''}</div><span class="spacer"></span>${actions}</div>
-      ${!r.connected && present ? '<p class="small muted" style="margin:6px 0 0">연결하면 봇이 이 방에서 허용된 계정의 멘션에 응답합니다. 방에서 본인이 봇을 @멘션해도 자동으로 연결됩니다.</p>' : ''}
+      ${!r.connected && present ? '<p class="small muted" style="margin:6px 0 0">연결하면 봇이 이 방에서 허용된 계정의 말에 바로 응답합니다(멘션 불필요). 허용된 본인이 봇을 방에 초대하면 자동으로 연결됩니다.</p>' : ''}
+      ${r.connected ? `<label class="row small" style="gap:8px;margin-top:8px"><span class="switch"><input type="checkbox" data-change="room-mention" data-chat="${esc(r.id)}"${r.requireMention ? ' checked' : ''}><i></i></span>봇을 @멘션하거나 답장할 때만 응답 <span class="muted">(끄면 허용된 계정의 모든 말에 응답)</span></label>` : ''}
       <div class="small muted" style="margin:10px 0 6px">이 방의 업무</div>${roomTaskForm(r.id, '', r.task, teams, '예: 학원 문의에 답하고, 기밀 자료는 올리지 않기')}${topics}</div>`;
   }).join('');
-  return `<div class="card"><div class="card-head"><div><h2>그룹방 · 주제별 업무</h2><p class="sub">봇이 초대된 방과 주제를 보여 주고, 방마다 맡길 업무를 정합니다. <b>허용된 계정이 봇을 방에 초대하면 자동으로 연결</b>되고, 모르는 사람이 초대하면 텔레그램으로 승인을 묻습니다. 업무는 저장하면 바로 적용됩니다(다시 출근 불필요).</p></div>
+  return `<div class="card"><div class="card-head"><div><h2>그룹방 · 주제별 업무</h2><p class="sub">봇이 초대된 방과 주제를 보여 주고, 방마다 맡길 업무를 정합니다. <b>허용된 계정이 봇을 방에 초대하면 자동으로 연결</b>되어 멘션 없이 바로 응답하고, 모르는 사람이 초대하면 텔레그램으로 승인을 묻습니다. 업무는 저장하면 바로 적용됩니다(다시 출근 불필요).</p></div>
     <div class="row"><button class="btn sm" data-act="room-refresh">상태 확인</button></div></div>
+    ${privacyWarn}
     ${!o.running ? '<div class="banner warn"><span class="ic">⏸</span><div class="txt"><b>사무실이 꺼져 있습니다</b><span class="muted">봇이 켜져 있는 동안 초대된 방만 기록됩니다.</span></div></div>' : ''}
     <form class="stack" data-form="room-default-task" autocomplete="off" style="gap:6px;margin-bottom:6px"><div><b>기본 업무</b><span class="sub">새로 자동 연결되는 방에 처음 붙는 업무입니다. 이미 연결된 방은 바뀌지 않습니다.</span></div>
       <textarea name="task" maxlength="800" style="min-height:48px" placeholder="비워 두면 방마다 따로 정합니다">${esc(rm.defaultTask)}</textarea><div class="row end"><button class="btn sm" type="submit">기본 업무 저장</button></div></form>
@@ -865,7 +872,7 @@ const ACT = {
   'lr-trigger': (b) => doing(b, async () => { const v = document.getElementById('lr-trg-' + b.dataset.room).value.trim(); await lg('options', { room: b.dataset.room, options: { trigger: v } }); toast(v ? '이제 "' + v + '"로 시작하는 메시지만 비서실장이 받습니다.' : '기호 없이 내 메시지를 모두 받습니다.'); await refresh(); }),
   'lr-rt-test': (b) => doing(b, async () => { await lg('routinetest', { id: b.dataset.id }); toast('30초 안에 비서실장이 시험 보고를 작성해 올립니다.'); await refresh(); }),
   'room-refresh': (b) => doing(b, async () => { const r = await api('POST', `/api/offices/${oid()}/telegram/rooms/refresh`); toast(`방 ${r.checked}곳의 상태를 텔레그램에서 확인했습니다.`); refresh(); }),
-  'room-connect': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/rooms/connect`, { chatId: b.dataset.chat }); toast('방을 연결했습니다. 방에서 @봇을 멘션하면 응답합니다.'); refresh(); }),
+  'room-connect': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/rooms/connect`, { chatId: b.dataset.chat }); toast('방을 연결했습니다. 방에서 바로 말씀하시면 응답합니다(멘션 불필요).'); refresh(); }),
   'room-disconnect': (b) => dlgConfirm({ title: '이 방 연결을 해제할까요?', body: '봇이 이 방의 메시지를 더 이상 받지 않습니다. 봇은 방에 남아 있고, 업무 기록도 그대로입니다. 다시 연결할 수 있습니다.', ok: '연결 해제', danger: true, onOk: async () => { try { await api('POST', `/api/offices/${oid()}/telegram/rooms/disconnect`, { chatId: b.dataset.chat }); toast('연결을 해제했습니다.'); } catch (e) { toast(e.message, true); } refresh(); } }),
   'room-forget': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/rooms/forget`, { chatId: b.dataset.chat }); toast('목록에서 지웠습니다.'); refresh(); }),
   'diag-refresh': (b) => doing(b, async () => { await api('POST', '/api/diagnostics/refresh'); refresh(); }),
@@ -897,6 +904,7 @@ document.addEventListener('change', async (e) => {
   if (el.id === 'officeSel') { S.officeId = el.value; localStorage.setItem('office', S.officeId); refresh(); return; }
   if (el.dataset.change === 'autostart') { const ok = await doing(null, () => api('PATCH', `/api/offices/${oid()}`, { autoStart: el.checked })); if (!ok) el.checked = !el.checked; else refresh(); }
   if (el.dataset.change === 'autoupdate') { const ok = await doing(null, () => api('PATCH', '/api/config', { autoUpdate: el.checked })); if (!ok) el.checked = !el.checked; else { toast(el.checked ? '새 버전이 확인되면 자동으로 설치합니다.' : '새 버전은 알림만 띄웁니다.'); refresh(); } return; }
+  if (el.dataset.change === 'room-mention') { const ok = await doing(null, () => api('POST', `/api/offices/${oid()}/telegram/rooms/mention`, { chatId: el.dataset.chat, requireMention: el.checked })); if (!ok) el.checked = !el.checked; else { toast(el.checked ? '이제 봇을 @멘션하거나 답장할 때만 응답합니다.' : '이제 허용된 계정의 모든 말에 응답합니다.'); refresh(); } return; }
   if (el.dataset.change === 'room-dept') {   // 고른 부서를 업무 칸에 채워 넣는다(저장은 직접)
     const ta = el.closest('form').querySelector('textarea');
     if (el.value) { ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + el.value; ta.focus(); }
