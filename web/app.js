@@ -363,7 +363,7 @@ function mkShare(m) {
   const inbox = reqs.length ? `<div class="card"><div class="card-head"><div><h2>📱 봇의 게시 요청 ${reqs.length}건</h2><p class="sub">텔레그램에서 "마켓에 올려줘"라고 한 스킬입니다. 봇은 직접 올리지 못하고 요청만 남깁니다. 검사 결과를 보고 직접 게시하거나 거절하세요.</p></div></div>
     <table class="tbl"><tbody>${reqs.map((r) => `<tr><td><b>${esc(r.skillId)}</b> <span class="small muted">${esc(r.o.officeName)} · ${esc(ago2(r.at))}</span>${r.note ? `<div class="small muted">${esc(clip(r.note, 160))}</div>` : ''}${r.known ? '' : `<div class="small" style="color:var(--warn)">이 이름의 스킬 폴더가 사무실에 없습니다.</div>`}</td>
       <td class="row end">${r.known ? `<button class="btn sm primary" data-act="market-publish" data-office="${esc(r.o.office)}" data-skill="${esc((r.o.skills.find((s) => s.id.toLowerCase() === r.skillId.toLowerCase()) || {}).id || r.skillId)}">검토 후 게시</button>` : ''}<button class="btn sm" data-act="market-req-dismiss" data-office="${esc(r.o.office)}" data-skill="${esc(r.skillId)}">거절</button></td></tr>`).join('')}</tbody></table></div>` : '';
-  return inbox + `<div class="banner info" style="margin-bottom:12px"><span class="ic">🔒</span><div class="txt"><b>공유는 내가 고른 스킬만, 내가 누를 때만</b><span class="muted">모든 스킬의 기본값은 “이 PC 전용”입니다. 게시하기 전에 개인정보·토큰이 들어 있는지 자동으로 검사합니다.</span></div></div>` + share.map((o) => `<div class="card"><h2>${esc(o.officeName)}</h2>
+  return inbox + `<div class="banner info" style="margin-bottom:12px"><span class="ic">🔒</span><div class="txt"><b>공유는 내가 고른 스킬만, 내가 누를 때만</b><span class="muted">모든 스킬의 기본값은 “이 PC 전용”입니다. 게시하기 전에 개인정보·토큰이 들어 있는지 자동으로 검사합니다.</span></div></div>` + share.map((o) => `<div class="card"><div class="card-head"><h2>${esc(o.officeName)}</h2>${o.skills.some((s) => s.status === 'private' || s.status === 'changed') ? `<button class="btn sm primary" data-act="market-publish-all" data-office="${esc(o.office)}">공유 가능한 스킬 모두 게시 (${o.skills.filter((s) => s.status === 'private' || s.status === 'changed').length})</button>` : ''}</div>
     ${o.skills.length ? `<table class="tbl"><thead><tr><th>스킬</th><th>상태</th><th></th></tr></thead><tbody>${o.skills.map((s) => `<tr><td><b>${esc(s.name)}</b>${s.name !== s.id ? ` <span class="small muted">${esc(s.id)}</span>` : ''}<div class="small muted">${esc(clip(s.description, 80))}</div></td>
       <td>${(rows[s.status] || rows.private)()}${s.requested ? ` ${pill('accent', '📱 게시 요청')}` : ''}${s.version ? ` <span class="small muted">v${esc(s.version)}</span>` : ''}${s.reason ? `<div class="small muted">${esc(s.reason)}</div>` : ''}</td>
       <td class="row end">${s.status === 'private' || s.status === 'changed' ? `<button class="btn sm primary" data-act="market-publish" data-office="${esc(o.office)}" data-skill="${esc(s.id)}">${s.status === 'changed' ? '새 버전 게시' : '마켓에 게시'}</button>` : ''}${s.status === 'published' || s.status === 'changed' ? `<button class="btn sm danger" data-act="market-revoke" data-id="${esc(s.marketId)}">회수</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">이 사무실에는 아직 스킬이 없습니다. 텔레그램에서 "앞으로 ○○할 때는 이렇게 해"라고 하면 봇이 만들어 여기에 나타납니다.</p>'}</div>`).join('');
@@ -445,6 +445,57 @@ async function dlgPublish(officeId, skillId) {
       ${info.warnings.length ? '<label class="row" style="margin-top:10px;font-weight:600"><input type="checkbox" name="cw" required> 개인정보로 보이는 위 내용을 확인했고, 공유해도 괜찮습니다</label>' : ''}
       ${info.risks.length ? '<label class="row" style="margin-top:8px;font-weight:600"><input type="checkbox" name="cr" required> 스크립트 등 위험 표시가 붙는 것을 알고 있고, 그대로 게시합니다</label>' : ''}</div>
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit"${info.publishable && !(ex && (!ex.mine || ex.revoked)) ? '' : ' disabled'}>게시하기</button></div></form>`);
+}
+
+// 모두 게시: 게시할 수 있는 스킬을 한꺼번에 검사해 보여 주고, 사용자가 고르고 확인한 것만 하나씩 게시한다(검사·확인 절차는 한 개씩 올릴 때와 같다).
+let bulk = null;
+async function dlgPublishAll(officeId) {
+  const o = ((S.market && S.market.share) || []).find((x) => x.office === officeId);
+  const todo = o ? o.skills.filter((k) => k.status === 'private' || k.status === 'changed') : [];
+  if (!todo.length) { toast('게시할 스킬이 없습니다.'); return; }
+  openDlg(`<div class="dlg-head"><h2>검사하는 중…</h2><p>스킬 ${todo.length}개에 개인정보·비밀값이 들어 있는지 확인합니다.</p></div>`);
+  const items = [];
+  for (const k of todo) {
+    try { items.push({ id: k.id, name: k.name, info: await api('POST', '/api/market/inspect', { office: officeId, skillId: k.id }) }); }
+    catch (e) { items.push({ id: k.id, name: k.name, error: e.message }); }
+  }
+  for (const it of items) {
+    const ex = it.info && it.info.existing;
+    it.ok = Boolean(it.info && it.info.publishable && !(ex && (!ex.mine || ex.revoked)));
+  }
+  bulk = { officeId, items };
+  const warnN = items.filter((it) => it.ok && it.info.warnings.length).length, riskN = items.filter((it) => it.ok && it.info.risks.length).length;
+  const row = (it, i) => {
+    const inf = it.info;
+    const why = it.error ? esc(it.error) : !inf.publishable ? '⛔ 차단 항목이 있어 제외됩니다' : (inf.existing && !inf.existing.mine) ? '다른 게시자의 같은 이름이 있어 제외됩니다' : (inf.existing && inf.existing.revoked) ? '회수된 이름이라 제외됩니다' : '';
+    return `<div class="bulk-row"><label class="row" style="gap:8px"><input type="checkbox" name="pick" value="${i}"${it.ok ? ' checked' : ' disabled'}><b>${esc(it.name)}</b>${it.ok ? `<span class="small muted">v${esc(inf.suggestedVersion)} · 파일 ${inf.files.length}개</span>` : ''}${it.ok && inf.warnings.length ? pill('warn', `⚠️ 확인 ${inf.warnings.length}`) : ''}${it.ok && inf.risks.length ? pill('warn', `🚨 위험 ${inf.risks.length}`) : ''}${it.ok && !inf.findings.length ? pill('ok', '문제 없음') : ''}</label>
+      ${why ? `<div class="small" style="color:var(--bad);margin-left:26px">${why}</div>` : ''}
+      ${inf && inf.findings.length ? `<details style="margin-left:26px"><summary class="small muted">검사 결과 ${inf.findings.length}건 보기</summary>${findingsHtml(inf.findings)}</details>` : ''}</div>`;
+  };
+  openDlg(`<form data-form="market-publish-all" data-office="${esc(officeId)}"><div class="dlg-head"><h2>🚀 스킬 ${items.length}개 한꺼번에 게시</h2><p>같은 마켓에 연결한 다른 PC·봇(라피스 등)이 볼 수 있게 됩니다. 사무실의 업무 데이터·설정·토큰은 포함되지 않고, 게시할 때마다 개인정보 검사를 합니다. 빼고 싶은 스킬은 체크를 풀어 주세요.</p></div>
+    <div class="dlg-body">${items.map(row).join('')}
+      ${warnN ? `<label class="row" style="margin-top:12px;font-weight:600"><input type="checkbox" name="cw"> 개인정보로 보이는 표시(⚠️ ${warnN}개 스킬)를 확인했고, 공유해도 괜찮습니다</label>` : ''}
+      ${riskN ? `<label class="row" style="margin-top:8px;font-weight:600"><input type="checkbox" name="cr"> 스크립트 등 위험 표시(🚨 ${riskN}개 스킬)가 붙는 것을 알고 있고, 그대로 게시합니다</label>` : ''}</div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit"${items.some((it) => it.ok) ? '' : ' disabled'}>선택한 스킬 게시</button></div></form>`);
+}
+
+async function publishAllSubmit(f, fd) {
+  const picked = fd.getAll('pick').map(Number).map((i) => bulk.items[i]).filter((it) => it && it.ok);
+  if (!picked.length) throw new Error('게시할 스킬을 하나 이상 골라 주세요.');
+  const needW = picked.some((it) => it.info.warnings.length), needR = picked.some((it) => it.info.risks.length);
+  if (needW && fd.get('cw') !== 'on') throw new Error('개인정보로 보이는 내용 확인란에 체크해 주세요.');
+  if (needR && fd.get('cr') !== 'on') throw new Error('위험 표시 확인란에 체크해 주세요.');
+  const btn = f.querySelector('button[type=submit]');
+  const done = [], failed = [];
+  for (let i = 0; i < picked.length; i++) {
+    const it = picked[i];
+    btn.textContent = `게시하는 중… (${i + 1}/${picked.length}) ${it.id}`;
+    try { await api('POST', '/api/market/publish', { office: f.dataset.office, skillId: it.id, version: it.info.suggestedVersion, notes: '', confirmWarnings: needW, confirmRisks: needR }); done.push(it.id); }
+    catch (e) { failed.push(`${it.id}: ${e.message}`); }
+  }
+  S.marketDirty = true;
+  if (!failed.length) { closeDlg(); toast(`스킬 ${done.length}개를 마켓에 게시했습니다.`); return; }
+  openDlg(`<div class="dlg-head"><h2>${done.length}개 게시, ${failed.length}개 실패</h2><p>${done.length ? `게시됨: ${done.map(esc).join(', ')}<br>` : ''}실패한 스킬은 목록에서 한 개씩 다시 시도할 수 있습니다.</p><ul class="find">${failed.map((m) => `<li class="block"><span>⛔</span><div>${esc(m)}</div></li>`).join('')}</ul></div><div class="dlg-foot"><button class="btn primary" data-act="dlg-close">닫기</button></div>`);
 }
 
 // ── 연결 · 계정 ──
@@ -730,6 +781,7 @@ const ACT = {
   'market-refresh': (b) => doing(b, async () => { const r = await api('POST', '/api/market/refresh'); toast(`마켓을 새로 불러왔습니다 (스킬 ${r.entries}개)`); await markMarket(); }),
   'market-detail': (b) => dlgMarketDetail(b.dataset.id),
   'market-publish': (b) => dlgPublish(b.dataset.office, b.dataset.skill),
+  'market-publish-all': (b) => doing(b, () => dlgPublishAll(b.dataset.office)),
   'market-update': (b) => doing(b, async () => { await marketInstall(b.dataset.id, b.dataset.office, false, false); await markMarket(); }),
   'market-uninstall': (b) => dlgConfirm({ title: '이 스킬을 제거할까요?', body: '사무실의 스킬 폴더에서 <b>보관함/스킬제거</b> 로 옮깁니다(지우지 않습니다). 다시 받으려면 마켓에서 설치하면 됩니다.', ok: '제거', danger: true, onOk: async () => { try { const r = await api('POST', '/api/market/uninstall', { office: b.dataset.office, id: b.dataset.id }); if (r.needsRestart) S.restartNeeded[b.dataset.office] = true; toast('제거했습니다. 사무실을 다시 출근시키면 적용됩니다.'); } catch (e) { toast(e.message, true); } markMarket(); } }),
   'market-revoke': (b) => dlgConfirm({ title: '마켓에서 회수할까요?', body: `이 스킬을 마켓에서 내립니다. 이미 설치한 PC에는 “회수됨” 경고가 표시되고 새로 설치할 수 없게 됩니다. (내 PC의 스킬 파일은 그대로입니다)<div class="field" style="margin-top:10px"><label>회수 사유 (선택)</label><input type="text" id="revokeReason" maxlength="200" placeholder="예: 개인정보가 들어 있었음"></div>`, ok: '회수', danger: true, onOk: async () => { try { await api('POST', '/api/market/revoke', { id: b.dataset.id, reason: ($('#revokeReason') || {}).value || '' }); toast('회수했습니다.'); } catch (e) { toast(e.message, true); } markMarket(); } }),
@@ -811,6 +863,8 @@ document.addEventListener('submit', async (e) => {
     } else if (kind === 'market-install') {
       await marketInstall(f.dataset.id, fd.get('office'), fd.get('allowRisk') === 'on', false);
       S.marketDirty = true;
+    } else if (kind === 'market-publish-all') {
+      await publishAllSubmit(f, fd);
     } else if (kind === 'market-publish') {
       const r = await api('POST', '/api/market/publish', { office: f.dataset.office, skillId: f.dataset.skill, version: fd.get('version'), notes: fd.get('notes'), confirmWarnings: fd.get('cw') === 'on', confirmRisks: fd.get('cr') === 'on' });
       closeDlg(); S.marketDirty = true; toast(`v${r.version} 을(를) 마켓에 게시했습니다.`);
