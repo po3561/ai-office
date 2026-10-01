@@ -558,7 +558,7 @@ function vConnect() {
         <select data-change="tg-policy" style="max-width:250px"><option value="pairing"${ac.dmPolicy === 'pairing' ? ' selected' : ''}>코드로 승인 받기(기본)</option><option value="allowlist"${ac.dmPolicy === 'allowlist' ? ' selected' : ''}>허용된 계정만(무시)</option><option value="disabled"${ac.dmPolicy === 'disabled' ? ' selected' : ''}>개인 대화 끄기</option></select></div></div>`;
   } else html += '<p class="muted">불러오는 중…</p>';
   html += '</div>';
-  if (o && !o.readonly && d) html += roomsCard(o, d);
+  if (o && !o.readonly && d) html += (d.telegram && d.telegram.legacy) ? legacyRoomsCard(o, d) : roomsCard(o, d);
 
   const rows = (dg.pollers || []).map((p) => `<tr><td class="mono">${p.pid}</td><td>${esc(p.owner)}</td><td>${p.startedAt ? new Date(p.startedAt).toLocaleString('ko-KR', { hour12: false }) : ''}</td><td>${p.legit ? pill('ok', '정상') : pill('bad', '가로채는 중')}</td></tr>`).join('');
   html += `<div class="card"><div class="card-head"><div><h2>수신 진단</h2><p class="sub">텔레그램 봇은 한 곳에서만 메시지를 받을 수 있습니다. 사무실 밖의 Claude 창이 수신을 가져가면 지시가 도착하지 않습니다.</p></div><div class="row"><button class="btn sm" data-act="diag-refresh">다시 검사</button>${dg.rogue ? '<button class="btn sm primary" data-act="diag-clean">가로채는 프로세스 정리</button>' : ''}</div></div>
@@ -608,6 +608,53 @@ function roomsCard(o, d) {
     <form class="stack" data-form="room-default-task" autocomplete="off" style="gap:6px;margin-bottom:6px"><div><b>기본 업무</b><span class="sub">새로 자동 연결되는 방에 처음 붙는 업무입니다. 이미 연결된 방은 바뀌지 않습니다.</span></div>
       <textarea name="task" maxlength="800" style="min-height:48px" placeholder="비워 두면 방마다 따로 정합니다">${esc(rm.defaultTask)}</textarea><div class="row end"><button class="btn sm" type="submit">기본 업무 저장</button></div></form>
     ${items || '<p class="muted" style="border-top:1px solid var(--line);padding-top:14px">아직 봇이 아는 방이 없습니다. 봇을 그룹방에 초대해 보세요. 이미 들어가 있는 방은 그 방에서 봇을 @멘션하면 기록됩니다.</p>'}</div>`;
+}
+
+// ── 예전 방식의 방 · 주제 / 정기 보고 ──
+const RT = [['morning', '☀️ 아침 업무보고', '오늘 할 일'], ['evening', '🌙 저녁 업무결산', '오늘 한 일 · 내일 할 일']];
+const teamOpts = (teams, sel) => `<option value="없음"${sel ? '' : ' selected'}>담당 팀 없음</option>${teams.map((t) => `<option value="${esc(t.key)}"${t.key === sel ? ' selected' : ''}>${esc(`${t.emoji || ''} ${t.name}`.trim())}</option>`).join('')}`;
+
+function legacyRoutineBox(lg) {
+  const rt = lg.routine || {};
+  const linked = lg.rooms.filter((r) => r.linked);
+  const opts = [{ v: JSON.stringify({ room: '개인' }), label: '내 개인 대화', on: rt.room === '개인 대화' }];
+  for (const r of linked) {
+    opts.push({ v: JSON.stringify({ room: r.id }), label: `${r.title} (일반)`, on: rt.chatId === r.id && !rt.threadId });
+    for (const t of r.topics) opts.push({ v: JSON.stringify({ room: r.id, topic: t.id }), label: `${r.title} › ${t.name}`, on: rt.chatId === r.id && String(rt.threadId) === String(t.id) });
+  }
+  const has = Boolean(rt.chatId);
+  return `<div class="room" style="padding:14px 0;border-top:1px solid var(--line)"><b>⏰ 정기 보고</b>
+    <div class="small muted">정한 시각에 비서실장이 보고를 작성해 올립니다. PC가 꺼져 있었다면 켜진 뒤 아침은 3시간, 저녁은 자정 전까지 한 번 올립니다.</div>
+    <div class="row" style="margin-top:8px"><label class="small muted">받을 곳</label><select data-change="lr-rt-target" style="flex:1;min-width:200px">${has ? '' : '<option value="">— 선택하세요 —</option>'}${opts.map((x) => `<option value="${esc(x.v)}"${x.on ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select></div>
+    ${RT.map(([id, label, sub]) => { const x = rt[id] || {}; return `<div class="row" style="margin-top:8px"><span style="min-width:150px"><b>${label}</b><br><span class="small muted">${sub}</span></span>
+      <input type="time" value="${esc(x.time || '')}" data-change="lr-rt-time" data-id="${id}" style="max-width:130px"${has ? '' : ' disabled'}>
+      <label class="row small" style="gap:6px"><span class="switch"><input type="checkbox" data-change="lr-rt-on" data-id="${id}"${x.enabled ? ' checked' : ''}${has ? '' : ' disabled'}><i></i></span>켜기</label>
+      <button class="btn sm" data-act="lr-rt-test" data-id="${id}"${has ? '' : ' disabled'}>지금 시험 발송</button>
+      <span class="small muted">${x.lastRun ? `마지막 발송 ${esc(x.lastRun)}` : ''}</span></div>`; }).join('')}</div>`;
+}
+
+function legacyRoomsCard(o, d) {
+  const lg = d.telegram.legacy;
+  const items = lg.rooms.map((r) => {
+    const pills = [pill('', esc(ROOM_TYPE[r.type] || r.type || '방')), r.isForum ? pill('accent', '주제 사용') : '', r.isAdmin ? pill('ok', '봇 관리자') : pill('', `봇 ${esc(BOT_STATUS[r.botStatus] || r.botStatus)}`), r.linked ? pill('ok', '업무방 연결됨') : pill('warn', '미연결')].join(' ');
+    const topics = r.topics.length ? r.topics.map((t) => `<div class="row" style="padding:4px 0"><span style="flex:1;min-width:0">🗂 ${esc(t.name)} <span class="small muted mono">#${esc(t.id)}</span></span>
+      <select data-change="lr-assign" data-room="${esc(r.id)}" data-topic="${esc(t.id)}" style="max-width:210px">${teamOpts(lg.teams, t.team)}</select></div>`).join('')
+      : (r.isForum ? '<p class="small muted">아직 본 주제가 없습니다. 주제 안에서 메시지가 오가면 나타납니다.</p>' : '');
+    const newTopic = r.linked && r.isForum ? `<div class="row" style="margin-top:6px"><input type="text" data-new="${esc(r.id)}" maxlength="128" placeholder="새 주제 이름 (예: 물품 대여 신청)" style="flex:1;min-width:160px"><select data-newteam="${esc(r.id)}" style="max-width:200px">${teamOpts(lg.teams, null)}</select><button class="btn sm primary" data-act="lr-topic" data-room="${esc(r.id)}">주제 만들기</button></div>` : '';
+    const opts = r.linked ? `<div class="row" style="margin-top:8px">
+        <label class="row small" style="gap:6px"><span class="switch"><input type="checkbox" data-change="lr-mention" data-room="${esc(r.id)}"${r.requireMention ? ' checked' : ''}><i></i></span>봇을 부를 때만 응답(@멘션·답장)</label>
+        <label class="row small" style="gap:6px"><span class="switch"><input type="checkbox" data-change="lr-confirm" data-room="${esc(r.id)}"${r.confirmPosts ? ' checked' : ''}><i></i></span>올리기 전 승인 받기</label></div>
+      <div class="row" style="margin-top:6px"><span class="small muted">비서실장 호출어(메시지 맨 앞)</span><input type="text" id="lr-trg-${esc(r.id)}" maxlength="10" value="${esc(r.trigger)}" placeholder="없음" style="max-width:90px;text-align:center"><button class="btn sm" data-act="lr-trigger" data-room="${esc(r.id)}">저장</button>
+        <span class="small muted">${r.trigger ? `예: ${esc(r.trigger)} 오늘 대여 현황 알려줘` : '기호 없이 내 메시지를 모두 받습니다'}</span></div>` : '';
+    return `<div class="room" style="padding:14px 0;border-top:1px solid var(--line)">
+      <div class="row"><div><b>${esc(r.title)}</b> ${pills}<div class="small muted"><span class="mono">${esc(r.id)}</span>${r.memberCount != null ? ` · ${r.memberCount}명` : ''}</div>${r.error ? `<div class="small" style="color:var(--warn)">확인 메시지: ${esc(r.error)}</div>` : ''}</div><span class="spacer"></span>
+        ${r.linked ? `<button class="btn sm" data-act="lr-unlink" data-room="${esc(r.id)}">연결 해제</button>` : `<button class="btn sm primary" data-act="lr-link" data-room="${esc(r.id)}">업무방으로 연결</button>`}</div>
+      ${r.topics.length || r.isForum ? `<div class="small muted" style="margin:10px 0 4px">주제별 담당 팀</div>${topics}` : ''}${newTopic}${opts}</div>`;
+  }).join('');
+  return `<div class="card"><div class="card-head"><div><h2>텔레그램 방 · 주제</h2><p class="sub">봇이 들어간 방입니다. 업무방으로 연결하면 그 방의 주제(토픽)마다 담당 팀을 정해 일을 나눌 수 있습니다.</p></div>
+    <div class="row"><button class="btn sm" data-act="lr-refresh">텔레그램에서 다시 확인</button></div></div>
+    ${legacyRoutineBox(lg)}
+    ${items || '<p class="muted" style="border-top:1px solid var(--line);padding-top:14px">아직 봇이 아는 방이 없습니다. 봇을 그룹방에 초대한 뒤 방에서 한 번 말을 걸어 주세요.</p>'}</div>`;
 }
 
 // ── 설정 ──
@@ -770,6 +817,7 @@ function dlgUpdate() {
 }
 
 // ── 동작 ──
+const lg = (action, body = {}) => api('POST', `/api/offices/${oid()}/telegram/legacy/${action}`, body);
 const refresh = async () => { S.last = ''; await tick(); };
 const oid = () => encodeURIComponent(S.officeId);
 
@@ -805,6 +853,17 @@ const ACT = {
   'tg-pair': (b) => doing(b, async () => { const r = await api('POST', `/api/offices/${oid()}/telegram/pair`, { code: b.dataset.code }); toast(`허용했습니다 (${r.senderId})`); refresh(); }),
   'tg-deny': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/deny`, { code: b.dataset.code }); refresh(); }),
   'tg-remove': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/remove`, { senderId: b.dataset.id }); toast('허용을 해제했습니다.'); refresh(); }),
+  'lr-refresh': (b) => doing(b, async () => { await lg('refresh'); toast('방 이름과 봇 권한을 텔레그램에서 새로 확인했습니다.'); await refresh(); }),
+  'lr-link': (b) => doing(b, async () => { await lg('link', { room: b.dataset.room }); toast('업무방으로 연결했습니다. 허용된 계정의 메시지만 비서실장에게 전달됩니다.'); await refresh(); }),
+  'lr-unlink': (b) => dlgConfirm({ title: '이 방 연결을 해제할까요?', body: '이 방의 메시지가 더 이상 비서실장에게 가지 않습니다. 방과 주제 설정은 남습니다.', ok: '연결 해제', danger: true, onOk: async () => { try { await lg('unlink', { room: b.dataset.room }); toast('연결을 해제했습니다.'); } catch (e) { toast(e.message, true); } refresh(); } }),
+  'lr-topic': (b) => {
+    const room = b.dataset.room, input = document.querySelector('input[data-new="' + CSS.escape(room) + '"]'), sel = document.querySelector('select[data-newteam="' + CSS.escape(room) + '"]');
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    return doing(b, async () => { const r = await lg('topic', { room, name, team: sel.value }); toast('주제를 만들었습니다: ' + r.result.name + (r.result.teamName ? ' → ' + r.result.teamName : '')); input.value = ''; await refresh(); });
+  },
+  'lr-trigger': (b) => doing(b, async () => { const v = document.getElementById('lr-trg-' + b.dataset.room).value.trim(); await lg('options', { room: b.dataset.room, options: { trigger: v } }); toast(v ? '이제 "' + v + '"로 시작하는 메시지만 비서실장이 받습니다.' : '기호 없이 내 메시지를 모두 받습니다.'); await refresh(); }),
+  'lr-rt-test': (b) => doing(b, async () => { await lg('routinetest', { id: b.dataset.id }); toast('30초 안에 비서실장이 시험 보고를 작성해 올립니다.'); await refresh(); }),
   'room-refresh': (b) => doing(b, async () => { const r = await api('POST', `/api/offices/${oid()}/telegram/rooms/refresh`); toast(`방 ${r.checked}곳의 상태를 텔레그램에서 확인했습니다.`); refresh(); }),
   'room-connect': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/telegram/rooms/connect`, { chatId: b.dataset.chat }); toast('방을 연결했습니다. 방에서 @봇을 멘션하면 응답합니다.'); refresh(); }),
   'room-disconnect': (b) => dlgConfirm({ title: '이 방 연결을 해제할까요?', body: '봇이 이 방의 메시지를 더 이상 받지 않습니다. 봇은 방에 남아 있고, 업무 기록도 그대로입니다. 다시 연결할 수 있습니다.', ok: '연결 해제', danger: true, onOk: async () => { try { await api('POST', `/api/offices/${oid()}/telegram/rooms/disconnect`, { chatId: b.dataset.chat }); toast('연결을 해제했습니다.'); } catch (e) { toast(e.message, true); } refresh(); } }),
@@ -844,6 +903,12 @@ document.addEventListener('change', async (e) => {
     el.value = '';
     return;
   }
+  if (el.dataset.change === 'lr-assign') { const r = await doing(null, () => lg('assign', { room: el.dataset.room, topic: el.dataset.topic, team: el.value })); if (r) toast('"' + r.result.name + '" 담당: ' + (r.result.teamName || '없음')); else refresh(); return; }
+  if (el.dataset.change === 'lr-mention') { const ok = await doing(null, () => lg('options', { room: el.dataset.room, options: { requireMention: el.checked } })); if (!ok) el.checked = !el.checked; return; }
+  if (el.dataset.change === 'lr-confirm') { const ok = await doing(null, () => lg('options', { room: el.dataset.room, options: { confirmPosts: el.checked } })); if (!ok) el.checked = !el.checked; return; }
+  if (el.dataset.change === 'lr-rt-target') { if (!el.value) return; const r = await doing(null, () => lg('routinetarget', JSON.parse(el.value))); if (r) { toast('정기 보고를 "' + r.result.room + (r.result.topic ? ' › ' + r.result.topic : '') + '"로 받습니다.'); refresh(); } return; }
+  if (el.dataset.change === 'lr-rt-time') { const r = await doing(null, () => lg('routinetime', { id: el.dataset.id, time: el.value })); if (r) { toast('시각을 ' + el.value + '로 바꿨습니다.'); refresh(); } return; }
+  if (el.dataset.change === 'lr-rt-on') { const ok = await doing(null, () => lg('routinetime', { id: el.dataset.id, enabled: el.checked })); if (!ok) el.checked = !el.checked; else refresh(); return; }
   if (el.dataset.change === 'tg-policy') { await doing(null, () => api('POST', `/api/offices/${oid()}/telegram/policy`, { mode: el.value })); toast('저장했습니다.'); refresh(); }
 });
 

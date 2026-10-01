@@ -17,6 +17,7 @@ import { readStatus, summarize } from './status.mjs';
 import { runtime, startOffice, stopOffice, requestRestart, watchdogTick, forgetRuntime } from './runner.mjs';
 import { createUpdater } from './updater.mjs';
 import * as tg from './telegram.mjs';
+import * as lr from './rooms-legacy.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -62,10 +63,11 @@ async function detail(o, d) {
   return {
     ...s, teams, skills, changes: readChanges(o.folder), events: (status.events || []).slice(0, 30), chief: status.chief || { state: 'idle' },
     honorific: office.honorific, importedTeams: office.imported,
-    telegram: { ...s.telegram, bot, access: tg.accessInfo(o.stateDir), rooms: tg.roomsInfo(o.stateDir) },
+    telegram: { ...s.telegram, bot, access: tg.accessInfo(o.stateDir), rooms: tg.roomsInfo(o.stateDir), legacy: lr.isLegacy(o.stateDir) ? lr.legacyView(o.stateDir, teamList(teams)) : null },
   };
 }
 
+const teamList = (teams) => teams.map((t) => ({ key: t.key, name: t.name, emoji: t.emoji }));
 const pickStatus = (t = {}) => ({ state: t.state || 'idle', task: t.task || '', since: t.since || '', lastDone: t.lastDone || '', lastDoneAt: t.lastDoneAt || '', doneToday: t.doneToday || 0 });
 
 async function overview() {
@@ -166,12 +168,36 @@ route('POST', '/api/offices/:id/telegram/deny', async ({ p, body }) => { tg.deny
 route('POST', '/api/offices/:id/telegram/remove', async ({ p, body }) => { tg.removeSender(mutable(p.id).stateDir, body.senderId); return { ok: true }; });
 route('POST', '/api/offices/:id/telegram/policy', async ({ p, body }) => { tg.setPolicy(mutable(p.id).stateDir, body.mode); return { ok: true }; });
 // 그룹방·주제: 업무 지정, 연결(허용)·해제, 상태 확인, 정리. 봇은 rooms.json·access.json 이 바뀌면 다시 읽으므로 재출근 없이 적용된다.
-route('POST', '/api/offices/:id/telegram/rooms/refresh', async ({ p }) => tg.refreshRooms(mutable(p.id).stateDir));
-route('POST', '/api/offices/:id/telegram/rooms/task', async ({ p, body }) => tg.setRoomTask(mutable(p.id).stateDir, body.chatId, body.threadId, body.task));
-route('POST', '/api/offices/:id/telegram/rooms/default-task', async ({ p, body }) => tg.setDefaultTask(mutable(p.id).stateDir, body.task));
-route('POST', '/api/offices/:id/telegram/rooms/connect', async ({ p, body }) => tg.connectRoom(mutable(p.id).stateDir, body.chatId));
-route('POST', '/api/offices/:id/telegram/rooms/disconnect', async ({ p, body }) => { tg.disconnectRoom(mutable(p.id).stateDir, body.chatId); return { ok: true }; });
-route('POST', '/api/offices/:id/telegram/rooms/forget', async ({ p, body }) => { tg.forgetRoom(mutable(p.id).stateDir, body.chatId); return { ok: true }; });
+// 예전 방식 사무실은 rooms.json 의 형식이 달라서, 아래 새 방식 API 가 건드리면 파일이 망가진다. 예전용 API(telegram/legacy)만 쓰게 막는다.
+const newRooms = (id) => { const o = mutable(id); need(!lr.isLegacy(o.stateDir), '이 사무실은 예전 방식의 방 설정을 씁니다. 화면의 「텔레그램 방 · 주제」에서 바꿔 주세요.', 409); return o.stateDir; };
+route('POST', '/api/offices/:id/telegram/rooms/refresh', async ({ p }) => tg.refreshRooms(newRooms(p.id)));
+route('POST', '/api/offices/:id/telegram/rooms/task', async ({ p, body }) => tg.setRoomTask(newRooms(p.id), body.chatId, body.threadId, body.task));
+route('POST', '/api/offices/:id/telegram/rooms/default-task', async ({ p, body }) => tg.setDefaultTask(newRooms(p.id), body.task));
+route('POST', '/api/offices/:id/telegram/rooms/connect', async ({ p, body }) => tg.connectRoom(newRooms(p.id), body.chatId));
+route('POST', '/api/offices/:id/telegram/rooms/disconnect', async ({ p, body }) => { tg.disconnectRoom(newRooms(p.id), body.chatId); return { ok: true }; });
+route('POST', '/api/offices/:id/telegram/rooms/forget', async ({ p, body }) => { tg.forgetRoom(newRooms(p.id), body.chatId); return { ok: true }; });
+
+// 예전 AI-Office 형식의 방·주제 / 정기 보고(담당 팀 지정, 주제 만들기, 호출어, 아침·저녁 보고). 예전 사무실의 플러그인이 읽는 파일을 그대로 고친다.
+const LEGACY_ACTIONS = {
+  refresh: (d, t) => lr.refreshRooms(d, t),
+  link: (d, t, b) => lr.setLinked(d, t, b.room, true),
+  unlink: (d, t, b) => lr.setLinked(d, t, b.room, false),
+  topic: (d, t, b) => lr.createTopic(d, t, b.room, b.name, b.team),
+  assign: (d, t, b) => lr.assignTopic(d, t, b.room, b.topic, b.team),
+  options: (d, t, b) => lr.setRoomOptions(d, t, b.room, b.options || {}),
+  trigger: (d, t, b) => lr.setTrigger(d, t, b.room, b.topic, b.value),
+  routinetarget: (d, t, b) => lr.setRoutineTarget(d, t, b.room, b.topic),
+  routinetime: (d, t, b) => lr.setRoutineTime(d, b.id, b.time, b.enabled),
+  routinetest: (d, t, b) => lr.testRoutine(d, b.id),
+};
+route('POST', '/api/offices/:id/telegram/legacy/:action', async ({ p, body }) => {
+  const o = mutable(p.id);
+  need(lr.isLegacy(o.stateDir), '이 사무실은 예전 방식의 방·주제 설정을 쓰지 않습니다.', 409);
+  const fn = LEGACY_ACTIONS[p.action];
+  need(fn, '알 수 없는 요청입니다.', 404);
+  const r = await fn(o.stateDir, teamList(listTeams(o.folder)), body);
+  return { result: r, legacy: lr.legacyView(o.stateDir, teamList(listTeams(o.folder))) };
+});
 
 // ── 스킬 마켓 ──
 // 게시·설치·회수는 대시보드 화면에서 사용자가 직접 누를 때만 동작한다(텔레그램 메시지로는 불가). 자동 설치·업데이트는 없다.
@@ -282,6 +308,7 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
   // 시작할 때 사무실 설정 경로를 현재 설치 위치로 맞추고, 주기적으로 자동 복구를 돌린다.
   const relink = () => { try { for (const r of autoRelink()) console.log(`[ai-office] 사무실 위치가 바뀐 것을 찾아 따라갔습니다: ${r.from} → ${r.to}`); } catch (e) { console.error(e); } };
   relink();
+  try { for (const o of listOffices()) if (o.kind === 'claude-office' && o.stateDir && lr.repairLegacy(o.stateDir)) console.log('[ai-office] 예전 방 설정(rooms.json)의 불필요한 항목을 정리했습니다.'); } catch (e) { console.error(e); }
   try { const fixed = repairOffices(); if (fixed.length) console.log(`[ai-office] 사무실 설정 경로를 다시 맞췄습니다: ${fixed.join(', ')}`); } catch (e) { console.error(e); }
   const timer = setInterval(async () => {
     try {
