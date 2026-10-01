@@ -1,6 +1,6 @@
 // 공통 도구: 파일 읽기·쓰기, 프로세스 실행, 오류 형식
-import { readFileSync, writeFileSync, renameSync, mkdirSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, statSync, readdirSync, copyFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 export const readText = (f) => readFileSync(f, 'utf8').replace(/^﻿/, '');
@@ -16,6 +16,19 @@ export function writeAtomic(file, text, mode) {
   writeFileSync(tmp, text, mode ? { encoding: 'utf8', mode } : 'utf8');
   renameSync(tmp, file);
 }
+// 파일·폴더 복사(덮어쓰기). fs.cpSync 는 Node 24 Windows 에서 한글 이름 파일을 덮어쓸 때 오류도 없이 프로세스를 죽이므로 쓰지 않는다.
+// filter(경로) 가 false 를 돌려주면 그 파일·폴더는 건너뛴다.
+export function copyTree(from, to, filter) {
+  if (filter && !filter(from)) return;
+  if (statSync(from).isDirectory()) {
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from)) copyTree(join(from, name), join(to, name), filter);
+  } else {
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+  }
+}
+
 export const writeJson = (file, value, mode) => writeAtomic(file, JSON.stringify(value, null, 2) + '\n', mode);
 
 export const nowIso = () => new Date().toISOString();

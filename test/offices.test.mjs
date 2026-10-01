@@ -179,3 +179,12 @@ test('폴더가 사라지면 같은 이름 사무실이 하나일 때만 자동�
   assert.ok(done.some((d) => d.id === o.id && d.to === target), JSON.stringify(done));
   assert.equal(O.getOffice(o.id).folder, target);
 });
+
+test('방금 떠나온 옛 위치는 이사 후보로 다시 권하지 않는다', () => {
+  const a = join(root, 'e1', 'Same-Name'), b = join(root, 'e2', 'Same-Name');
+  fakeClaudeOffice(a); fakeClaudeOffice(b);
+  const o = O.importOffice({ folder: a, name: '이름같음' });
+  const moved = O.relocateOffice(o.id, b);
+  assert.equal(moved.previousFolder, a);
+  assert.ok(!O.findMovedFolders(moved).includes(a));
+});

@@ -2,10 +2,10 @@
 //   claude-office : Claude Code 로 돌아가는 사무실. 이 프로그램이 만들거나(managed) 기존 폴더를 불러온 것.
 //   hermes        : Hermes(라피스 등) 같은 별개의 봇. **읽기 전용** — 인식해서 보여 주기만 하고 어떤 것도 바꾸거나 실행하지 않는다.
 import { join, resolve, basename } from 'node:path';
-import { readdirSync, mkdirSync, copyFileSync, cpSync, renameSync, existsSync } from 'node:fs';
+import { readdirSync, mkdirSync, copyFileSync, renameSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { FILES, OFFICES_DIR, CLOSED_DIR, TEMPLATES, CLI, STATUS_HOOK, DEFAULT_TG_STATE } from './paths.mjs';
-import { readText, readJson, writeJson, writeAtomic, isDir, isFile, nowIso, localDate, stamp, need, slug, fwd, HttpError } from './util.mjs';
+import { readText, readJson, writeJson, writeAtomic, copyTree, isDir, isFile, nowIso, localDate, stamp, need, slug, fwd, HttpError } from './util.mjs';
 import { getConfig } from './config.mjs';
 import { addTeam, saveOffice, loadOffice, renderTeamsBlock, syncClaudeMd } from './teams.mjs';
 import { DEFAULT_PRESETS } from './presets.mjs';
@@ -196,7 +196,7 @@ const keyOf = (p) => resolve(p).toLowerCase();
 export function findMovedFolders(o) {
   const name = basename(o.folder);
   const home = homedir();
-  const taken = new Set(listOffices().map((x) => keyOf(x.folder)));
+  const taken = new Set([...listOffices().map((x) => keyOf(x.folder)), ...(o.previousFolder ? [keyOf(o.previousFolder)] : [])]);   // 방금 떠나온 옛 위치를 다시 권하지 않는다
   const out = [];
   for (const root of [...driveRoots(), join(home, 'Desktop'), join(home, 'Documents'), OFFICES_DIR]) {
     const dir = join(root, name);
@@ -358,7 +358,7 @@ export function migrateOffice(id) {
   need(!resolve(o.folder).toLowerCase().startsWith(resolve(OFFICES_DIR).toLowerCase()), '이미 고정 위치에 있습니다.');
   const target = join(OFFICES_DIR, uniqueId(basename(o.folder), readRegistry()));
   mkdirSync(OFFICES_DIR, { recursive: true });
-  cpSync(o.folder, target, { recursive: true, filter: (p) => !/[\\/](node_modules|\.wrangler|\.git)([\\/]|$)/.test(p) });
+  copyTree(o.folder, target, (p) => !/[\\/](node_modules|\.wrangler|\.git)([\\/]|$)/.test(p));
   const reg = readRegistry();
   const rec = reg.offices.find((x) => x.id === id);
   rec.previousFolder = o.folder;

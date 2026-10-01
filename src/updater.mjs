@@ -3,10 +3,10 @@
 // - 설치된 프로그램(<설치폴더>\app)만 교체한다. 소스에서 바로 실행 중이면 감지만 하고 `git pull` 을 안내한다.
 // - 교체 전에 현재 프로그램을 백업하고, 새 파일 검사나 복사가 실패하면 되돌린다. 사무실(봇)과 데이터는 건드리지 않는다.
 import { join, resolve } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, rmSync, cpSync, writeFileSync, statSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, statSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { APP_HOME, DATA_HOME, UPDATE_DIR } from './paths.mjs';
-import { readJson, writeJson, isFile, isDir, need, run, ps, psQuote, isWindows, nowIso, stamp, HttpError } from './util.mjs';
+import { readJson, writeJson, copyTree, isFile, isDir, need, run, ps, psQuote, isWindows, nowIso, stamp, HttpError } from './util.mjs';
 
 export const REPO = 'po3561/ai-office';
 const ASSET = 'ai-office-app.zip';
@@ -48,7 +48,7 @@ function mirror(from, to) {
   for (const n of names) {
     const a = join(from, n), b = join(to, n);
     if (statSync(a).isDirectory()) mirror(a, b);
-    else cpSync(a, b, { force: true });
+    else copyTree(a, b);
   }
 }
 
@@ -142,10 +142,10 @@ export function createUpdater({ current, appHome = APP_HOME, dataHome = DATA_HOM
 
       // 교체: 현재 프로그램을 백업한 뒤 새 파일로 맞춘다. 실패하면 백업으로 되돌린다.
       mkdirSync(backup, { recursive: true });
-      for (const n of [...APP_ITEMS, ...APP_FILES]) if (existsSync(join(appHome, n))) cpSync(join(appHome, n), join(backup, n), { recursive: true });
+      for (const n of [...APP_ITEMS, ...APP_FILES]) if (existsSync(join(appHome, n))) copyTree(join(appHome, n), join(backup, n));
       swapped = true;
       for (const n of APP_ITEMS) if (isDir(join(out, n))) mirror(join(out, n), join(appHome, n));
-      for (const n of APP_FILES) if (isFile(join(out, n))) cpSync(join(out, n), join(appHome, n), { force: true });
+      for (const n of APP_FILES) if (isFile(join(out, n))) copyTree(join(out, n), join(appHome, n));
       const instFile = join(dataHome, 'install.json');
       writeJson(instFile, { ...readJson(instFile, {}), version: pkg.version, updatedAt: nowIso() });
 
@@ -157,7 +157,7 @@ export function createUpdater({ current, appHome = APP_HOME, dataHome = DATA_HOM
       return result;
     } catch (e) {
       if (swapped && isDir(backup)) {
-        try { for (const n of [...APP_ITEMS, ...APP_FILES]) if (existsSync(join(backup, n))) { rmSync(join(appHome, n), { recursive: true, force: true }); cpSync(join(backup, n), join(appHome, n), { recursive: true }); } } catch { /* 되돌리기도 실패하면 백업 폴더에서 직접 복구할 수 있다 */ }
+        try { for (const n of [...APP_ITEMS, ...APP_FILES]) if (existsSync(join(backup, n))) { rmSync(join(appHome, n), { recursive: true, force: true }); copyTree(join(backup, n), join(appHome, n)); } } catch { /* 되돌리기도 실패하면 백업 폴더에서 직접 복구할 수 있다 */ }
       }
       rmSync(work, { recursive: true, force: true });
       if (e instanceof HttpError) throw e;
