@@ -2,10 +2,10 @@
 //   claude-office : Claude Code 로 돌아가는 사무실. 이 프로그램이 만들거나(managed) 기존 폴더를 불러온 것.
 //   hermes        : Hermes(라피스 등) 같은 별개의 봇. **읽기 전용** — 인식해서 보여 주기만 하고 어떤 것도 바꾸거나 실행하지 않는다.
 import { join, resolve, basename } from 'node:path';
-import { readdirSync, mkdirSync, copyFileSync, cpSync } from 'node:fs';
+import { readdirSync, mkdirSync, copyFileSync, cpSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { FILES, OFFICES_DIR, TEMPLATES, CLI, STATUS_HOOK, DEFAULT_TG_STATE } from './paths.mjs';
-import { readText, readJson, writeJson, writeAtomic, isDir, isFile, nowIso, localDate, need, slug, fwd, HttpError } from './util.mjs';
+import { FILES, OFFICES_DIR, CLOSED_DIR, TEMPLATES, CLI, STATUS_HOOK, DEFAULT_TG_STATE } from './paths.mjs';
+import { readText, readJson, writeJson, writeAtomic, isDir, isFile, nowIso, localDate, stamp, need, slug, fwd, HttpError } from './util.mjs';
 import { getConfig } from './config.mjs';
 import { addTeam, saveOffice, loadOffice, renderTeamsBlock, syncClaudeMd } from './teams.mjs';
 import { DEFAULT_PRESETS } from './presets.mjs';
@@ -52,6 +52,36 @@ export function unregisterOffice(id) {
   const [gone] = reg.offices.splice(i, 1);
   writeRegistry(reg);
   return gone;
+}
+
+// ── 사무실 폐쇄(삭제) ──
+// 이 프로그램의 사무실 위치(OFFICES_DIR) 안에 있는 사무실만 폐쇄한다. 폴더는 지우지 않고 CLOSED_DIR 로 옮기므로(봇 토큰 포함) 실수해도 되살릴 수 있다.
+// 직접 불러온 폴더(바탕화면 등 사용자의 원래 폴더)는 옮기지 않고 「등록 해제」만 쓴다.
+// 꺼 두는 일(퇴근)은 부르는 쪽이 먼저 한다: runner 가 offices 를 가져다 쓰므로 여기서 runner 를 부르면 순환 참조가 된다.
+export function isClosable(o) {
+  const sep = process.platform === 'win32' ? '\\' : '/';
+  return o.kind === 'claude-office' && !o.readonly && resolve(o.folder).toLowerCase().startsWith(resolve(OFFICES_DIR).toLowerCase() + sep);
+}
+
+export function checkClosable(id, confirmName) {
+  const o = mutable(id);
+  need(isClosable(o), '직접 불러온 폴더(프로그램의 사무실 위치 밖)는 폐쇄할 수 없습니다. 파일을 그대로 두는 「등록 해제」를 쓰세요.');
+  need(String(confirmName || '').trim() === o.name, '확인을 위해 사무실 이름을 똑같이 입력해 주세요.');
+  return o;
+}
+
+export function closeOffice(id, { confirmName } = {}) {
+  const o = checkClosable(id, confirmName);
+  let archived = '';
+  if (isDir(o.folder)) {
+    mkdirSync(CLOSED_DIR, { recursive: true });
+    archived = join(CLOSED_DIR, `${o.id}_${stamp()}`);
+    try { renameSync(o.folder, archived); } catch (e) {
+      throw new HttpError(409, `사무실 폴더를 옮기지 못했습니다. 사무실 창이나 탐색기에서 이 폴더를 열어 두었다면 닫고 다시 시도해 주세요. (${e.code || e.message})`);
+    }
+  }
+  unregisterOffice(id);   // 폴더를 옮긴 뒤에만 등록을 지운다
+  return { id, name: o.name, archived };
 }
 
 function uniqueId(base, reg) {

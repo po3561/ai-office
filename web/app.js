@@ -143,6 +143,10 @@ function renderBanners(o) {
       b.push(`<div class="banner bad"><span class="ic">⛔</span><div class="txt"><b>${br ? 'Claude Code가 있지만 실행되지 않습니다' : 'Claude Code가 설치되어 있지 않습니다'}</b><span class="muted">${br ? `${esc(clip(br.error, 140))} — 다시 설치하면 해결되는 경우가 많습니다.` : '사무실을 움직이려면 Claude Code가 필요합니다.'}</span></div><button class="btn sm primary" data-act="claude-install">${br ? '다시 설치' : '설치하기'}</button></div>`);
     }
     else if (!ov.claude.auth.loggedIn) b.push(`<div class="banner warn"><span class="ic">🔑</span><div class="txt"><b>Claude에 로그인해 주세요</b><span class="muted">본인의 Claude 계정으로 로그인하면 사무실이 그 계정의 사용량으로 일합니다.</span></div><button class="btn sm primary" data-act="claude-login">로그인</button></div>`);
+    const u = ov.update;
+    if (u && u.available && u.latest) {
+      b.push(`<div class="banner info"><span class="ic">⬆️</span><div class="txt"><b>새 버전 v${esc(u.latest.version)} 이(가) 나왔습니다</b><span class="muted">지금은 v${esc(u.current)} 입니다. ${u.canApply ? '업데이트해도 사무실(봇)은 계속 근무하고, 대시보드만 잠시 다시 시작합니다.' : esc(u.why)}</span></div>${u.canApply ? '<button class="btn sm primary" data-act="update-apply">지금 업데이트</button>' : ''}${u.latest.page ? `<a class="btn sm" href="${esc(u.latest.page)}" target="_blank" rel="noopener">변경 내용</a>` : ''}</div>`);
+    }
     if (ov.diag.rogue) b.push(`<div class="banner bad"><span class="ic">📡</span><div class="txt"><b>텔레그램 메시지를 가로채는 프로세스가 ${ov.diag.rogue}개 있습니다</b><span class="muted">일반 Claude 창이 봇의 수신권을 빼앗으면 지시가 사무실에 도착하지 않습니다.</span></div><button class="btn sm primary" data-act="diag-clean">정리하기</button></div>`);
     if (ov.diag.globalPlugin) b.push(`<div class="banner warn"><span class="ic">⚠️</span><div class="txt"><b>텔레그램 플러그인이 모든 Claude 창에서 켜져 있습니다</b><span class="muted">새 Claude 창을 열 때마다 봇 수신권을 가로챕니다. 사무실 폴더에서는 따로 켜지므로 전역 설정은 꺼도 됩니다.</span></div><button class="btn sm" data-act="diag-global-off">전역에서 끄기</button></div>`);
   }
@@ -534,6 +538,16 @@ function roomsCard(o, d) {
 }
 
 // ── 설정 ──
+function vUpdateCard(u, cfg) {
+  if (!u) return '';
+  const state = u.available && u.latest ? `<span class="pill accent">새 버전 v${esc(u.latest.version)}</span>` : (u.checkedAt && !u.error ? '<span class="pill ok">최신 버전입니다</span>' : '');
+  return `<div class="card"><div class="card-head"><div><h2>업데이트</h2><div class="badges">현재 v${esc(u.current)} ${state}</div></div><div class="row"><button class="btn sm" data-act="update-check">지금 확인</button>${u.available && u.canApply ? '<button class="btn sm primary" data-act="update-apply">지금 업데이트</button>' : ''}</div></div>
+    ${u.error ? `<p class="small" style="color:var(--bad)">${esc(u.error)}</p>` : ''}
+    <p class="small muted">${u.checkedAt ? `마지막 확인: ${ago(u.checkedAt)} 전. ` : ''}켜 있는 동안 6시간마다 새 버전을 자동으로 확인합니다.${u.canApply ? '' : ` ${esc(u.why)}`}</p>
+    ${u.available && u.latest && u.latest.notes ? `<details style="margin-top:8px"><summary class="small">변경 내용 보기</summary><pre class="small" style="white-space:pre-wrap;margin-top:6px">${esc(u.latest.notes)}</pre></details>` : ''}
+    ${u.canApply ? `<div class="setting" style="margin-top:10px"><div><b>새 버전이 나오면 바로 자동 설치</b><span class="sub">꺼 두면 알림만 뜨고 직접 눌러야 설치됩니다(기본). 켜면 확인되는 즉시 설치하고 대시보드를 다시 시작합니다. 사무실은 계속 근무하고, 이전 버전은 백업됩니다.</span></div><label class="switch"><input type="checkbox" data-change="autoupdate"${cfg.autoUpdate ? ' checked' : ''}><i></i></label></div>` : ''}</div>`;
+}
+
 function vSettings() {
   const cfg = S.ov.config, o = cur(), a = S.ov.app;
   let html = `<div class="card"><h2>일반</h2><p class="sub" style="margin-bottom:6px">새 사무실을 만들 때 쓰는 기본값과 화면 설정입니다.</p>
@@ -551,10 +565,12 @@ function vSettings() {
       <div class="setting"><div><b>항상 켜두기</b><span class="sub">이 프로그램이 켜져 있는 동안, 사무실이 꺼져 있으면 다시 출근시킵니다. 직접 퇴근시킨 경우에는 다시 켜지 않습니다.</span></div><label class="switch"><input type="checkbox" data-change="autostart"${o.autoStart ? ' checked' : ''}><i></i></label></div>
       <div class="setting"><div><b>사무실 폴더</b><span class="sub path">${esc(o.folder)}</span></div><button class="btn sm" data-act="office-open">폴더 열기</button></div>
       ${!o.managed && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
-      <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>`;
+      <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>
+      ${o.closable ? `<div class="setting"><div><b>사무실 폐쇄 (삭제)</b><span class="sub">사무실을 끄고 목록에서 없앱니다. 폴더(봇 토큰·업무 기록 포함)는 완전히 지우지 않고 <span class="code">${esc(a.dataHome)}\\closed</span> 로 옮겨 둡니다.</span></div><button class="btn sm danger" data-act="office-close">폐쇄하기</button></div>` : ''}`;
     }
     html += '</div>';
   }
+  html += vUpdateCard(S.ov.update, cfg);
   html += `<div class="card"><h2>프로그램 정보</h2><div class="setting" style="border:0"><div><b>AI-Office ${esc(a.version)}</b><span class="sub">프로그램: <span class="path">${esc(a.appHome)}</span><br>데이터: <span class="path">${esc(a.dataHome)}</span></span></div><button class="btn sm" data-act="open-data">데이터 폴더 열기</button></div>
     <p class="small muted">프로그램과 데이터는 고정 위치에 있어, 바탕화면을 정리하거나 폴더를 옮겨도 계속 동작합니다.</p></div>`;
   return html;
@@ -641,6 +657,35 @@ function dlgConfirm({ title, body, ok = '확인', danger = false, onOk }) {
   $('#confirmOk').onclick = async (e) => { e.target.disabled = true; await onOk(); closeDlg(); };
 }
 
+// 사무실 폐쇄: 이름을 똑같이 입력해야 버튼이 눌린다(실수 방지).
+function dlgCloseOffice() {
+  const o = cur();
+  if (!o) return;
+  openDlg(`<form data-form="office-close"><div class="dlg-head"><h2>「${esc(o.name)}」 사무실을 폐쇄할까요?</h2>
+    <p>${o.running ? '지금 근무 중이라 먼저 퇴근시킵니다(진행 중인 업무는 중단됩니다). ' : ''}사무실이 목록에서 사라지고 텔레그램 봇 연결도 끊어집니다. 폴더는 지우지 않고 <code>${esc(S.ov.app.dataHome)}\\closed</code> 로 옮겨 두므로, 필요하면 「기존 폴더 불러오기」로 되살릴 수 있습니다.</p></div>
+    <div class="dlg-body"><div class="field"><label>확인을 위해 사무실 이름을 입력하세요</label><input type="text" name="confirm" autocomplete="off" placeholder="${esc(o.name)}" data-want="${esc(o.name)}"></div></div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn danger" type="submit" id="closeOk" disabled>폐쇄하기</button></div></form>`);
+  const input = $('#dlg input[name=confirm]');
+  input.addEventListener('input', () => { $('#closeOk').disabled = input.value.trim() !== o.name; });
+}
+
+// 업데이트: 설치를 시키고, 서버가 새 버전으로 다시 뜰 때까지 기다렸다가 화면을 새로 고친다.
+function dlgUpdate() {
+  const u = S.ov && S.ov.update;
+  if (!u || !u.latest) return;
+  dlgConfirm({ title: `v${u.latest.version} 으로 업데이트할까요?`, body: `지금은 v${esc(u.current)} 입니다. 새 파일을 내려받아 교체하고 대시보드를 <b>잠시(약 10초) 다시 시작</b>합니다. 사무실(봇)은 끄지 않고, 이전 버전은 백업해 둡니다.`, ok: '업데이트', onOk: async () => {
+    try {
+      await api('POST', '/api/update/apply');
+      toast('업데이트했습니다. 대시보드를 다시 시작하는 중…');
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try { const p = await api('GET', '/api/ping'); if (p.version === u.latest.version) { location.reload(); return; } } catch { /* 다시 뜨는 중 */ }
+      }
+      toast('대시보드가 다시 뜨지 않으면 바탕화면의 AI-Office 바로가기를 다시 눌러 주세요.', true);
+    } catch (e) { toast(e.message, true); }
+  } });
+}
+
 // ── 동작 ──
 const refresh = async () => { S.last = ''; await tick(); };
 const oid = () => encodeURIComponent(S.officeId);
@@ -663,6 +708,9 @@ const ACT = {
   'office-open': (b) => doing(b, () => api('POST', `/api/offices/${oid()}/open`)),
   'open-data': (b) => doing(b, () => api('POST', '/api/open-data')),
   'office-unregister': () => dlgConfirm({ title: '목록에서 뺄까요?', body: '등록만 해제됩니다. 폴더와 파일은 지워지지 않고, 나중에 다시 불러올 수 있습니다.', ok: '등록 해제', danger: true, onOk: async () => { try { await api('DELETE', `/api/offices/${oid()}`); toast('등록을 해제했습니다.'); } catch (e) { toast(e.message, true); } S.officeId = ''; refresh(); } }),
+  'office-close': () => dlgCloseOffice(),
+  'update-check': (b) => doing(b, async () => { const u = await api('POST', '/api/update/check'); await refresh(); toast(u.error || (u.available ? `새 버전 v${u.latest.version} 이(가) 있습니다.` : '지금이 최신 버전입니다.'), Boolean(u.error)); }),
+  'update-apply': () => dlgUpdate(),
   'office-migrate': () => dlgConfirm({ title: '고정 위치로 옮길까요?', body: '사무실 폴더를 고정 위치로 <b>복사</b>하고, 이후 새 위치를 사용합니다. 원본은 그대로 남습니다.', ok: '옮기기', onOk: async () => { try { const r = await api('POST', `/api/offices/${oid()}/migrate`); toast(`옮겼습니다: ${r.to}`); } catch (e) { toast(e.message, true); } refresh(); } }),
   'team-add': () => dlgTeamAdd('preset'),
   'team-add-tab': (b) => dlgTeamAdd(b.dataset.tab),
@@ -703,6 +751,7 @@ document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.id === 'officeSel') { S.officeId = el.value; localStorage.setItem('office', S.officeId); refresh(); return; }
   if (el.dataset.change === 'autostart') { const ok = await doing(null, () => api('PATCH', `/api/offices/${oid()}`, { autoStart: el.checked })); if (!ok) el.checked = !el.checked; else refresh(); }
+  if (el.dataset.change === 'autoupdate') { const ok = await doing(null, () => api('PATCH', '/api/config', { autoUpdate: el.checked })); if (!ok) el.checked = !el.checked; else { toast(el.checked ? '새 버전이 확인되면 자동으로 설치합니다.' : '새 버전은 알림만 띄웁니다.'); refresh(); } return; }
   if (el.dataset.change === 'room-dept') {   // 고른 부서를 업무 칸에 채워 넣는다(저장은 직접)
     const ta = el.closest('form').querySelector('textarea');
     if (el.value) { ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + el.value; ta.focus(); }
@@ -731,6 +780,9 @@ document.addEventListener('submit', async (e) => {
     else if (kind === 'config') {
       await api('PATCH', '/api/config', { honorific: fd.get('honorific'), theme: fd.get('theme'), port: Number(fd.get('port')), autoRestart: fd.get('autoRestart') === 'on' });
       S.themePref = fd.get('theme'); localStorage.setItem('theme', S.themePref); applyTheme(); toast('저장했습니다.');
+    } else if (kind === 'office-close') {
+      const r = await api('POST', `/api/offices/${oid()}/close`, { confirmName: fd.get('confirm') });
+      S.officeId = ''; localStorage.removeItem('office'); closeDlg(); toast(`「${r.name}」 사무실을 폐쇄했습니다.`);
     } else if (kind === 'new-office') {
       const o = await api('POST', '/api/offices', { name: fd.get('name'), honorific: fd.get('honorific'), presets: fd.getAll('preset') });
       S.officeId = o.id; localStorage.setItem('office', o.id); closeDlg(); toast(`「${o.name}」 사무실을 만들었습니다. 이제 봇을 연결해 볼까요?`); navigate('home');

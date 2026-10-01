@@ -4,7 +4,7 @@ import { readJson, writeJson, need } from './util.mjs';
 import { normalizeRepo } from './market.mjs';
 
 // market: 스킬 마켓 연결 정보. 토큰은 저장하지 않는다(PC 의 git·gh 로그인을 그대로 쓴다).
-export const DEFAULTS = { port: 3300, honorific: '사용자님', theme: 'auto', autoRestart: true, market: { enabled: false, repo: '', alias: '' } };
+export const DEFAULTS = { port: 3300, honorific: '사용자님', theme: 'auto', autoRestart: true, autoUpdate: false, market: { enabled: false, repo: '', alias: '' } };
 
 export const getConfig = () => {
   const c = { ...DEFAULTS, ...readJson(FILES.config, {}) };
@@ -30,6 +30,7 @@ export function setConfig(patch = {}) {
     next.theme = patch.theme;
   }
   if ('autoRestart' in patch) next.autoRestart = Boolean(patch.autoRestart);
+  if ('autoUpdate' in patch) next.autoUpdate = Boolean(patch.autoUpdate);
   if ('market' in patch) {
     const m = patch.market || {};
     const nm = { ...cur.market };
