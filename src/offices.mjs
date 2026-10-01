@@ -305,28 +305,56 @@ function repairDocPaths(folder) {
   return changed;
 }
 
-// 새 버전의 스킬 마켓 보안 규칙을 이미 있는 사무실의 지침(CLAUDE.md)에도 넣는다.
+// 새 버전의 보안 규칙 한 줄을 이미 있는 사무실의 지침(CLAUDE.md)에도 넣는다.
 // 사용자가 고친 다른 내용은 건드리지 않는다: 옛 규칙 줄만 바꾸고, 없으면 끝에 한 절을 덧붙인다.
-const MARKET_RULE_RE = /^- \*\*스킬 마켓\*\*.*$/m;
-export function repairMarketRule(folder) {
+function repairRuleLine(folder, re, title) {
   const f = join(folder, 'CLAUDE.md');
   if (!isFile(f)) return false;
-  const rule = MARKET_RULE_RE.exec(readText(join(TEMPLATES, 'office', 'CLAUDE.md')));
+  const rule = re.exec(readText(join(TEMPLATES, 'office', 'CLAUDE.md')));
   if (!rule) return false;
   const text = readText(f);
   if (text.includes(rule[0])) return false;
-  const next = MARKET_RULE_RE.test(text) ? text.replace(MARKET_RULE_RE, () => rule[0])
-    : `${text.replace(/\s*$/, '')}\n\n## 스킬 마켓 규칙 (AI-Office 업데이트로 추가)\n\n${rule[0]}\n`;
+  const next = re.test(text) ? text.replace(re, () => rule[0])
+    : `${text.replace(/\s*$/, '')}\n\n## ${title} (AI-Office 업데이트로 추가)\n\n${rule[0]}\n`;
   writeAtomic(f, next);
+  return true;
+}
+const MARKET_RULE_RE = /^- \*\*스킬 마켓\*\*.*$/m;
+export const repairMarketRule = (folder) => repairRuleLine(folder, MARKET_RULE_RE, '스킬 마켓 규칙');
+// 받은 사진·파일(.telegram/inbox)은 읽어서 분석해도 된다는 규칙.
+const INBOX_RULE_RE = /^- `\.telegram\/`\(봇 토큰.*$/m;
+export const repairInboxRule = (folder) => repairRuleLine(folder, INBOX_RULE_RE, '받은 사진·파일 규칙');
+
+// 예전 견본은 .telegram 폴더 전체를 읽지 못하게 막아, 텔레그램으로 받은 사진(.telegram/inbox)까지 열 수 없었다.
+// 그 규칙을 토큰·허용 목록만 막는 좁은 규칙으로 바꾸고 inbox 읽기를 허용한다. 바꿨으면 true.
+const RETIRED_DENY = ['Read(./.telegram/**)'];
+const INBOX_READ = 'Read(./.telegram/inbox/**)';
+const TELEGRAM_SECRET_DENY = ['Read(./.telegram/.env*)', 'Read(./.telegram/*.json)', 'Read(./.telegram/approved/**)'];
+function allowInboxRead(settings) {
+  const p = settings.permissions ||= {};
+  const deny = p.deny || [], allow = p.allow || [];
+  if (!deny.some((d) => RETIRED_DENY.includes(d))) return false;
+  p.deny = [...new Set([...deny.filter((d) => !RETIRED_DENY.includes(d)), ...TELEGRAM_SECRET_DENY])];
+  if (!allow.includes(INBOX_READ)) p.allow = [...allow, INBOX_READ];
   return true;
 }
 
 export function repairOffices() {
   const fixed = [];
   for (const o of listOffices()) {
-    if (!o.managed || o.kind !== 'claude-office' || !isDir(o.folder)) continue;
-    try { if (repairDocPaths(o.folder)) fixed.push(o.id); } catch { /* 지침 경로 보정이 실패해도 설정 점검은 계속한다 */ }
+    if (o.readonly || o.kind !== 'claude-office' || !isDir(o.folder)) continue;
+    // 사진을 막던 옛 규칙은 불러온(직접 만들지 않은) 사무실도 고친다. 그 밖의 설정은 그 사무실 것이라 건드리지 않는다.
+    for (const name of ['settings.json', 'settings.local.json']) {
+      try {
+        const file = join(o.folder, '.claude', name);
+        const cur = readJson(file, null);
+        if (cur && allowInboxRead(cur)) { writeJson(file, cur); if (!fixed.includes(o.id)) fixed.push(o.id); }
+      } catch { /* 한 사무실의 문제가 다른 사무실 점검을 막지 않게 한다 */ }
+    }
+    if (!o.managed) continue;
+    try { if (repairDocPaths(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 지침 경로 보정이 실패해도 설정 점검은 계속한다 */ }
     try { if (repairMarketRule(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
+    try { if (repairInboxRule(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
     try {
       const file = join(o.folder, '.claude', 'settings.json');
       const cur = readJson(file, null);
@@ -345,7 +373,7 @@ export function repairOffices() {
       next.permissions.deny = [...new Set([...(next.permissions.deny || []), ...tpl.permissions.deny])];
       writeJson(file, next);
       saveOffice(o.folder, { ...office, appHome: fwd(resolve(CLI, '..', '..')) });
-      fixed.push(o.id);
+      if (!fixed.includes(o.id)) fixed.push(o.id);
     } catch { /* 한 사무실의 문제가 다른 사무실 점검을 막지 않게 한다 */ }
   }
   return fixed;

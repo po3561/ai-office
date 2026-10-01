@@ -116,6 +116,57 @@ test('옛 버전 사무실의 지침에도 새 스킬 마켓 규칙이 들어가
   writeFileSync(md, orig);
 });
 
+test('새 사무실은 텔레그램으로 받은 사진(.telegram/inbox)을 읽을 수 있고, 토큰·허용 목록은 계속 막는다', () => {
+  const o = O.listOffices().find((x) => x.id === 'my-office');
+  const s = JSON.parse(readFileSync(join(o.folder, '.claude', 'settings.json'), 'utf8'));
+  assert.ok(!s.permissions.deny.includes('Read(./.telegram/**)'), 'inbox 까지 막는 넓은 규칙이 없어야 한다');
+  assert.ok(s.permissions.allow.includes('Read(./.telegram/inbox/**)'));
+  for (const d of ['Read(./.telegram/.env*)', 'Read(./.telegram/*.json)', 'Read(./.telegram/approved/**)', 'Edit(./.telegram/**)']) assert.ok(s.permissions.deny.includes(d), d);
+  const md = readFileSync(join(o.folder, 'CLAUDE.md'), 'utf8');
+  assert.match(md, /`\.telegram\/inbox\/`[^\n]*`Read`로 열어 분석한다/);
+  assert.match(md, /사진·파일을 받으면 바로 분석한다/);
+});
+
+test('옛 사무실(사진까지 막던 규칙)은 시작할 때 inbox 읽기만 풀리고, 사용자 규칙은 그대로 둔다', () => {
+  const o = O.listOffices().find((x) => x.id === 'my-office');
+  const file = join(o.folder, '.claude', 'settings.json');
+  const md = join(o.folder, 'CLAUDE.md');
+  const orig = readFileSync(md, 'utf8');
+  const s = JSON.parse(readFileSync(file, 'utf8'));
+  s.permissions.allow = s.permissions.allow.filter((a) => !a.includes('.telegram')).concat('Bash(git status)');
+  s.permissions.deny = ['Read(./.telegram/**)', ...s.permissions.deny.filter((d) => !/^Read\(\.\/\.telegram/.test(d))];
+  writeFileSync(file, JSON.stringify(s, null, 2));
+  writeFileSync(md, orig.replace(/^- `\.telegram\/`\(봇 토큰.*$/m, '- `.telegram/`(봇 토큰)와 `.ai-office/` 폴더는 읽거나 수정하지 않는다.'));
+  assert.ok(O.repairOffices().includes('my-office'));
+  const after = JSON.parse(readFileSync(file, 'utf8'));
+  assert.ok(!after.permissions.deny.includes('Read(./.telegram/**)'));
+  assert.ok(after.permissions.allow.includes('Read(./.telegram/inbox/**)'));
+  assert.ok(after.permissions.allow.includes('Bash(git status)'), '사용자가 더한 허용 규칙은 그대로');
+  for (const d of ['Read(./.telegram/.env*)', 'Read(./.telegram/*.json)', 'Edit(./.telegram/**)', 'Edit(./.claude/settings.json)']) assert.ok(after.permissions.deny.includes(d), d);
+  assert.match(readFileSync(md, 'utf8'), /`\.telegram\/inbox\/`/);
+  assert.equal(readFileSync(md, 'utf8').match(/^- `\.telegram\/`/gm).length, 1);
+  assert.ok(!O.repairOffices().includes('my-office'), '이미 고쳤으면 다시 고치지 않는다');
+});
+
+test('불러온 사무실은 사진을 막던 규칙 하나만 고치고 다른 설정은 건드리지 않는다', () => {
+  const dir = join(root, 'imported-photo-office');
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  writeFileSync(join(dir, 'CLAUDE.md'), '# 사무실\n', 'utf8');
+  const local = { permissions: { allow: ['Bash(dir)'], deny: ['Read(./.telegram/**)', 'Bash(rm *)'] }, hooks: { Stop: [] } };
+  writeFileSync(join(dir, '.claude', 'settings.local.json'), JSON.stringify(local));
+  const o = O.importOffice({ folder: dir, name: '불러온 사무실' });
+  assert.ok(O.repairOffices().includes(o.id));
+  const after = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'));
+  assert.deepEqual(after.hooks, { Stop: [] });
+  assert.deepEqual(after.permissions.allow, ['Bash(dir)', 'Read(./.telegram/inbox/**)']);
+  assert.ok(after.permissions.deny.includes('Bash(rm *)'));
+  assert.ok(!after.permissions.deny.includes('Read(./.telegram/**)'));
+  assert.ok(after.permissions.deny.includes('Read(./.telegram/.env*)'));
+  assert.equal(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), '# 사무실\n', '불러온 사무실의 지침은 건드리지 않는다');
+  assert.ok(!O.repairOffices().includes(o.id));
+  O.unregisterOffice(o.id);
+});
+
 test('출근 스크립트는 저사양 PC에서 플러그인 시작이 늦어도 끊기지 않게 MCP 대기 시간을 늘린다', () => {
   const o = O.listOffices().find((x) => x.id === 'my-office');
   const script = R._test.launcherScript(o, 'C:/claude.exe');
