@@ -60,7 +60,7 @@ async function detail(o, d) {
   return {
     ...s, teams, skills, changes: readChanges(o.folder), events: (status.events || []).slice(0, 30), chief: status.chief || { state: 'idle' },
     honorific: office.honorific, importedTeams: office.imported,
-    telegram: { ...s.telegram, bot, access: tg.accessInfo(o.stateDir) },
+    telegram: { ...s.telegram, bot, access: tg.accessInfo(o.stateDir), rooms: tg.roomsInfo(o.stateDir) },
   };
 }
 
@@ -147,6 +147,13 @@ route('POST', '/api/offices/:id/telegram/pair', async ({ p, body }) => tg.pair(m
 route('POST', '/api/offices/:id/telegram/deny', async ({ p, body }) => { tg.deny(mutable(p.id).stateDir, body.code); return { ok: true }; });
 route('POST', '/api/offices/:id/telegram/remove', async ({ p, body }) => { tg.removeSender(mutable(p.id).stateDir, body.senderId); return { ok: true }; });
 route('POST', '/api/offices/:id/telegram/policy', async ({ p, body }) => { tg.setPolicy(mutable(p.id).stateDir, body.mode); return { ok: true }; });
+// 그룹방·주제: 업무 지정, 연결(허용)·해제, 상태 확인, 정리. 봇은 rooms.json·access.json 이 바뀌면 다시 읽으므로 재출근 없이 적용된다.
+route('POST', '/api/offices/:id/telegram/rooms/refresh', async ({ p }) => tg.refreshRooms(mutable(p.id).stateDir));
+route('POST', '/api/offices/:id/telegram/rooms/task', async ({ p, body }) => tg.setRoomTask(mutable(p.id).stateDir, body.chatId, body.threadId, body.task));
+route('POST', '/api/offices/:id/telegram/rooms/default-task', async ({ p, body }) => tg.setDefaultTask(mutable(p.id).stateDir, body.task));
+route('POST', '/api/offices/:id/telegram/rooms/connect', async ({ p, body }) => tg.connectRoom(mutable(p.id).stateDir, body.chatId));
+route('POST', '/api/offices/:id/telegram/rooms/disconnect', async ({ p, body }) => { tg.disconnectRoom(mutable(p.id).stateDir, body.chatId); return { ok: true }; });
+route('POST', '/api/offices/:id/telegram/rooms/forget', async ({ p, body }) => { tg.forgetRoom(mutable(p.id).stateDir, body.chatId); return { ok: true }; });
 
 // ── 스킬 마켓 ──
 // 게시·설치·회수는 대시보드 화면에서 사용자가 직접 누를 때만 동작한다(텔레그램 메시지로는 불가). 자동 설치·업데이트는 없다.
