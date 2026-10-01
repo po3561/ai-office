@@ -1,9 +1,11 @@
 name: Release
 
 # v0.1.0 같은 태그를 올리면 설치 파일(AI-Office-Setup.exe)과 zip 을 만들어 릴리스에 붙인다.
+# 태그를 올릴 수 없을 때는 Actions 에서 직접 실행하면 package.json 의 버전으로 태그(vX.Y.Z)를 만들어 릴리스한다.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,8 +20,13 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm run build:installer
+      - id: ver
+        shell: pwsh
+        run: '"tag=v$((Get-Content package.json -Raw | ConvertFrom-Json).version)" >> $env:GITHUB_OUTPUT'
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: |
             dist/AI-Office-Setup.exe
             dist/ai-office-app.zip

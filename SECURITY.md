@@ -4,7 +4,7 @@
 
 | 정보 | 어디에 | 노출 여부 |
 |---|---|---|
-| 텔레그램 봇 토큰 | 사무실 폴더 `.telegram/.env` (파일 권한 0600) | 화면·API에는 앞뒤 일부만 표시. 로그에 남기지 않음. 봇(Claude)은 `.telegram/`을 고칠 수 없고, 토큰(`.env`)·허용 목록(`access.json`)은 읽을 수도 없도록 `permissions.deny`로 막음. 텔레그램으로 받은 사진·파일이 저장되는 `.telegram/inbox/`만 읽기 허용 |
+| 텔레그램 봇 토큰 | 사무실 폴더 `.telegram/.env` (파일 권한 0600) | 화면·API에는 앞뒤 일부만 표시. 로그에 남기지 않음. 봇(Claude)은 토큰(`.env`)·허용 목록(`*.json`)을 읽거나 `.telegram/`을 고칠 수 없도록 `permissions.deny`로 막음. 텔레그램으로 받은 사진·파일이 저장되는 `.telegram/inbox/`만 읽기 허용 |
 | Claude 로그인 정보 | Claude Code 자체가 관리 | 이 프로그램은 읽지도 저장하지도 않음. 로그인은 `claude auth login` 공식 흐름만 실행 |
 | 텔레그램 허용 목록 | 사무실 `.telegram/access.json` | 대시보드·터미널에서만 변경. 텔레그램 메시지로는 변경 불가 |
 

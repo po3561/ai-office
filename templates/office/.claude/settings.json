@@ -17,8 +17,9 @@
       "PowerShell(node \"{{CLI}}\" office restart *)"
     ],
     "deny": [
-      "Read(./.telegram/.env)",
-      "Read(./.telegram/access.json)",
+      "Read(./.telegram/.env*)",
+      "Read(./.telegram/*.json)",
+      "Read(./.telegram/approved/**)",
       "Edit(./.telegram/**)",
       "Edit(./.claude/settings.json)",
       "Edit(./.claude/settings.local.json)",

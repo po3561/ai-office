@@ -8,14 +8,14 @@ const root = sandbox();
 const L = await import('../src/rooms-legacy.mjs');
 
 const TEAMS = [{ key: 'event-planner', name: '행사기획팀' }, { key: 'rental-manager', name: '물품관리팀' }, { key: 'pr-marketer', name: '홍보마케팅팀' }];
-const ROOM = '-555000111';
+const ROOM = '-1005550101';   // 가짜 방 ID(진짜 그룹 ID 는 저장소에 넣지 않는다)
 const json = (d, name) => JSON.parse(readFileSync(join(d, name), 'utf8'));
 
 function legacyDir(name = 'tg') {
   const d = join(root, name);
   mkdirSync(d, { recursive: true });
   const put = (f, v) => writeFileSync(join(d, f), JSON.stringify(v, null, 2));
-  put('access.json', { dmPolicy: 'pairing', allowFrom: ['111222333'], groups: { [ROOM]: { requireMention: false, allowFrom: ['111222333'] } } });
+  put('access.json', { dmPolicy: 'pairing', allowFrom: ['946595598'], groups: { [ROOM]: { requireMention: false, allowFrom: ['946595598'] } } });
   put('chats.json', { [ROOM]: { topics: { 149: { name: '월례회', last_seen: '2026-09-28T09:38:38Z' }, 863: { name: '네버랜드' }, 12036: {} } } });
   put('rooms.json', { [ROOM]: { topics: { 149: { name: '월례회', team: 'event-planner' } }, live: { title: '기획부', type: 'supergroup', is_forum: true, bot_status: 'administrator' } } });
   put('routines.json', { chat_id: ROOM, thread_id: '863', room: '기획부', topic: '네버랜드', morning: { time: '08:00', enabled: true }, evening: { time: '22:00', enabled: true } });
@@ -59,7 +59,7 @@ test('옵션: 멘션·승인·호출어는 각각 access.json / rooms.json 에 �
   const d = legacyDir('t3');
   L.setRoomOptions(d, TEAMS, ROOM, { requireMention: true, confirmPosts: true, trigger: '비서' });
   assert.equal(json(d, 'access.json').groups[ROOM].requireMention, true);
-  assert.deepEqual(json(d, 'access.json').groups[ROOM].allowFrom, ['111222333']);
+  assert.deepEqual(json(d, 'access.json').groups[ROOM].allowFrom, ['946595598']);
   assert.equal(json(d, 'rooms.json')[ROOM].confirmPosts, true);
   assert.equal(json(d, 'rooms.json')[ROOM].trigger, '비서');
   L.setTrigger(d, TEAMS, ROOM, '149', '없음');
@@ -73,7 +73,7 @@ test('방 연결·해제는 허용된 계정이 있어야 하고 허용 목록�
   L.setLinked(d, TEAMS, ROOM, false);
   assert.equal(json(d, 'access.json').groups[ROOM], undefined);
   L.setLinked(d, TEAMS, ROOM, true);
-  assert.deepEqual(json(d, 'access.json').groups[ROOM].allowFrom, ['111222333']);
+  assert.deepEqual(json(d, 'access.json').groups[ROOM].allowFrom, ['946595598']);
   const none = legacyDir('t4b');
   writeFileSync(join(none, 'access.json'), JSON.stringify({ allowFrom: [], groups: {} }));
   assert.throws(() => L.setLinked(none, TEAMS, ROOM, true), /허용\(페어링\)/);
@@ -94,7 +94,7 @@ test('정기 보고: 받을 곳·시각·켜기·시험 발송', () => {
   assert.equal(rt.threadId, '149');
   assert.equal(rt.topic, '월례회');
   rt = L.setRoutineTarget(d, TEAMS, '개인');
-  assert.equal(rt.chatId, '111222333');
+  assert.equal(rt.chatId, '946595598');
   assert.equal(rt.room, '개인 대화');
   L.testRoutine(d, 'morning');
   assert.equal(json(d, 'routines.json').test.id, 'morning');
@@ -147,7 +147,7 @@ test('새 형식 파일은 정리 대상이 아니다', () => {
 test('방 ID 가 아닌 groups 키(가짜 방 "rooms" 연결 찌꺼기)는 목록에서 빼고 정리한다', () => {
   const d = legacyDir('t8');
   const a = json(d, 'access.json');
-  a.groups.rooms = { requireMention: false, allowFrom: ['111222333'] };
+  a.groups.rooms = { requireMention: false, allowFrom: ['946595598'] };
   writeFileSync(join(d, 'access.json'), JSON.stringify(a));
   assert.equal(L.listRooms(d, TEAMS).length, 1);
   assert.equal(L.repairLegacy(d), true);
