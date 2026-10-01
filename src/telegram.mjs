@@ -124,7 +124,7 @@ export function setPolicy(stateDir, mode) {
 // ── 그룹방·주제별 업무 ──
 // 봇(플러그인)이 초대된 방과 본 주제를 rooms.json 에 기록하고, 대시보드는 그걸 읽어 보여 주며
 // 업무 지정·연결(허용)·정리를 한다. 봇은 파일이 바뀌면 다시 읽으므로 서로 덮어쓰지 않는다.
-// 방 연결 = access.json 의 groups 에 올리는 것. 기본값은 플러그인과 같다(멘션해야 응답, 허용된 계정만 발언).
+// 방 연결 = access.json 의 groups 에 올리는 것. 기본값은 플러그인과 같다(멘션 없이도 응답, 허용된 계정만 발언).
 const roomsFile = (d) => join(d, 'rooms.json');
 const MAX_TASK = 800;
 const CHAT_ID_RE = /^-?\d{1,20}$/;
@@ -196,7 +196,7 @@ export function connectRoom(stateDir, chatId) {
   if (!a.groups[chatId]) {
     const db = loadRoomsRaw(stateDir);
     need(db.rooms[chatId], '봇이 아직 모르는 방입니다. 봇을 방에 초대하거나, 방에서 봇을 @멘션해 주세요.', 404);
-    a.groups[chatId] = { requireMention: true, allowFrom: [...a.allowFrom] };
+    a.groups[chatId] = { requireMention: false, allowFrom: [...a.allowFrom] };
     writeJson(accessFile(stateDir), a);
     if (db.defaultTask && !db.rooms[chatId].task) { db.rooms[chatId].task = db.defaultTask; writeJson(roomsFile(stateDir), db, 0o600); }
   }

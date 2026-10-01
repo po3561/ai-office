@@ -374,11 +374,11 @@ const nameOf = (u: { username?: string; first_name?: string; last_name?: string;
   u.username ? `@${u.username}` : [u.first_name, u.last_name].filter(Boolean).join(' ') || String(u.id)
 
 // 방을 허용 목록에 올리고 업무 기본값을 붙인다. by는 이미 허용 목록에 있는 본인(소유자).
-// 기본값은 보수적: 멘션해야 응답하고, 발언자도 by 한 명으로 제한한다. 다른 사람도 쓰게
-// 하려면 /telegram:access 로 allowFrom을 넓히면 된다.
+// 초대하면 바로 일하도록 멘션 없이도 응답한다. 발언자는 by 한 명(본인)으로만 제한해
+// 낯선 사람의 글이 업무 지시가 되지 않게 한다. 다른 사람도 쓰게 하려면 allowFrom을 넓히면 된다.
 function enrollGroup(access: Access, chat: ChatLike, by: string, announce: boolean): GroupPolicy {
   const id = String(chat.id)
-  const policy: GroupPolicy = { requireMention: true, allowFrom: [by] }
+  const policy: GroupPolicy = { requireMention: false, allowFrom: [by] }
   access.groups[id] = policy
   saveAccess(access)
   const r = upsertRoom(chat)
@@ -528,10 +528,9 @@ function gate(ctx: Context): GateResult {
     const groupId = String(ctx.chat!.id)
     let policy = access.groups[groupId]
     if (!policy) {
-      // 등록 안 된 방. 허용 목록에 있는 본인이 멘션으로 부르면 그 자리에서 자동 등록한다.
+      // 등록 안 된 방. 허용 목록에 있는 본인이 한마디라도 하면 그 자리에서 자동 등록한다.
       if (STATIC) { logDrop(groupId, '정적 모드라 미등록 방은 등록 불가'); return { action: 'drop' } }
       if (!access.allowFrom.includes(senderId)) { logDrop(groupId, '미등록 방이고 발신자가 허용 목록에 없음'); return { action: 'drop' } }
-      if (!isMentioned(ctx, access.mentionPatterns)) { logDrop(groupId, '미등록 방이고 멘션이 없음'); return { action: 'drop' } }
       policy = enrollGroup(access, ctx.chat as ChatLike, senderId, true)
     }
     const groupAllowFrom = policy.allowFrom ?? []
