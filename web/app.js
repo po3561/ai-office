@@ -80,8 +80,9 @@ async function tick() {
       S.marketDirty = false; S.marketAt = Date.now();
       const status = await api('GET', '/api/market/status').catch(() => null);
       let skills = null, share = null;
-      if (status && status.enabled && status.ready) [skills, share] = await Promise.all([api('GET', '/api/market/skills').catch(() => null), api('GET', '/api/market/shareable').catch(() => null)]);
-      S.market = { status, skills, share };
+      let installed = null;
+      if (status && status.enabled && status.ready) [skills, share, installed] = await Promise.all([api('GET', '/api/market/skills').catch(() => null), api('GET', '/api/market/shareable').catch(() => null), api('GET', '/api/market/installed').catch(() => null)]);
+      S.market = { status, skills, share, installed };
     }
   } catch { S.ok = false; }
   paint();
@@ -291,7 +292,6 @@ function vSkills() {
 const semverGt = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
 const RISK_PILL = { safe: () => pill('ok', '위험 요소 없음'), caution: () => pill('warn', '확인 필요'), danger: () => pill('bad', '⚠️ 위험 표시') };
 const LEVEL_ICON = { block: '⛔', warn: '⚠️', risk: '🚨' };
-const marketOffices = () => offices().filter((o) => !o.readonly);
 const marketUpdates = () => ((S.market && S.market.skills) || []).reduce((n, e) => n + e.installs.filter((i) => semverGt(e.version, i.version) && !e.revoked).length, 0);
 const marketRequests = () => ((S.market && S.market.share) || []).reduce((n, o) => n + (o.requests || []).length, 0);
 const markMarket = () => { S.marketDirty = true; return refresh(); };
@@ -372,15 +372,15 @@ function mkShare(m) {
 function mkInstalled(m) {
   const market = new Map((m.skills || []).map((e) => [e.id, e]));
   const rows = [];
-  for (const o of m.share || []) for (const s of o.skills) if (s.status === 'from-market') rows.push({ office: o, s, e: market.get(s.marketId) });
+  for (const o of m.installed || m.share || []) for (const s of o.skills) if (s.status === 'from-market') rows.push({ office: o, s, e: market.get(s.marketId) });
   if (!rows.length) return '<div class="card"><div class="empty"><div class="big">📦</div><b>마켓에서 받은 스킬이 없습니다</b><p>「둘러보기」에서 스킬을 골라 설치해 보세요.</p></div></div>';
   return `<div class="card"><table class="tbl"><thead><tr><th>스킬</th><th>사무실</th><th>설치한 버전</th><th></th></tr></thead><tbody>${rows.map(({ office, s, e }) => {
     const inst = e && e.installs.find((i) => i.office === office.office);
     const newer = e && !e.revoked && semverGt(e.version, s.version);
-    return `<tr><td><b>${esc(s.name)}</b><div class="small muted">${esc(clip(s.description, 70))}</div></td><td>${esc(office.officeName)}</td>
+    return `<tr><td><b>${esc(s.name)}</b><div class="small muted">${esc(clip(s.description, 70))}</div></td><td>${esc(office.officeName)}${office.external ? ` ${pill('', 'Hermes 봇')}` : ''}</td>
       <td>v${esc(s.version)}${inst && inst.modified ? ` ${pill('warn', '내가 고침')}` : ''}${newer ? ` ${pill('ok', `새 버전 v${esc(e.version)}`)}` : ''}${!e ? ` ${pill('warn', '마켓에 없음')}` : e.revoked ? ` ${pill('bad', '회수됨')}` : ''}</td>
       <td class="row end">${newer ? `<button class="btn sm primary" data-act="market-update" data-office="${esc(office.office)}" data-id="${esc(s.marketId)}">업데이트</button>` : ''}<button class="btn sm danger" data-act="market-uninstall" data-office="${esc(office.office)}" data-id="${esc(s.marketId)}">제거</button></td></tr>`;
-  }).join('')}</tbody></table><p class="small muted" style="margin-top:10px">제거해도 파일은 지워지지 않고 사무실의 <code>보관함/스킬제거</code> 폴더로 옮겨집니다. 설치·업데이트·제거는 사무실을 다시 출근시킨 뒤부터 적용됩니다.</p></div>`;
+  }).join('')}</tbody></table><p class="small muted" style="margin-top:10px">제거해도 파일은 지워지지 않고 사무실의 <code>보관함/스킬제거</code>(Hermes 봇은 이 프로그램의 <code>market/backup</code>) 폴더로 옮겨집니다. 설치·업데이트·제거는 사무실을 다시 출근시킨 뒤부터 적용됩니다.</p></div>`;
 }
 
 function mkSettings(m) {
@@ -401,7 +401,7 @@ async function dlgMarketDetail(id) {
   openDlg('<div class="dlg-head"><h2>불러오는 중…</h2></div>');
   let d;
   try { d = await api('GET', `/api/market/skills/${encodeURIComponent(id)}`); } catch (e) { errDlg('스킬을 불러오지 못했습니다', e); return; }
-  const offs = marketOffices();
+  const offs = (S.market && (S.market.installed || S.market.share)) || [];
   const risks = d.findings.filter((f) => f.level === 'risk');
   const bad = d.revoked || !d.verified || d.findings.some((f) => f.level === 'block');
   openDlg(`<form data-form="market-install" data-id="${esc(d.id)}"><div class="dlg-head"><h2>🧩 ${esc(d.name)} <small class="muted">v${esc(d.version)}</small></h2><p>${esc(d.description)}</p></div>
@@ -411,17 +411,37 @@ async function dlgMarketDetail(id) {
       ${d.findings.length ? `<div class="group-title">검사 결과</div>${findingsHtml(d.findings)}` : ''}
       <div class="group-title">파일 ${d.files.length}개</div><div class="small muted">${d.files.map((f) => `${esc(f.path)} <span class="faint">(${f.size}B${f.kind === 'script' ? ' · 스크립트' : ''})</span>`).join(' · ')}</div>
       <div class="group-title">SKILL.md 미리보기</div><pre class="mk-pre">${esc(d.skillMd)}</pre>
-      ${offs.length ? `<div class="group-title">설치할 사무실</div><div class="row"><select name="office">${offs.map((o) => `<option value="${esc(o.id)}"${o.id === S.officeId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
+      ${offs.length ? `<div class="group-title">설치할 곳</div><div class="stack" style="gap:6px">${offs.map((o) => {
+        const have = o.skills.find((k) => k.marketId === d.id);
+        const upd = have && have.status === 'from-market' && semverGt(d.version, have.version);
+        const note = !have ? '' : upd ? pill('ok', `v${esc(have.version)} → v${esc(d.version)} 업데이트`) : have.status === 'from-market' ? pill('', `이미 설치됨 v${esc(have.version)}`) : pill('', '같은 이름의 스킬이 이미 있어요');
+        const usable = !have || upd;
+        return `<label class="row" style="gap:8px${usable ? '' : ';opacity:.55'}"><input type="checkbox" name="office" value="${esc(o.office)}"${usable ? ' checked' : ' disabled'}><b>${esc(o.officeName)}</b>${o.external ? pill('', 'Hermes 봇') : ''}${note}</label>`;
+      }).join('')}</div>
         ${risks.length ? '<label class="row" style="margin-top:10px;font-weight:600"><input type="checkbox" name="allowRisk" required> 위 위험 표시를 모두 확인했고, 그래도 설치합니다</label>' : ''}` : '<p class="muted">설치할 수 있는 사무실이 없습니다.</p>'}
-      <p class="small muted" style="margin-top:8px">설치한 스킬은 사무실을 <b>다시 출근</b>시킨 뒤부터 적용됩니다.</p></div>
+      <p class="small muted" style="margin-top:8px">사무실은 <b>다시 출근</b>시킨 뒤부터, Hermes 봇은 다시 시작하거나 스킬을 다시 읽은 뒤부터 적용됩니다.</p></div>
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">닫기</button><button class="btn primary" type="submit"${bad || !offs.length ? ' disabled' : ''}>설치하기</button></div></form>`);
+}
+
+// 고른 곳 모두에 설치한다. 한 곳이면 예전처럼(덮어쓰기 확인 포함), 여러 곳이면 결과를 모아 한 번에 알려 준다.
+async function marketInstallMany(id, officeIds, allowRisk) {
+  if (!officeIds.length) throw new Error('설치할 곳을 하나 이상 골라 주세요.');
+  if (officeIds.length === 1) return marketInstall(id, officeIds[0], allowRisk, false);
+  const nameOf = (o) => (((S.market && S.market.installed) || []).find((x) => x.office === o) || {}).officeName || o;
+  const ok = [], bad = [];
+  for (const o of officeIds) {
+    try { const r = await api('POST', '/api/market/install', { id, office: o, allowRisk, overwrite: false }); if (r.needsRestart) S.restartNeeded[o] = true; ok.push(nameOf(o)); }
+    catch (e) { bad.push(`${nameOf(o)}: ${e.message}`); }
+  }
+  if (!bad.length) { closeDlg(); toast(`${ok.join(', ')}에 설치했습니다.`); return; }
+  openDlg(`<div class="dlg-head"><h2>${ok.length}곳 설치, ${bad.length}곳 실패</h2><p>${ok.length ? `설치됨: ${ok.map(esc).join(', ')}` : ''}</p><ul class="find">${bad.map((m) => `<li class="block"><span>⛔</span><div>${esc(m)}</div></li>`).join('')}</ul></div><div class="dlg-foot"><button class="btn primary" data-act="dlg-close">닫기</button></div>`);
 }
 
 async function marketInstall(id, office, allowRisk, overwrite) {
   try {
     const r = await api('POST', '/api/market/install', { id, office, allowRisk, overwrite });
     if (r.needsRestart) S.restartNeeded[office] = true;
-    closeDlg(); toast(r.updated ? `v${r.version}(으)로 업데이트했습니다. 사무실을 다시 출근시키면 적용됩니다.` : '설치했습니다. 사무실을 다시 출근시키면 적용됩니다.');
+    closeDlg(); toast(r.external ? '설치했습니다. 이 봇이 스킬을 다시 읽을 때(재시작 등) 적용됩니다.' : r.updated ? `v${r.version}(으)로 업데이트했습니다. 사무실을 다시 출근시키면 적용됩니다.` : '설치했습니다. 사무실을 다시 출근시키면 적용됩니다.');
   } catch (e) {
     if (e.details && e.details.needsConfirm === 'overwrite') {
       dlgConfirm({ title: '직접 고친 내용을 덮어쓸까요?', body: `설치한 뒤 바뀐 파일: <code>${(e.details.changed || []).map(esc).join(', ')}</code><br>덮어쓰면 고친 내용은 사무실의 <code>보관함/맞춤설정_백업</code> 폴더로 옮겨 둡니다.`, ok: '덮어쓰기', danger: true, onOk: async () => { await doing(null, () => marketInstall(id, office, allowRisk, true)); } });
@@ -861,7 +881,7 @@ document.addEventListener('submit', async (e) => {
       S.marketTab = 'browse'; S.marketDirty = true;
       toast(r.visibility === 'public' ? '⚠️ 연결했지만 이 저장소는 공개(public)입니다. 비공개로 바꾸는 것을 권합니다.' : `마켓에 연결했습니다 (스킬 ${r.entries}개)`, r.visibility === 'public');
     } else if (kind === 'market-install') {
-      await marketInstall(f.dataset.id, fd.get('office'), fd.get('allowRisk') === 'on', false);
+      await marketInstallMany(f.dataset.id, fd.getAll('office'), fd.get('allowRisk') === 'on');
       S.marketDirty = true;
     } else if (kind === 'market-publish-all') {
       await publishAllSubmit(f, fd);

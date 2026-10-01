@@ -4,7 +4,7 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES } from './paths.mjs';
+import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
@@ -175,9 +175,15 @@ const honorificOf = (o) => { try { return loadOffice(o.folder).honorific; } catc
 // 마켓에서 다루는 사무실: 읽기 전용(Hermes)은 제외한다.
 const marketOffices = () => listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
   .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) }));
+// 마켓에서 스킬을 받을 수 있는 곳 = 내 사무실 + 읽기 전용 외부 봇(Hermes: 라피스 등).
+// 외부 봇은 설치·업데이트·제거할 때만 예외로, 그 봇의 `skills/<스킬 이름>/` 폴더 안에서만 파일을 쓴다. 게시(내보내기)·부서·설정·실행은 여전히 못 한다.
+const hermesTargets = () => listOffices().filter((o) => o.kind === 'hermes' && isDir(join(o.folder, 'skills')))
+  .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: join(o.folder, 'skills'), honorifics: [], external: true, backupRoot: join(MARKET_DIR, 'backup', o.id) }));
+const marketTargets = () => [...marketOffices(), ...hermesTargets()];
+const marketTarget = (id) => { const o = marketTargets().find((x) => x.id === id); need(o, '설치할 곳을 찾을 수 없습니다.', 404); return o; };
 const marketOffice = (id) => { const o = marketOffices().find((x) => x.id === id); need(o, '사무실을 찾을 수 없습니다.', 404); return o; };
 const localSkill = (o, skillId) => { const k = findSkillDirs(o.skillsDir).find((x) => x.id === skillId); need(k, '이 사무실에 없는 스킬입니다.', 404); return k; };   // 화면이 보낸 이름으로 경로를 만들지 않고 목록에서 찾는다
-const marketRestart = (o, r) => ({ ...r, needsRestart: runtime(getOffice(o.id)).running });
+const marketRestart = (o, r) => ({ ...r, external: Boolean(o.external), needsRestart: !o.external && runtime(getOffice(o.id)).running });
 
 route('GET', '/api/market/status', async () => market.status());
 route('POST', '/api/market/connect', async ({ body }) => {
@@ -192,9 +198,11 @@ route('POST', '/api/market/disconnect', async ({ body }) => {
   return market.status();
 });
 route('POST', '/api/market/refresh', async () => { await market.refresh(); return market.status(); });
-route('GET', '/api/market/skills', async () => market.list({ offices: marketOffices() }));
-route('GET', '/api/market/skills/:id', async ({ p }) => market.detail(p.id, { offices: marketOffices() }));
+route('GET', '/api/market/skills', async () => market.list({ offices: marketTargets() }));
+route('GET', '/api/market/skills/:id', async ({ p }) => market.detail(p.id, { offices: marketTargets() }));
 route('GET', '/api/market/shareable', async () => market.shareable({ offices: marketOffices() }));
+// 이 PC 의 설치 현황: 사무실뿐 아니라 외부 봇(라피스 등)이 마켓에서 받은 스킬도 함께 본다.
+route('GET', '/api/market/installed', async () => market.shareable({ offices: marketTargets() }).then((r) => r.map((o) => ({ ...o, external: Boolean(marketTargets().find((t) => t.id === o.office)?.external), requests: [] }))));
 route('POST', '/api/market/inspect', async ({ body }) => { const o = marketOffice(body.office); const k = localSkill(o, body.skillId); return market.inspect({ skillDir: k.dir, id: k.id, honorifics: o.honorifics }); });
 route('POST', '/api/market/publish', async ({ body }) => {
   const o = marketOffice(body.office), k = localSkill(o, body.skillId);
@@ -211,8 +219,8 @@ route('POST', '/api/market/requests/dismiss', async ({ body }) => {
   return { ok: true };
 });
 route('POST', '/api/market/revoke', async ({ body }) => market.revoke({ id: body.id, reason: body.reason }));
-route('POST', '/api/market/install', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
-route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
+route('POST', '/api/market/install', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
+route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
 
 // ── 프로그램 업데이트 ── 감지는 자동(6시간마다), 설치는 사용자가 누를 때만(설정에서 「자동 설치」를 켠 경우 제외).
 route('POST', '/api/update/check', async () => updater.check());

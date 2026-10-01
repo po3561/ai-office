@@ -78,6 +78,8 @@ Claude Code는 에이전트를 세션 시작 때 읽으므로 변경은 다시 �
 
 `offices.json`에서 `kind: "hermes"` 인 항목은 `mutable()` 검사에서 항상 403이 되며, 시작·중지·재시작·부서·토큰 API가 모두 이를 거칩니다. 상태는 `gateway_state.json`, 스킬은 `skills/`를 읽기만 합니다.
 
+예외는 스킬 마켓 **설치**뿐입니다(`server.mjs`의 `hermesTargets()`): 사용자가 누른 설치·업데이트·제거만 그 봇의 `skills/<이름>/` 안에 쓰고, 백업은 `<데이터>\market\backup\<봇>` 에 둡니다. 게시 대상(`marketOffices()`)에는 Hermes 가 들어가지 않습니다.
+
 ## 보안 경계
 
 `SECURITY.md` 참고. 테스트(`test/server.test.mjs`)가 Origin·Host·경로 이탈 방어를, `test/offices.test.mjs`가 읽기 전용 보장을 확인합니다.

@@ -278,6 +278,9 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
   }
   const readRevoked = (dir) => { const r = readJson(join(dir, 'revoked.json'), {}); return r && typeof r === 'object' && !Array.isArray(r) ? r : {}; };
 
+  // 덮어쓰기·제거 전의 내용을 옮겨 두는 곳. 이 프로그램이 관리하는 사무실은 사무실 안 보관함, 외부 봇(Hermes)은 그 봇의 폴더가 아니라 이 프로그램의 데이터 폴더.
+  const backupRoot = (office) => office.backupRoot || join(office.folder, '보관함');
+
   // 사무실들에 이 스킬이 마켓에서 설치되어 있는지
   function installsOf(id, offices = []) {
     const out = [];
@@ -366,7 +369,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     const revoked = dir ? readRevoked(dir) : {};
     const me = dir ? await myName() : '';
     return offices.map((o) => {
-      const reqs = o.folder ? readRequests(o.folder) : [];
+      const reqs = o.folder && !o.external ? readRequests(o.folder) : [];
       const dirs = findSkillDirs(o.skillsDir);
       const reqOf = (id) => reqs.find((r) => r.skillId.toLowerCase() === id.toLowerCase()) || null;
       return {
@@ -535,13 +538,13 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
       }
       writeJson(join(tmp, INSTALLED_FILE), { schema: 1, id: marketId, version: entry.version, sha256: entry.sha256, publisher: entry.publisher, sourceAlias: entry.sourceAlias, name: entry.name, installedAt: nowIso() });
       if (updated) {
-        const bak = join(office.folder, '보관함', '맞춤설정_백업');
+        const bak = join(backupRoot(office), '맞춤설정_백업');
         mkdirSync(bak, { recursive: true });
         renameSync(dest, join(bak, `skill-${marketId}_${stamp()}`));
       }
       renameSync(tmp, dest);
     } catch (e) { rmSync(tmp, { recursive: true, force: true }); throw e; }
-    log(office.folder, updated ? '스킬 업데이트' : '스킬 설치', entry.name, `마켓 ${marketId} v${entry.version} (게시: ${entry.publisher})`, '');
+    if (!office.external) log(office.folder, updated ? '스킬 업데이트' : '스킬 설치', entry.name, `마켓 ${marketId} v${entry.version} (게시: ${entry.publisher})`, '');
     return { id: marketId, version: entry.version, updated, needsRestart: true };
   });
 
@@ -552,11 +555,11 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     const dest = join(office.skillsDir, marketId);
     const mk = isDir(dest) ? readInstalledMarker(dest) : null;
     need(mk && mk.id === marketId, '마켓에서 받은 스킬이 아니라서 여기서 제거하지 않습니다.', 409);
-    const bak = join(office.folder, '보관함', '스킬제거');
+    const bak = join(backupRoot(office), '스킬제거');
     mkdirSync(bak, { recursive: true });
     const to = join(bak, `${marketId}_${stamp()}`);
     renameSync(dest, to);
-    log(office.folder, '스킬 제거', mk.name || marketId, `마켓 ${marketId} v${mk.version} → 보관함`, '');
+    if (!office.external) log(office.folder, '스킬 제거', mk.name || marketId, `마켓 ${marketId} v${mk.version} → 보관함`, '');
     return { id: marketId, movedTo: to, needsRestart: true };
   });
 
