@@ -8,7 +8,7 @@ const root = sandbox();
 const L = await import('../src/rooms-legacy.mjs');
 
 const TEAMS = [{ key: 'event-planner', name: '행사기획팀' }, { key: 'rental-manager', name: '물품관리팀' }, { key: 'pr-marketer', name: '홍보마케팅팀' }];
-const ROOM = '-1002097999101';
+const ROOM = '-100123456';   // 시험용 가짜 방 번호(실제 방 번호를 저장소에 올리지 않는다)
 const json = (d, name) => JSON.parse(readFileSync(join(d, name), 'utf8'));
 
 function legacyDir(name = 'tg') {
