@@ -151,6 +151,8 @@ function renderBanners(o) {
     if (ov.diag.rogue) b.push(`<div class="banner bad"><span class="ic">📡</span><div class="txt"><b>텔레그램 메시지를 가로채는 프로세스가 ${ov.diag.rogue}개 있습니다</b><span class="muted">일반 Claude 창이 봇의 수신권을 빼앗으면 지시가 사무실에 도착하지 않습니다.</span></div><button class="btn sm primary" data-act="diag-clean">정리하기</button></div>`);
     if (ov.diag.globalPlugin) b.push(`<div class="banner warn"><span class="ic">⚠️</span><div class="txt"><b>텔레그램 플러그인이 모든 Claude 창에서 켜져 있습니다</b><span class="muted">새 Claude 창을 열 때마다 봇 수신권을 가로챕니다. 사무실 폴더에서는 따로 켜지므로 전역 설정은 꺼도 됩니다.</span></div><button class="btn sm" data-act="diag-global-off">전역에서 끄기</button></div>`);
   }
+  if (o && !o.readonly && !o.exists && !(o.moveCandidates || []).length) b.push(`<div class="banner bad"><span class="ic">📂</span><div class="txt"><b>사무실 폴더를 찾을 수 없습니다</b><span class="muted">${esc(o.folder)} — 폴더를 옮기셨다면 새 위치를 알려 주세요.</span></div><button class="btn sm primary" data-act="office-relocate">위치 바꾸기</button></div>`);
+  if (o && !o.readonly) for (const c of (o.moveCandidates || []).slice(0, 2)) b.push(`<div class="banner info"><span class="ic">🔀</span><div class="txt"><b>같은 이름의 사무실이 다른 위치에서 발견됐습니다</b><span class="muted">${esc(c)} — 드라이브를 바꾸셨다면 이 위치로 바꿔 주세요. 폴더 안 파일은 건드리지 않습니다.</span></div><button class="btn sm primary" data-act="office-relocate-to" data-folder="${esc(c)}">이 위치로 바꾸기</button></div>`);
   if (o && S.restartNeeded[o.id] && o.running) b.push(`<div class="banner info"><span class="ic">🔄</span><div class="txt"><b>부서·스킬 변경을 적용하려면 다시 출근해야 합니다</b><span class="muted">잠시 꺼졌다가 자동으로 다시 켜집니다. 진행 중인 업무가 없을 때 눌러 주세요.</span></div><button class="btn sm primary" data-act="office-restart">지금 다시 출근</button></div>`);
   $('#banners').innerHTML = b.join('');
 }
@@ -634,8 +636,8 @@ function vSettings() {
     else {
       html += `<div class="setting"><div><b>사무실 켜기 / 끄기</b><span class="sub">${o.running ? '지금 근무 중입니다.' : '지금 퇴근 상태입니다.'}</span></div><div class="row">${o.running ? '<button class="btn" data-act="office-restart">다시 출근</button><button class="btn danger" data-act="office-stop">퇴근시키기</button>' : '<button class="btn primary" data-act="office-start">출근시키기</button>'}</div></div>
       <div class="setting"><div><b>항상 켜두기</b><span class="sub">이 프로그램이 켜져 있는 동안, 사무실이 꺼져 있으면 다시 출근시킵니다. 직접 퇴근시킨 경우에는 다시 켜지 않습니다.</span></div><label class="switch"><input type="checkbox" data-change="autostart"${o.autoStart ? ' checked' : ''}><i></i></label></div>
-      <div class="setting"><div><b>사무실 폴더</b><span class="sub path">${esc(o.folder)}</span></div><button class="btn sm" data-act="office-open">폴더 열기</button></div>
-      ${!o.managed && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
+      <div class="setting"><div><b>사무실 폴더</b><span class="sub path">${esc(o.folder)}</span></div><div class="row"><button class="btn sm" data-act="office-relocate">위치 바꾸기</button><button class="btn sm" data-act="office-open">폴더 열기</button></div></div>
+      ${!o.managed && String(o.folder).slice(0, 2).toLowerCase() === String(a.officesDir).slice(0, 2).toLowerCase() && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
       <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>
       ${o.closable ? `<div class="setting"><div><b>사무실 폐쇄 (삭제)</b><span class="sub">사무실을 끄고 목록에서 없앱니다. 폴더(봇 토큰·업무 기록 포함)는 완전히 지우지 않고 <span class="code">${esc(a.dataHome)}\\closed</span> 로 옮겨 둡니다.</span></div><button class="btn sm danger" data-act="office-close">폐쇄하기</button></div>` : ''}`;
     }
@@ -674,6 +676,16 @@ function dlgImport(prefill = {}) {
       <div class="field"><label>종류</label><select name="kind"><option value="auto">자동 인식</option><option value="claude-office">Claude 사무실</option><option value="hermes">Hermes (읽기 전용)</option></select></div></div>
       <p class="small muted">Hermes(라피스 등) 별개의 봇은 <b>읽기 전용</b>으로만 인식합니다. 켜거나 끄거나 바꾸지 않습니다.</p></div></div>
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit">불러오기</button></div></form>`);
+}
+
+function dlgRelocate(prefill = '') {
+  const o = cur();
+  const cands = (o && o.moveCandidates) || [];
+  openDlg(`<form data-form="relocate-office"><div class="dlg-head"><h2>사무실 위치 바꾸기</h2><p>폴더를 다른 드라이브·위치로 옮기셨다면 새 위치를 알려 주세요. 폴더 안 파일은 건드리지 않고, 출근 스크립트·텔레그램 연결 경로만 새 위치에 맞춥니다.</p></div>
+    <div class="dlg-body"><div class="stack"><div class="field"><label>새 폴더 경로</label><input type="text" name="folder" required placeholder="F:\AI-Office" value="${esc(prefill || cands[0] || '')}" autofocus><span class="hint">지금 위치: ${esc(o ? o.folder : '')}</span></div>
+      ${cands.length ? `<div class="small muted">자동으로 찾은 후보: ${cands.map((c) => `<a href="#" data-act="office-relocate-to" data-folder="${esc(c)}">${esc(c)}</a>`).join(', ')}</div>` : ''}
+      <p class="small muted">근무 중이면 먼저 퇴근시킨 뒤 바꿔 주세요. 바꾼 뒤에는 새 위치에서 출근시키면 됩니다.</p></div></div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit">위치 바꾸기</button></div></form>`);
 }
 
 async function dlgTeamAdd(tab = 'preset') {
@@ -782,6 +794,8 @@ const ACT = {
   'office-close': () => dlgCloseOffice(),
   'update-check': (b) => doing(b, async () => { const u = await api('POST', '/api/update/check'); await refresh(); toast(u.error || (u.available ? `새 버전 v${u.latest.version} 이(가) 있습니다.` : '지금이 최신 버전입니다.'), Boolean(u.error)); }),
   'update-apply': () => dlgUpdate(),
+  'office-relocate': () => dlgRelocate(),
+  'office-relocate-to': (b) => doing(b, async () => { const r = await api('POST', `/api/offices/${oid()}/relocate`, { folder: b.dataset.folder }); closeDlg(); toast(`사무실 위치를 바꿨습니다: ${r.folder}`); await refresh(); }),
   'office-migrate': () => dlgConfirm({ title: '고정 위치로 옮길까요?', body: '사무실 폴더를 고정 위치로 <b>복사</b>하고, 이후 새 위치를 사용합니다. 원본은 그대로 남습니다.', ok: '옮기기', onOk: async () => { try { const r = await api('POST', `/api/offices/${oid()}/migrate`); toast(`옮겼습니다: ${r.to}`); } catch (e) { toast(e.message, true); } refresh(); } }),
   'team-add': () => dlgTeamAdd('preset'),
   'team-add-tab': (b) => dlgTeamAdd(b.dataset.tab),
@@ -855,6 +869,9 @@ document.addEventListener('submit', async (e) => {
     } else if (kind === 'office-close') {
       const r = await api('POST', `/api/offices/${oid()}/close`, { confirmName: fd.get('confirm') });
       S.officeId = ''; localStorage.removeItem('office'); closeDlg(); toast(`「${r.name}」 사무실을 폐쇄했습니다.`);
+    } else if (kind === 'relocate-office') {
+      const r = await api('POST', `/api/offices/${oid()}/relocate`, { folder: fd.get('folder') });
+      closeDlg(); toast(`사무실 위치를 바꿨습니다: ${r.folder}`);
     } else if (kind === 'new-office') {
       const o = await api('POST', '/api/offices', { name: fd.get('name'), honorific: fd.get('honorific'), presets: fd.getAll('preset') });
       S.officeId = o.id; localStorage.setItem('office', o.id); closeDlg(); toast(`「${o.name}」 사무실을 만들었습니다. 이제 봇을 연결해 볼까요?`); navigate('home');

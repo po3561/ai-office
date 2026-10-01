@@ -9,7 +9,7 @@ import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
-import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice } from './offices.mjs';
+import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice, relocateOffice, moveCandidates, autoRelink } from './offices.mjs';
 import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
 import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
@@ -40,7 +40,7 @@ function summary(o, d) {
   const base = {
     id: o.id, name: o.name, kind: o.kind, readonly: o.kind === 'hermes' || Boolean(o.readonly), managed: Boolean(o.managed),
     folder: o.folder, autoStart: Boolean(o.autoStart), running: rt.running, detail: rt.detail, exists: isDir(o.folder),
-    closable: isClosable(o), legacyLaunch: Boolean(o.launch), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
+    closable: isClosable(o), legacyLaunch: Boolean(o.launch), moveCandidates: moveCandidates(o), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
   };
   if (!base.exists) return { ...base, running: false, detail: '폴더를 찾을 수 없음', teamsCount: 0, skillsCount: 0, workingTeams: 0, doneToday: 0, telegram: { set: false } };
   const skills = scanSkills(skillsDirOf(o));
@@ -147,6 +147,12 @@ route('POST', '/api/offices/:id/stop', async ({ p }) => stopOffice(p.id));
 route('POST', '/api/offices/:id/restart', async ({ p }) => { mutable(p.id); return requestRestart(p.id, 5); });
 route('POST', '/api/offices/:id/open', async ({ p }) => { openInExplorer(getOffice(p.id).folder); return { ok: true }; });
 route('POST', '/api/offices/:id/migrate', async ({ p }) => migrateOffice(p.id));
+route('POST', '/api/offices/:id/relocate', async ({ p, body }) => {
+  const o = mutable(p.id);
+  need(o.launch || !runtime(o).running, '근무 중인 사무실은 위치를 바꿀 수 없습니다. 먼저 퇴근시킨 뒤 바꿔 주세요.', 409);
+  const r = relocateOffice(p.id, body.folder);
+  return { ...r, running: runtime(r).running };
+});
 route('POST', '/api/open-data', async () => { openInExplorer(DATA_HOME); return { ok: true }; });
 
 route('POST', '/api/offices/:id/teams', async ({ p, body }) => { const o = mutable(p.id); const t = addTeam(o.folder, body); return { team: t, needsRestart: runtime(o).running }; });
@@ -274,9 +280,12 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
   });
 
   // 시작할 때 사무실 설정 경로를 현재 설치 위치로 맞추고, 주기적으로 자동 복구를 돌린다.
+  const relink = () => { try { for (const r of autoRelink()) console.log(`[ai-office] 사무실 위치가 바뀐 것을 찾아 따라갔습니다: ${r.from} → ${r.to}`); } catch (e) { console.error(e); } };
+  relink();
   try { const fixed = repairOffices(); if (fixed.length) console.log(`[ai-office] 사무실 설정 경로를 다시 맞췄습니다: ${fixed.join(', ')}`); } catch (e) { console.error(e); }
   const timer = setInterval(async () => {
     try {
+      relink();
       const d = await diagnostics();
       const acts = await watchdogTick({ autoRestart: getConfig().autoRestart, legitPollers: legitCount(d) });
       for (const a of acts) console.log('[ai-office] 감시:', JSON.stringify(a));

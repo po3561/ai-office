@@ -2,7 +2,7 @@
 //   claude-office : Claude Code 로 돌아가는 사무실. 이 프로그램이 만들거나(managed) 기존 폴더를 불러온 것.
 //   hermes        : Hermes(라피스 등) 같은 별개의 봇. **읽기 전용** — 인식해서 보여 주기만 하고 어떤 것도 바꾸거나 실행하지 않는다.
 import { join, resolve, basename } from 'node:path';
-import { readdirSync, mkdirSync, copyFileSync, cpSync, renameSync } from 'node:fs';
+import { readdirSync, mkdirSync, copyFileSync, cpSync, renameSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { FILES, OFFICES_DIR, CLOSED_DIR, TEMPLATES, CLI, STATUS_HOOK, DEFAULT_TG_STATE } from './paths.mjs';
 import { readText, readJson, writeJson, writeAtomic, isDir, isFile, nowIso, localDate, stamp, need, slug, fwd, HttpError } from './util.mjs';
@@ -178,10 +178,88 @@ export function detectKind(dir) {
   return null;
 }
 
+// ── 드라이브가 바뀌어도 따라가기 ──
+// 연결된 드라이브 루트(C:\, D:\, F:\ …). Windows 가 아니면 비어 있다.
+export function driveRoots() {
+  if (process.platform !== 'win32') return [];
+  const out = [];
+  for (let c = 65; c <= 90; c++) {
+    const r = `${String.fromCharCode(c)}:\\`;
+    try { if (existsSync(r)) out.push(r); } catch { /* 끊긴 네트워크 드라이브 등은 건너뛴다 */ }
+  }
+  return out;
+}
+
+const keyOf = (p) => resolve(p).toLowerCase();
+
+// 사무실 폴더와 같은 이름의 폴더가 다른 드라이브·위치에 있는 Claude 사무실 후보(이미 등록된 곳은 제외).
+export function findMovedFolders(o) {
+  const name = basename(o.folder);
+  const home = homedir();
+  const taken = new Set(listOffices().map((x) => keyOf(x.folder)));
+  const out = [];
+  for (const root of [...driveRoots(), join(home, 'Desktop'), join(home, 'Documents'), OFFICES_DIR]) {
+    const dir = join(root, name);
+    if (taken.has(keyOf(dir)) || out.some((d) => keyOf(d) === keyOf(dir))) continue;
+    if (isDir(dir) && detectKind(dir) === 'claude-office') out.push(dir);
+  }
+  return out;
+}
+
+// 드라이브 전체를 훑는 일이라 몇 초 동안은 결과를 재사용한다.
+const candCache = new Map();
+export function moveCandidates(o, { fresh = false } = {}) {
+  if (o.kind !== 'claude-office') return [];
+  const hit = candCache.get(o.id);
+  if (!fresh && hit && hit.folder === o.folder && Date.now() - hit.at < 20000) return hit.list;
+  const list = findMovedFolders(o);
+  candCache.set(o.id, { at: Date.now(), folder: o.folder, list });
+  return list;
+}
+
+// 사무실 폴더를 다른 위치(다른 드라이브 포함)로 바꾼다. 폴더 안 파일은 건드리지 않고 등록 정보만 새 위치에 맞춘다.
+export function relocateOffice(id, folder) {
+  const o = mutable(id);
+  need(o.kind === 'claude-office', 'Claude 사무실만 위치를 바꿀 수 있습니다.');
+  const dir = resolve(String(folder || '').trim().replace(/^"|"$/g, ''));
+  need(isDir(dir), `폴더를 찾을 수 없습니다: ${dir}`);
+  need(detectKind(dir) === 'claude-office', 'Claude 사무실 폴더가 아닙니다(.claude 폴더나 CLAUDE.md 가 있는 곳을 골라 주세요).');
+  const reg = readRegistry();
+  need(!reg.offices.some((x) => x.id !== id && keyOf(x.folder) === keyOf(dir)), '이미 다른 사무실로 등록된 폴더입니다.');
+  const rec = reg.offices.find((x) => x.id === id);
+  const old = rec.folder;
+  if (keyOf(old) === keyOf(dir)) return rec;
+  const own = join(dir, '.telegram');
+  const wasOwn = !rec.sharedTelegramState && rec.stateDir && keyOf(rec.stateDir).startsWith(keyOf(old));
+  if (isDir(own)) { rec.stateDir = own; rec.sharedTelegramState = false; }
+  else if (wasOwn) rec.stateDir = own;
+  const start = join(dir, '.system', 'scripts', 'start-office.ps1');
+  const stop = join(dir, '.system', 'scripts', 'stop-office.ps1');
+  if (isFile(start)) rec.launch = { start, stop: isFile(stop) ? stop : null };
+  else delete rec.launch;
+  rec.previousFolder = old;
+  rec.folder = dir;
+  writeRegistry(reg);
+  candCache.delete(id);
+  return rec;
+}
+
+// 등록된 폴더가 사라졌는데 같은 이름의 사무실이 다른 위치에 딱 하나 있으면 자동으로 따라간다.
+export function autoRelink() {
+  const done = [];
+  for (const o of listOffices()) {
+    if (o.kind !== 'claude-office' || o.readonly || isDir(o.folder)) continue;
+    const c = findMovedFolders(o);
+    if (c.length !== 1) continue;
+    try { relocateOffice(o.id, c[0]); done.push({ id: o.id, from: o.folder, to: c[0] }); } catch { /* 다음 점검 때 다시 시도 */ }
+  }
+  return done;
+}
+
 // 이 PC에서 불러올 수 있는 사무실·봇 후보를 찾는다(등록은 사용자가 고른 것만).
 export function discover() {
   const home = homedir();
-  const roots = [join(home, 'Desktop'), join(home, 'Documents'), OFFICES_DIR];
+  const roots = [join(home, 'Desktop'), join(home, 'Documents'), OFFICES_DIR, ...driveRoots()];
   const seen = new Set(listOffices().map((o) => resolve(o.folder).toLowerCase()));
   const out = [];
   for (const root of roots) {

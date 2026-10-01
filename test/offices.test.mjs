@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox } from './helpers.mjs';
@@ -7,6 +8,7 @@ import { sandbox } from './helpers.mjs';
 const root = sandbox();
 const O = await import('../src/offices.mjs');
 const R = await import('../src/runner.mjs');
+const { OFFICES_DIR } = await import('../src/paths.mjs');
 
 test('새 사무실을 만들면 견본이 복사되고 부서가 생긴다', () => {
   const o = O.createOffice({ name: 'My Office', honorific: '대표님', presets: ['researcher', 'reviewer'] });
@@ -126,4 +128,54 @@ test('폴더 종류를 알 수 없으면 불러오지 않는다', () => {
   mkdirSync(dir);
   assert.throws(() => O.importOffice({ folder: dir }), /종류/);
   assert.throws(() => O.importOffice({ folder: join(root, 'nope') }), /찾을 수 없/);
+});
+
+function fakeClaudeOffice(dir, { launch = false } = {}) {
+  mkdirSync(join(dir, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(dir, 'CLAUDE.md'), '# 사무실\n', 'utf8');
+  if (launch) {
+    mkdirSync(join(dir, '.system', 'scripts'), { recursive: true });
+    writeFileSync(join(dir, '.system', 'scripts', 'start-office.ps1'), '# start\n');
+    writeFileSync(join(dir, '.system', 'scripts', 'stop-office.ps1'), '# stop\n');
+  }
+}
+
+test('사무실 위치를 다른 폴더(드라이브)로 바꾸면 출근 스크립트·상태 경로가 새 위치로 맞춰진다', () => {
+  const oldDir = join(root, 'a', 'AI-Office');
+  const newDir = join(root, 'b', 'AI-Office');
+  fakeClaudeOffice(oldDir, { launch: true });
+  fakeClaudeOffice(newDir, { launch: true });
+  const o = O.importOffice({ folder: oldDir, name: '이사' });
+  assert.equal(o.launch.start, join(oldDir, '.system', 'scripts', 'start-office.ps1'));
+  const r = O.relocateOffice(o.id, newDir);
+  assert.equal(r.folder, newDir);
+  assert.equal(r.previousFolder, oldDir);
+  assert.equal(r.launch.start, join(newDir, '.system', 'scripts', 'start-office.ps1'));
+  assert.equal(r.launch.stop, join(newDir, '.system', 'scripts', 'stop-office.ps1'));
+  assert.equal(O.getOffice(o.id).folder, newDir, '등록부에 저장되어야 한다');
+});
+
+test('위치 바꾸기는 사무실이 아닌 폴더·이미 등록된 폴더·Hermes 를 거부한다', () => {
+  const a = join(root, 'c', 'Office-A'), b = join(root, 'c', 'Office-B'), plain = join(root, 'c', 'plain');
+  fakeClaudeOffice(a); fakeClaudeOffice(b); mkdirSync(plain, { recursive: true });
+  const oa = O.importOffice({ folder: a, name: 'A' });
+  O.importOffice({ folder: b, name: 'B' });
+  assert.throws(() => O.relocateOffice(oa.id, plain), /사무실 폴더가 아닙니다/);
+  assert.throws(() => O.relocateOffice(oa.id, join(root, 'nope')), /찾을 수 없/);
+  assert.throws(() => O.relocateOffice(oa.id, b), /이미 다른 사무실/);
+  const h = O.listOffices().find((x) => x.kind === 'hermes');
+  assert.throws(() => O.relocateOffice(h.id, a), (e) => e.status === 403);
+});
+
+test('폴더가 사라지면 같은 이름 사무실이 하나일 때만 자동으로 따라간다', () => {
+  const { rmSync } = fs;
+  const stray = join(root, 'd', 'Moved-Office');
+  fakeClaudeOffice(stray);
+  const o = O.importOffice({ folder: stray, name: '이동' });
+  const target = join(OFFICES_DIR, 'Moved-Office');
+  fakeClaudeOffice(target);
+  rmSync(stray, { recursive: true, force: true });
+  const done = O.autoRelink();
+  assert.ok(done.some((d) => d.id === o.id && d.to === target), JSON.stringify(done));
+  assert.equal(O.getOffice(o.id).folder, target);
 });
