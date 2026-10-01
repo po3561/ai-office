@@ -20,6 +20,8 @@ export const DATA_HOME = process.env.AI_OFFICE_HOME
 export const OFFICES_DIR = join(DATA_HOME, 'offices');
 export const RUN_DIR = join(DATA_HOME, 'run');
 export const LOG_DIR = join(DATA_HOME, 'logs');
+export const CLOSED_DIR = join(DATA_HOME, 'closed');   // 폐쇄한 사무실 폴더를 지우지 않고 옮겨 두는 곳
+export const UPDATE_DIR = join(DATA_HOME, 'update');   // 업데이트 내려받기·백업
 export const MARKET_DIR = join(DATA_HOME, 'market');   // 스킬 마켓: 저장소 복제본(cache)과 설치 기록
 export const FILES = {
   config: join(DATA_HOME, 'config.json'),

@@ -110,6 +110,12 @@ export async function stopOffice(id) {
   return { stopped };
 }
 
+// 폐쇄한 사무실이 남긴 실행 흔적(pid·시작 스크립트·재시작 요청·퇴근 표시)을 지운다. 같은 id 를 새 사무실이 쓰게 되어도 영향이 없도록.
+export function forgetRuntime(id) {
+  startedAt.delete(id);
+  for (const f of [pidFile(id), scriptFile(id), restartFile(id), stoppedFile(id)]) rmSync(f, { force: true });
+}
+
 // 사무실 안에서 봇이 "N초 뒤 다시 출근해서 적용"을 요청할 때 쓴다. 요청만 적어 두면 대시보드 서버가 처리한다.
 export function requestRestart(id, delaySec = 60) {
   const o = getOffice(id);

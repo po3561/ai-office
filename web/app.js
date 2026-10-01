@@ -80,8 +80,9 @@ async function tick() {
       S.marketDirty = false; S.marketAt = Date.now();
       const status = await api('GET', '/api/market/status').catch(() => null);
       let skills = null, share = null;
-      if (status && status.enabled && status.ready) [skills, share] = await Promise.all([api('GET', '/api/market/skills').catch(() => null), api('GET', '/api/market/shareable').catch(() => null)]);
-      S.market = { status, skills, share };
+      let installed = null;
+      if (status && status.enabled && status.ready) [skills, share, installed] = await Promise.all([api('GET', '/api/market/skills').catch(() => null), api('GET', '/api/market/shareable').catch(() => null), api('GET', '/api/market/installed').catch(() => null)]);
+      S.market = { status, skills, share, installed };
     }
   } catch { S.ok = false; }
   paint();
@@ -143,6 +144,10 @@ function renderBanners(o) {
       b.push(`<div class="banner bad"><span class="ic">⛔</span><div class="txt"><b>${br ? 'Claude Code가 있지만 실행되지 않습니다' : 'Claude Code가 설치되어 있지 않습니다'}</b><span class="muted">${br ? `${esc(clip(br.error, 140))} — 다시 설치하면 해결되는 경우가 많습니다.` : '사무실을 움직이려면 Claude Code가 필요합니다.'}</span></div><button class="btn sm primary" data-act="claude-install">${br ? '다시 설치' : '설치하기'}</button></div>`);
     }
     else if (!ov.claude.auth.loggedIn) b.push(`<div class="banner warn"><span class="ic">🔑</span><div class="txt"><b>Claude에 로그인해 주세요</b><span class="muted">본인의 Claude 계정으로 로그인하면 사무실이 그 계정의 사용량으로 일합니다.</span></div><button class="btn sm primary" data-act="claude-login">로그인</button></div>`);
+    const u = ov.update;
+    if (u && u.available && u.latest) {
+      b.push(`<div class="banner info"><span class="ic">⬆️</span><div class="txt"><b>새 버전 v${esc(u.latest.version)} 이(가) 나왔습니다</b><span class="muted">지금은 v${esc(u.current)} 입니다. ${u.canApply ? '업데이트해도 사무실(봇)은 계속 근무하고, 대시보드만 잠시 다시 시작합니다.' : esc(u.why)}</span></div>${u.canApply ? '<button class="btn sm primary" data-act="update-apply">지금 업데이트</button>' : ''}${u.latest.page ? `<a class="btn sm" href="${esc(u.latest.page)}" target="_blank" rel="noopener">변경 내용</a>` : ''}</div>`);
+    }
     if (ov.diag.rogue) b.push(`<div class="banner bad"><span class="ic">📡</span><div class="txt"><b>텔레그램 메시지를 가로채는 프로세스가 ${ov.diag.rogue}개 있습니다</b><span class="muted">일반 Claude 창이 봇의 수신권을 빼앗으면 지시가 사무실에 도착하지 않습니다.</span></div><button class="btn sm primary" data-act="diag-clean">정리하기</button></div>`);
     if (ov.diag.globalPlugin) b.push(`<div class="banner warn"><span class="ic">⚠️</span><div class="txt"><b>텔레그램 플러그인이 모든 Claude 창에서 켜져 있습니다</b><span class="muted">새 Claude 창을 열 때마다 봇 수신권을 가로챕니다. 사무실 폴더에서는 따로 켜지므로 전역 설정은 꺼도 됩니다.</span></div><button class="btn sm" data-act="diag-global-off">전역에서 끄기</button></div>`);
   }
@@ -287,7 +292,6 @@ function vSkills() {
 const semverGt = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
 const RISK_PILL = { safe: () => pill('ok', '위험 요소 없음'), caution: () => pill('warn', '확인 필요'), danger: () => pill('bad', '⚠️ 위험 표시') };
 const LEVEL_ICON = { block: '⛔', warn: '⚠️', risk: '🚨' };
-const marketOffices = () => offices().filter((o) => !o.readonly);
 const marketUpdates = () => ((S.market && S.market.skills) || []).reduce((n, e) => n + e.installs.filter((i) => semverGt(e.version, i.version) && !e.revoked).length, 0);
 const marketRequests = () => ((S.market && S.market.share) || []).reduce((n, o) => n + (o.requests || []).length, 0);
 const markMarket = () => { S.marketDirty = true; return refresh(); };
@@ -359,7 +363,7 @@ function mkShare(m) {
   const inbox = reqs.length ? `<div class="card"><div class="card-head"><div><h2>📱 봇의 게시 요청 ${reqs.length}건</h2><p class="sub">텔레그램에서 "마켓에 올려줘"라고 한 스킬입니다. 봇은 직접 올리지 못하고 요청만 남깁니다. 검사 결과를 보고 직접 게시하거나 거절하세요.</p></div></div>
     <table class="tbl"><tbody>${reqs.map((r) => `<tr><td><b>${esc(r.skillId)}</b> <span class="small muted">${esc(r.o.officeName)} · ${esc(ago2(r.at))}</span>${r.note ? `<div class="small muted">${esc(clip(r.note, 160))}</div>` : ''}${r.known ? '' : `<div class="small" style="color:var(--warn)">이 이름의 스킬 폴더가 사무실에 없습니다.</div>`}</td>
       <td class="row end">${r.known ? `<button class="btn sm primary" data-act="market-publish" data-office="${esc(r.o.office)}" data-skill="${esc((r.o.skills.find((s) => s.id.toLowerCase() === r.skillId.toLowerCase()) || {}).id || r.skillId)}">검토 후 게시</button>` : ''}<button class="btn sm" data-act="market-req-dismiss" data-office="${esc(r.o.office)}" data-skill="${esc(r.skillId)}">거절</button></td></tr>`).join('')}</tbody></table></div>` : '';
-  return inbox + `<div class="banner info" style="margin-bottom:12px"><span class="ic">🔒</span><div class="txt"><b>공유는 내가 고른 스킬만, 내가 누를 때만</b><span class="muted">모든 스킬의 기본값은 “이 PC 전용”입니다. 게시하기 전에 개인정보·토큰이 들어 있는지 자동으로 검사합니다.</span></div></div>` + share.map((o) => `<div class="card"><h2>${esc(o.officeName)}</h2>
+  return inbox + `<div class="banner info" style="margin-bottom:12px"><span class="ic">🔒</span><div class="txt"><b>공유는 내가 고른 스킬만, 내가 누를 때만</b><span class="muted">모든 스킬의 기본값은 “이 PC 전용”입니다. 게시하기 전에 개인정보·토큰이 들어 있는지 자동으로 검사합니다.</span></div></div>` + share.map((o) => `<div class="card"><div class="card-head"><h2>${esc(o.officeName)}</h2>${o.skills.some((s) => s.status === 'private' || s.status === 'changed') ? `<button class="btn sm primary" data-act="market-publish-all" data-office="${esc(o.office)}">공유 가능한 스킬 모두 게시 (${o.skills.filter((s) => s.status === 'private' || s.status === 'changed').length})</button>` : ''}</div>
     ${o.skills.length ? `<table class="tbl"><thead><tr><th>스킬</th><th>상태</th><th></th></tr></thead><tbody>${o.skills.map((s) => `<tr><td><b>${esc(s.name)}</b>${s.name !== s.id ? ` <span class="small muted">${esc(s.id)}</span>` : ''}<div class="small muted">${esc(clip(s.description, 80))}</div></td>
       <td>${(rows[s.status] || rows.private)()}${s.requested ? ` ${pill('accent', '📱 게시 요청')}` : ''}${s.version ? ` <span class="small muted">v${esc(s.version)}</span>` : ''}${s.reason ? `<div class="small muted">${esc(s.reason)}</div>` : ''}</td>
       <td class="row end">${s.status === 'private' || s.status === 'changed' ? `<button class="btn sm primary" data-act="market-publish" data-office="${esc(o.office)}" data-skill="${esc(s.id)}">${s.status === 'changed' ? '새 버전 게시' : '마켓에 게시'}</button>` : ''}${s.status === 'published' || s.status === 'changed' ? `<button class="btn sm danger" data-act="market-revoke" data-id="${esc(s.marketId)}">회수</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">이 사무실에는 아직 스킬이 없습니다. 텔레그램에서 "앞으로 ○○할 때는 이렇게 해"라고 하면 봇이 만들어 여기에 나타납니다.</p>'}</div>`).join('');
@@ -368,15 +372,15 @@ function mkShare(m) {
 function mkInstalled(m) {
   const market = new Map((m.skills || []).map((e) => [e.id, e]));
   const rows = [];
-  for (const o of m.share || []) for (const s of o.skills) if (s.status === 'from-market') rows.push({ office: o, s, e: market.get(s.marketId) });
+  for (const o of m.installed || m.share || []) for (const s of o.skills) if (s.status === 'from-market') rows.push({ office: o, s, e: market.get(s.marketId) });
   if (!rows.length) return '<div class="card"><div class="empty"><div class="big">📦</div><b>마켓에서 받은 스킬이 없습니다</b><p>「둘러보기」에서 스킬을 골라 설치해 보세요.</p></div></div>';
   return `<div class="card"><table class="tbl"><thead><tr><th>스킬</th><th>사무실</th><th>설치한 버전</th><th></th></tr></thead><tbody>${rows.map(({ office, s, e }) => {
     const inst = e && e.installs.find((i) => i.office === office.office);
     const newer = e && !e.revoked && semverGt(e.version, s.version);
-    return `<tr><td><b>${esc(s.name)}</b><div class="small muted">${esc(clip(s.description, 70))}</div></td><td>${esc(office.officeName)}</td>
+    return `<tr><td><b>${esc(s.name)}</b><div class="small muted">${esc(clip(s.description, 70))}</div></td><td>${esc(office.officeName)}${office.external ? ` ${pill('', 'Hermes 봇')}` : ''}</td>
       <td>v${esc(s.version)}${inst && inst.modified ? ` ${pill('warn', '내가 고침')}` : ''}${newer ? ` ${pill('ok', `새 버전 v${esc(e.version)}`)}` : ''}${!e ? ` ${pill('warn', '마켓에 없음')}` : e.revoked ? ` ${pill('bad', '회수됨')}` : ''}</td>
       <td class="row end">${newer ? `<button class="btn sm primary" data-act="market-update" data-office="${esc(office.office)}" data-id="${esc(s.marketId)}">업데이트</button>` : ''}<button class="btn sm danger" data-act="market-uninstall" data-office="${esc(office.office)}" data-id="${esc(s.marketId)}">제거</button></td></tr>`;
-  }).join('')}</tbody></table><p class="small muted" style="margin-top:10px">제거해도 파일은 지워지지 않고 사무실의 <code>보관함/스킬제거</code> 폴더로 옮겨집니다. 설치·업데이트·제거는 사무실을 다시 출근시킨 뒤부터 적용됩니다.</p></div>`;
+  }).join('')}</tbody></table><p class="small muted" style="margin-top:10px">제거해도 파일은 지워지지 않고 사무실의 <code>보관함/스킬제거</code>(Hermes 봇은 이 프로그램의 <code>market/backup</code>) 폴더로 옮겨집니다. 설치·업데이트·제거는 사무실을 다시 출근시킨 뒤부터 적용됩니다.</p></div>`;
 }
 
 function mkSettings(m) {
@@ -397,7 +401,7 @@ async function dlgMarketDetail(id) {
   openDlg('<div class="dlg-head"><h2>불러오는 중…</h2></div>');
   let d;
   try { d = await api('GET', `/api/market/skills/${encodeURIComponent(id)}`); } catch (e) { errDlg('스킬을 불러오지 못했습니다', e); return; }
-  const offs = marketOffices();
+  const offs = (S.market && (S.market.installed || S.market.share)) || [];
   const risks = d.findings.filter((f) => f.level === 'risk');
   const bad = d.revoked || !d.verified || d.findings.some((f) => f.level === 'block');
   openDlg(`<form data-form="market-install" data-id="${esc(d.id)}"><div class="dlg-head"><h2>🧩 ${esc(d.name)} <small class="muted">v${esc(d.version)}</small></h2><p>${esc(d.description)}</p></div>
@@ -407,17 +411,37 @@ async function dlgMarketDetail(id) {
       ${d.findings.length ? `<div class="group-title">검사 결과</div>${findingsHtml(d.findings)}` : ''}
       <div class="group-title">파일 ${d.files.length}개</div><div class="small muted">${d.files.map((f) => `${esc(f.path)} <span class="faint">(${f.size}B${f.kind === 'script' ? ' · 스크립트' : ''})</span>`).join(' · ')}</div>
       <div class="group-title">SKILL.md 미리보기</div><pre class="mk-pre">${esc(d.skillMd)}</pre>
-      ${offs.length ? `<div class="group-title">설치할 사무실</div><div class="row"><select name="office">${offs.map((o) => `<option value="${esc(o.id)}"${o.id === S.officeId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
+      ${offs.length ? `<div class="group-title">설치할 곳</div><div class="stack" style="gap:6px">${offs.map((o) => {
+        const have = o.skills.find((k) => k.marketId === d.id);
+        const upd = have && have.status === 'from-market' && semverGt(d.version, have.version);
+        const note = !have ? '' : upd ? pill('ok', `v${esc(have.version)} → v${esc(d.version)} 업데이트`) : have.status === 'from-market' ? pill('', `이미 설치됨 v${esc(have.version)}`) : pill('', '같은 이름의 스킬이 이미 있어요');
+        const usable = !have || upd;
+        return `<label class="row" style="gap:8px${usable ? '' : ';opacity:.55'}"><input type="checkbox" name="office" value="${esc(o.office)}"${usable ? ' checked' : ' disabled'}><b>${esc(o.officeName)}</b>${o.external ? pill('', 'Hermes 봇') : ''}${note}</label>`;
+      }).join('')}</div>
         ${risks.length ? '<label class="row" style="margin-top:10px;font-weight:600"><input type="checkbox" name="allowRisk" required> 위 위험 표시를 모두 확인했고, 그래도 설치합니다</label>' : ''}` : '<p class="muted">설치할 수 있는 사무실이 없습니다.</p>'}
-      <p class="small muted" style="margin-top:8px">설치한 스킬은 사무실을 <b>다시 출근</b>시킨 뒤부터 적용됩니다.</p></div>
+      <p class="small muted" style="margin-top:8px">사무실은 <b>다시 출근</b>시킨 뒤부터, Hermes 봇은 다시 시작하거나 스킬을 다시 읽은 뒤부터 적용됩니다.</p></div>
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">닫기</button><button class="btn primary" type="submit"${bad || !offs.length ? ' disabled' : ''}>설치하기</button></div></form>`);
+}
+
+// 고른 곳 모두에 설치한다. 한 곳이면 예전처럼(덮어쓰기 확인 포함), 여러 곳이면 결과를 모아 한 번에 알려 준다.
+async function marketInstallMany(id, officeIds, allowRisk) {
+  if (!officeIds.length) throw new Error('설치할 곳을 하나 이상 골라 주세요.');
+  if (officeIds.length === 1) return marketInstall(id, officeIds[0], allowRisk, false);
+  const nameOf = (o) => (((S.market && S.market.installed) || []).find((x) => x.office === o) || {}).officeName || o;
+  const ok = [], bad = [];
+  for (const o of officeIds) {
+    try { const r = await api('POST', '/api/market/install', { id, office: o, allowRisk, overwrite: false }); if (r.needsRestart) S.restartNeeded[o] = true; ok.push(nameOf(o)); }
+    catch (e) { bad.push(`${nameOf(o)}: ${e.message}`); }
+  }
+  if (!bad.length) { closeDlg(); toast(`${ok.join(', ')}에 설치했습니다.`); return; }
+  openDlg(`<div class="dlg-head"><h2>${ok.length}곳 설치, ${bad.length}곳 실패</h2><p>${ok.length ? `설치됨: ${ok.map(esc).join(', ')}` : ''}</p><ul class="find">${bad.map((m) => `<li class="block"><span>⛔</span><div>${esc(m)}</div></li>`).join('')}</ul></div><div class="dlg-foot"><button class="btn primary" data-act="dlg-close">닫기</button></div>`);
 }
 
 async function marketInstall(id, office, allowRisk, overwrite) {
   try {
     const r = await api('POST', '/api/market/install', { id, office, allowRisk, overwrite });
     if (r.needsRestart) S.restartNeeded[office] = true;
-    closeDlg(); toast(r.updated ? `v${r.version}(으)로 업데이트했습니다. 사무실을 다시 출근시키면 적용됩니다.` : '설치했습니다. 사무실을 다시 출근시키면 적용됩니다.');
+    closeDlg(); toast(r.external ? '설치했습니다. 이 봇이 스킬을 다시 읽을 때(재시작 등) 적용됩니다.' : r.updated ? `v${r.version}(으)로 업데이트했습니다. 사무실을 다시 출근시키면 적용됩니다.` : '설치했습니다. 사무실을 다시 출근시키면 적용됩니다.');
   } catch (e) {
     if (e.details && e.details.needsConfirm === 'overwrite') {
       dlgConfirm({ title: '직접 고친 내용을 덮어쓸까요?', body: `설치한 뒤 바뀐 파일: <code>${(e.details.changed || []).map(esc).join(', ')}</code><br>덮어쓰면 고친 내용은 사무실의 <code>보관함/맞춤설정_백업</code> 폴더로 옮겨 둡니다.`, ok: '덮어쓰기', danger: true, onOk: async () => { await doing(null, () => marketInstall(id, office, allowRisk, true)); } });
@@ -441,6 +465,57 @@ async function dlgPublish(officeId, skillId) {
       ${info.warnings.length ? '<label class="row" style="margin-top:10px;font-weight:600"><input type="checkbox" name="cw" required> 개인정보로 보이는 위 내용을 확인했고, 공유해도 괜찮습니다</label>' : ''}
       ${info.risks.length ? '<label class="row" style="margin-top:8px;font-weight:600"><input type="checkbox" name="cr" required> 스크립트 등 위험 표시가 붙는 것을 알고 있고, 그대로 게시합니다</label>' : ''}</div>
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit"${info.publishable && !(ex && (!ex.mine || ex.revoked)) ? '' : ' disabled'}>게시하기</button></div></form>`);
+}
+
+// 모두 게시: 게시할 수 있는 스킬을 한꺼번에 검사해 보여 주고, 사용자가 고르고 확인한 것만 하나씩 게시한다(검사·확인 절차는 한 개씩 올릴 때와 같다).
+let bulk = null;
+async function dlgPublishAll(officeId) {
+  const o = ((S.market && S.market.share) || []).find((x) => x.office === officeId);
+  const todo = o ? o.skills.filter((k) => k.status === 'private' || k.status === 'changed') : [];
+  if (!todo.length) { toast('게시할 스킬이 없습니다.'); return; }
+  openDlg(`<div class="dlg-head"><h2>검사하는 중…</h2><p>스킬 ${todo.length}개에 개인정보·비밀값이 들어 있는지 확인합니다.</p></div>`);
+  const items = [];
+  for (const k of todo) {
+    try { items.push({ id: k.id, name: k.name, info: await api('POST', '/api/market/inspect', { office: officeId, skillId: k.id }) }); }
+    catch (e) { items.push({ id: k.id, name: k.name, error: e.message }); }
+  }
+  for (const it of items) {
+    const ex = it.info && it.info.existing;
+    it.ok = Boolean(it.info && it.info.publishable && !(ex && (!ex.mine || ex.revoked)));
+  }
+  bulk = { officeId, items };
+  const warnN = items.filter((it) => it.ok && it.info.warnings.length).length, riskN = items.filter((it) => it.ok && it.info.risks.length).length;
+  const row = (it, i) => {
+    const inf = it.info;
+    const why = it.error ? esc(it.error) : !inf.publishable ? '⛔ 차단 항목이 있어 제외됩니다' : (inf.existing && !inf.existing.mine) ? '다른 게시자의 같은 이름이 있어 제외됩니다' : (inf.existing && inf.existing.revoked) ? '회수된 이름이라 제외됩니다' : '';
+    return `<div class="bulk-row"><label class="row" style="gap:8px"><input type="checkbox" name="pick" value="${i}"${it.ok ? ' checked' : ' disabled'}><b>${esc(it.name)}</b>${it.ok ? `<span class="small muted">v${esc(inf.suggestedVersion)} · 파일 ${inf.files.length}개</span>` : ''}${it.ok && inf.warnings.length ? pill('warn', `⚠️ 확인 ${inf.warnings.length}`) : ''}${it.ok && inf.risks.length ? pill('warn', `🚨 위험 ${inf.risks.length}`) : ''}${it.ok && !inf.findings.length ? pill('ok', '문제 없음') : ''}</label>
+      ${why ? `<div class="small" style="color:var(--bad);margin-left:26px">${why}</div>` : ''}
+      ${inf && inf.findings.length ? `<details style="margin-left:26px"><summary class="small muted">검사 결과 ${inf.findings.length}건 보기</summary>${findingsHtml(inf.findings)}</details>` : ''}</div>`;
+  };
+  openDlg(`<form data-form="market-publish-all" data-office="${esc(officeId)}"><div class="dlg-head"><h2>🚀 스킬 ${items.length}개 한꺼번에 게시</h2><p>같은 마켓에 연결한 다른 PC·봇(라피스 등)이 볼 수 있게 됩니다. 사무실의 업무 데이터·설정·토큰은 포함되지 않고, 게시할 때마다 개인정보 검사를 합니다. 빼고 싶은 스킬은 체크를 풀어 주세요.</p></div>
+    <div class="dlg-body">${items.map(row).join('')}
+      ${warnN ? `<label class="row" style="margin-top:12px;font-weight:600"><input type="checkbox" name="cw"> 개인정보로 보이는 표시(⚠️ ${warnN}개 스킬)를 확인했고, 공유해도 괜찮습니다</label>` : ''}
+      ${riskN ? `<label class="row" style="margin-top:8px;font-weight:600"><input type="checkbox" name="cr"> 스크립트 등 위험 표시(🚨 ${riskN}개 스킬)가 붙는 것을 알고 있고, 그대로 게시합니다</label>` : ''}</div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit"${items.some((it) => it.ok) ? '' : ' disabled'}>선택한 스킬 게시</button></div></form>`);
+}
+
+async function publishAllSubmit(f, fd) {
+  const picked = fd.getAll('pick').map(Number).map((i) => bulk.items[i]).filter((it) => it && it.ok);
+  if (!picked.length) throw new Error('게시할 스킬을 하나 이상 골라 주세요.');
+  const needW = picked.some((it) => it.info.warnings.length), needR = picked.some((it) => it.info.risks.length);
+  if (needW && fd.get('cw') !== 'on') throw new Error('개인정보로 보이는 내용 확인란에 체크해 주세요.');
+  if (needR && fd.get('cr') !== 'on') throw new Error('위험 표시 확인란에 체크해 주세요.');
+  const btn = f.querySelector('button[type=submit]');
+  const done = [], failed = [];
+  for (let i = 0; i < picked.length; i++) {
+    const it = picked[i];
+    btn.textContent = `게시하는 중… (${i + 1}/${picked.length}) ${it.id}`;
+    try { await api('POST', '/api/market/publish', { office: f.dataset.office, skillId: it.id, version: it.info.suggestedVersion, notes: '', confirmWarnings: needW, confirmRisks: needR }); done.push(it.id); }
+    catch (e) { failed.push(`${it.id}: ${e.message}`); }
+  }
+  S.marketDirty = true;
+  if (!failed.length) { closeDlg(); toast(`스킬 ${done.length}개를 마켓에 게시했습니다.`); return; }
+  openDlg(`<div class="dlg-head"><h2>${done.length}개 게시, ${failed.length}개 실패</h2><p>${done.length ? `게시됨: ${done.map(esc).join(', ')}<br>` : ''}실패한 스킬은 목록에서 한 개씩 다시 시도할 수 있습니다.</p><ul class="find">${failed.map((m) => `<li class="block"><span>⛔</span><div>${esc(m)}</div></li>`).join('')}</ul></div><div class="dlg-foot"><button class="btn primary" data-act="dlg-close">닫기</button></div>`);
 }
 
 // ── 연결 · 계정 ──
@@ -534,6 +609,16 @@ function roomsCard(o, d) {
 }
 
 // ── 설정 ──
+function vUpdateCard(u, cfg) {
+  if (!u) return '';
+  const state = u.available && u.latest ? `<span class="pill accent">새 버전 v${esc(u.latest.version)}</span>` : (u.checkedAt && !u.error ? '<span class="pill ok">최신 버전입니다</span>' : '');
+  return `<div class="card"><div class="card-head"><div><h2>업데이트</h2><div class="badges">현재 v${esc(u.current)} ${state}</div></div><div class="row"><button class="btn sm" data-act="update-check">지금 확인</button>${u.available && u.canApply ? '<button class="btn sm primary" data-act="update-apply">지금 업데이트</button>' : ''}</div></div>
+    ${u.error ? `<p class="small" style="color:var(--bad)">${esc(u.error)}</p>` : ''}
+    <p class="small muted">${u.checkedAt ? `마지막 확인: ${ago(u.checkedAt)} 전. ` : ''}켜 있는 동안 6시간마다 새 버전을 자동으로 확인합니다.${u.canApply ? '' : ` ${esc(u.why)}`}</p>
+    ${u.available && u.latest && u.latest.notes ? `<details style="margin-top:8px"><summary class="small">변경 내용 보기</summary><pre class="small" style="white-space:pre-wrap;margin-top:6px">${esc(u.latest.notes)}</pre></details>` : ''}
+    ${u.canApply ? `<div class="setting" style="margin-top:10px"><div><b>새 버전이 나오면 바로 자동 설치</b><span class="sub">꺼 두면 알림만 뜨고 직접 눌러야 설치됩니다(기본). 켜면 확인되는 즉시 설치하고 대시보드를 다시 시작합니다. 사무실은 계속 근무하고, 이전 버전은 백업됩니다.</span></div><label class="switch"><input type="checkbox" data-change="autoupdate"${cfg.autoUpdate ? ' checked' : ''}><i></i></label></div>` : ''}</div>`;
+}
+
 function vSettings() {
   const cfg = S.ov.config, o = cur(), a = S.ov.app;
   let html = `<div class="card"><h2>일반</h2><p class="sub" style="margin-bottom:6px">새 사무실을 만들 때 쓰는 기본값과 화면 설정입니다.</p>
@@ -551,10 +636,12 @@ function vSettings() {
       <div class="setting"><div><b>항상 켜두기</b><span class="sub">이 프로그램이 켜져 있는 동안, 사무실이 꺼져 있으면 다시 출근시킵니다. 직접 퇴근시킨 경우에는 다시 켜지 않습니다.</span></div><label class="switch"><input type="checkbox" data-change="autostart"${o.autoStart ? ' checked' : ''}><i></i></label></div>
       <div class="setting"><div><b>사무실 폴더</b><span class="sub path">${esc(o.folder)}</span></div><button class="btn sm" data-act="office-open">폴더 열기</button></div>
       ${!o.managed && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
-      <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>`;
+      <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>
+      ${o.closable ? `<div class="setting"><div><b>사무실 폐쇄 (삭제)</b><span class="sub">사무실을 끄고 목록에서 없앱니다. 폴더(봇 토큰·업무 기록 포함)는 완전히 지우지 않고 <span class="code">${esc(a.dataHome)}\\closed</span> 로 옮겨 둡니다.</span></div><button class="btn sm danger" data-act="office-close">폐쇄하기</button></div>` : ''}`;
     }
     html += '</div>';
   }
+  html += vUpdateCard(S.ov.update, cfg);
   html += `<div class="card"><h2>프로그램 정보</h2><div class="setting" style="border:0"><div><b>AI-Office ${esc(a.version)}</b><span class="sub">프로그램: <span class="path">${esc(a.appHome)}</span><br>데이터: <span class="path">${esc(a.dataHome)}</span></span></div><button class="btn sm" data-act="open-data">데이터 폴더 열기</button></div>
     <p class="small muted">프로그램과 데이터는 고정 위치에 있어, 바탕화면을 정리하거나 폴더를 옮겨도 계속 동작합니다.</p></div>`;
   return html;
@@ -641,6 +728,35 @@ function dlgConfirm({ title, body, ok = '확인', danger = false, onOk }) {
   $('#confirmOk').onclick = async (e) => { e.target.disabled = true; await onOk(); closeDlg(); };
 }
 
+// 사무실 폐쇄: 이름을 똑같이 입력해야 버튼이 눌린다(실수 방지).
+function dlgCloseOffice() {
+  const o = cur();
+  if (!o) return;
+  openDlg(`<form data-form="office-close"><div class="dlg-head"><h2>「${esc(o.name)}」 사무실을 폐쇄할까요?</h2>
+    <p>${o.running ? '지금 근무 중이라 먼저 퇴근시킵니다(진행 중인 업무는 중단됩니다). ' : ''}사무실이 목록에서 사라지고 텔레그램 봇 연결도 끊어집니다. 폴더는 지우지 않고 <code>${esc(S.ov.app.dataHome)}\\closed</code> 로 옮겨 두므로, 필요하면 「기존 폴더 불러오기」로 되살릴 수 있습니다.</p></div>
+    <div class="dlg-body"><div class="field"><label>확인을 위해 사무실 이름을 입력하세요</label><input type="text" name="confirm" autocomplete="off" placeholder="${esc(o.name)}" data-want="${esc(o.name)}"></div></div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn danger" type="submit" id="closeOk" disabled>폐쇄하기</button></div></form>`);
+  const input = $('#dlg input[name=confirm]');
+  input.addEventListener('input', () => { $('#closeOk').disabled = input.value.trim() !== o.name; });
+}
+
+// 업데이트: 설치를 시키고, 서버가 새 버전으로 다시 뜰 때까지 기다렸다가 화면을 새로 고친다.
+function dlgUpdate() {
+  const u = S.ov && S.ov.update;
+  if (!u || !u.latest) return;
+  dlgConfirm({ title: `v${u.latest.version} 으로 업데이트할까요?`, body: `지금은 v${esc(u.current)} 입니다. 새 파일을 내려받아 교체하고 대시보드를 <b>잠시(약 10초) 다시 시작</b>합니다. 사무실(봇)은 끄지 않고, 이전 버전은 백업해 둡니다.`, ok: '업데이트', onOk: async () => {
+    try {
+      await api('POST', '/api/update/apply');
+      toast('업데이트했습니다. 대시보드를 다시 시작하는 중…');
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try { const p = await api('GET', '/api/ping'); if (p.version === u.latest.version) { location.reload(); return; } } catch { /* 다시 뜨는 중 */ }
+      }
+      toast('대시보드가 다시 뜨지 않으면 바탕화면의 AI-Office 바로가기를 다시 눌러 주세요.', true);
+    } catch (e) { toast(e.message, true); }
+  } });
+}
+
 // ── 동작 ──
 const refresh = async () => { S.last = ''; await tick(); };
 const oid = () => encodeURIComponent(S.officeId);
@@ -663,6 +779,9 @@ const ACT = {
   'office-open': (b) => doing(b, () => api('POST', `/api/offices/${oid()}/open`)),
   'open-data': (b) => doing(b, () => api('POST', '/api/open-data')),
   'office-unregister': () => dlgConfirm({ title: '목록에서 뺄까요?', body: '등록만 해제됩니다. 폴더와 파일은 지워지지 않고, 나중에 다시 불러올 수 있습니다.', ok: '등록 해제', danger: true, onOk: async () => { try { await api('DELETE', `/api/offices/${oid()}`); toast('등록을 해제했습니다.'); } catch (e) { toast(e.message, true); } S.officeId = ''; refresh(); } }),
+  'office-close': () => dlgCloseOffice(),
+  'update-check': (b) => doing(b, async () => { const u = await api('POST', '/api/update/check'); await refresh(); toast(u.error || (u.available ? `새 버전 v${u.latest.version} 이(가) 있습니다.` : '지금이 최신 버전입니다.'), Boolean(u.error)); }),
+  'update-apply': () => dlgUpdate(),
   'office-migrate': () => dlgConfirm({ title: '고정 위치로 옮길까요?', body: '사무실 폴더를 고정 위치로 <b>복사</b>하고, 이후 새 위치를 사용합니다. 원본은 그대로 남습니다.', ok: '옮기기', onOk: async () => { try { const r = await api('POST', `/api/offices/${oid()}/migrate`); toast(`옮겼습니다: ${r.to}`); } catch (e) { toast(e.message, true); } refresh(); } }),
   'team-add': () => dlgTeamAdd('preset'),
   'team-add-tab': (b) => dlgTeamAdd(b.dataset.tab),
@@ -682,6 +801,7 @@ const ACT = {
   'market-refresh': (b) => doing(b, async () => { const r = await api('POST', '/api/market/refresh'); toast(`마켓을 새로 불러왔습니다 (스킬 ${r.entries}개)`); await markMarket(); }),
   'market-detail': (b) => dlgMarketDetail(b.dataset.id),
   'market-publish': (b) => dlgPublish(b.dataset.office, b.dataset.skill),
+  'market-publish-all': (b) => doing(b, () => dlgPublishAll(b.dataset.office)),
   'market-update': (b) => doing(b, async () => { await marketInstall(b.dataset.id, b.dataset.office, false, false); await markMarket(); }),
   'market-uninstall': (b) => dlgConfirm({ title: '이 스킬을 제거할까요?', body: '사무실의 스킬 폴더에서 <b>보관함/스킬제거</b> 로 옮깁니다(지우지 않습니다). 다시 받으려면 마켓에서 설치하면 됩니다.', ok: '제거', danger: true, onOk: async () => { try { const r = await api('POST', '/api/market/uninstall', { office: b.dataset.office, id: b.dataset.id }); if (r.needsRestart) S.restartNeeded[b.dataset.office] = true; toast('제거했습니다. 사무실을 다시 출근시키면 적용됩니다.'); } catch (e) { toast(e.message, true); } markMarket(); } }),
   'market-revoke': (b) => dlgConfirm({ title: '마켓에서 회수할까요?', body: `이 스킬을 마켓에서 내립니다. 이미 설치한 PC에는 “회수됨” 경고가 표시되고 새로 설치할 수 없게 됩니다. (내 PC의 스킬 파일은 그대로입니다)<div class="field" style="margin-top:10px"><label>회수 사유 (선택)</label><input type="text" id="revokeReason" maxlength="200" placeholder="예: 개인정보가 들어 있었음"></div>`, ok: '회수', danger: true, onOk: async () => { try { await api('POST', '/api/market/revoke', { id: b.dataset.id, reason: ($('#revokeReason') || {}).value || '' }); toast('회수했습니다.'); } catch (e) { toast(e.message, true); } markMarket(); } }),
@@ -703,6 +823,7 @@ document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.id === 'officeSel') { S.officeId = el.value; localStorage.setItem('office', S.officeId); refresh(); return; }
   if (el.dataset.change === 'autostart') { const ok = await doing(null, () => api('PATCH', `/api/offices/${oid()}`, { autoStart: el.checked })); if (!ok) el.checked = !el.checked; else refresh(); }
+  if (el.dataset.change === 'autoupdate') { const ok = await doing(null, () => api('PATCH', '/api/config', { autoUpdate: el.checked })); if (!ok) el.checked = !el.checked; else { toast(el.checked ? '새 버전이 확인되면 자동으로 설치합니다.' : '새 버전은 알림만 띄웁니다.'); refresh(); } return; }
   if (el.dataset.change === 'room-dept') {   // 고른 부서를 업무 칸에 채워 넣는다(저장은 직접)
     const ta = el.closest('form').querySelector('textarea');
     if (el.value) { ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + el.value; ta.focus(); }
@@ -731,6 +852,9 @@ document.addEventListener('submit', async (e) => {
     else if (kind === 'config') {
       await api('PATCH', '/api/config', { honorific: fd.get('honorific'), theme: fd.get('theme'), port: Number(fd.get('port')), autoRestart: fd.get('autoRestart') === 'on' });
       S.themePref = fd.get('theme'); localStorage.setItem('theme', S.themePref); applyTheme(); toast('저장했습니다.');
+    } else if (kind === 'office-close') {
+      const r = await api('POST', `/api/offices/${oid()}/close`, { confirmName: fd.get('confirm') });
+      S.officeId = ''; localStorage.removeItem('office'); closeDlg(); toast(`「${r.name}」 사무실을 폐쇄했습니다.`);
     } else if (kind === 'new-office') {
       const o = await api('POST', '/api/offices', { name: fd.get('name'), honorific: fd.get('honorific'), presets: fd.getAll('preset') });
       S.officeId = o.id; localStorage.setItem('office', o.id); closeDlg(); toast(`「${o.name}」 사무실을 만들었습니다. 이제 봇을 연결해 볼까요?`); navigate('home');
@@ -757,8 +881,10 @@ document.addEventListener('submit', async (e) => {
       S.marketTab = 'browse'; S.marketDirty = true;
       toast(r.visibility === 'public' ? '⚠️ 연결했지만 이 저장소는 공개(public)입니다. 비공개로 바꾸는 것을 권합니다.' : `마켓에 연결했습니다 (스킬 ${r.entries}개)`, r.visibility === 'public');
     } else if (kind === 'market-install') {
-      await marketInstall(f.dataset.id, fd.get('office'), fd.get('allowRisk') === 'on', false);
+      await marketInstallMany(f.dataset.id, fd.getAll('office'), fd.get('allowRisk') === 'on');
       S.marketDirty = true;
+    } else if (kind === 'market-publish-all') {
+      await publishAllSubmit(f, fd);
     } else if (kind === 'market-publish') {
       const r = await api('POST', '/api/market/publish', { office: f.dataset.office, skillId: f.dataset.skill, version: fd.get('version'), notes: fd.get('notes'), confirmWarnings: fd.get('cw') === 'on', confirmRisks: fd.get('cr') === 'on' });
       closeDlg(); S.marketDirty = true; toast(`v${r.version} 을(를) 마켓에 게시했습니다.`);

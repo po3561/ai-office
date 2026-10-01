@@ -4,20 +4,22 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES } from './paths.mjs';
+import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
-import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, updateOffice, discover, repairOffices, migrateOffice } from './offices.mjs';
+import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice } from './offices.mjs';
 import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
 import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
 import { readStatus, summarize } from './status.mjs';
-import { runtime, startOffice, stopOffice, requestRestart, watchdogTick } from './runner.mjs';
+import { runtime, startOffice, stopOffice, requestRestart, watchdogTick, forgetRuntime } from './runner.mjs';
+import { createUpdater } from './updater.mjs';
 import * as tg from './telegram.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
+let updater = createUpdater({ current: pkg.version });
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8' };
 
 // ── 진단 캐시(프로세스 목록 조회는 무거워서 몇 초에 한 번만) ──
@@ -38,7 +40,7 @@ function summary(o, d) {
   const base = {
     id: o.id, name: o.name, kind: o.kind, readonly: o.kind === 'hermes' || Boolean(o.readonly), managed: Boolean(o.managed),
     folder: o.folder, autoStart: Boolean(o.autoStart), running: rt.running, detail: rt.detail, exists: isDir(o.folder),
-    legacyLaunch: Boolean(o.launch), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
+    closable: isClosable(o), legacyLaunch: Boolean(o.launch), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
   };
   if (!base.exists) return { ...base, running: false, detail: '폴더를 찾을 수 없음', teamsCount: 0, skillsCount: 0, workingTeams: 0, doneToday: 0, telegram: { set: false } };
   const skills = scanSkills(skillsDirOf(o));
@@ -70,6 +72,7 @@ async function overview() {
   const d = await diagnostics();
   const offices = listOffices().map((o) => summary(o, d));
   return {
+    update: updater.view(),
     app: { version: pkg.version, appHome: APP_HOME, dataHome: DATA_HOME, officesDir: OFFICES_DIR, sharedSkills: SHARED_SKILLS },
     config: getConfig(),
     claude: await claudeInfo(),
@@ -129,6 +132,15 @@ route('POST', '/api/claude/install', async () => startInstall());
 route('POST', '/api/offices', async ({ body }) => createOffice(body));
 route('POST', '/api/offices/import', async ({ body }) => importOffice(body));
 route('DELETE', '/api/offices/:id', async ({ p }) => unregisterOffice(p.id));
+// 사무실 폐쇄: 이름을 똑같이 입력해야 하고, 켜져 있으면 먼저 끈다. 폴더는 지우지 않고 보관 위치로 옮긴다.
+route('POST', '/api/offices/:id/close', async ({ p, body }) => {
+  const o = checkClosable(p.id, body.confirmName);   // 끄기 전에 먼저 폐쇄할 수 있는지 확인한다
+  await stopOffice(o.id);
+  await new Promise((r) => setTimeout(r, 1500));   // 창이 닫히며 폴더 잠금이 풀릴 시간을 준다
+  const r = closeOffice(o.id, { confirmName: body.confirmName });
+  forgetRuntime(o.id);
+  return r;
+});
 route('PATCH', '/api/offices/:id', async ({ p, body }) => { mutable(p.id); return updateOffice(p.id, body); });
 route('POST', '/api/offices/:id/start', async ({ p }) => startOffice(p.id, { legitPollers: legitCount(await diagnostics()) }));
 route('POST', '/api/offices/:id/stop', async ({ p }) => stopOffice(p.id));
@@ -163,9 +175,15 @@ const honorificOf = (o) => { try { return loadOffice(o.folder).honorific; } catc
 // 마켓에서 다루는 사무실: 읽기 전용(Hermes)은 제외한다.
 const marketOffices = () => listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
   .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) }));
+// 마켓에서 스킬을 받을 수 있는 곳 = 내 사무실 + 읽기 전용 외부 봇(Hermes: 라피스 등).
+// 외부 봇은 설치·업데이트·제거할 때만 예외로, 그 봇의 `skills/<스킬 이름>/` 폴더 안에서만 파일을 쓴다. 게시(내보내기)·부서·설정·실행은 여전히 못 한다.
+const hermesTargets = () => listOffices().filter((o) => o.kind === 'hermes' && isDir(join(o.folder, 'skills')))
+  .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: join(o.folder, 'skills'), honorifics: [], external: true, backupRoot: join(MARKET_DIR, 'backup', o.id) }));
+const marketTargets = () => [...marketOffices(), ...hermesTargets()];
+const marketTarget = (id) => { const o = marketTargets().find((x) => x.id === id); need(o, '설치할 곳을 찾을 수 없습니다.', 404); return o; };
 const marketOffice = (id) => { const o = marketOffices().find((x) => x.id === id); need(o, '사무실을 찾을 수 없습니다.', 404); return o; };
 const localSkill = (o, skillId) => { const k = findSkillDirs(o.skillsDir).find((x) => x.id === skillId); need(k, '이 사무실에 없는 스킬입니다.', 404); return k; };   // 화면이 보낸 이름으로 경로를 만들지 않고 목록에서 찾는다
-const marketRestart = (o, r) => ({ ...r, needsRestart: runtime(getOffice(o.id)).running });
+const marketRestart = (o, r) => ({ ...r, external: Boolean(o.external), needsRestart: !o.external && runtime(getOffice(o.id)).running });
 
 route('GET', '/api/market/status', async () => market.status());
 route('POST', '/api/market/connect', async ({ body }) => {
@@ -180,9 +198,11 @@ route('POST', '/api/market/disconnect', async ({ body }) => {
   return market.status();
 });
 route('POST', '/api/market/refresh', async () => { await market.refresh(); return market.status(); });
-route('GET', '/api/market/skills', async () => market.list({ offices: marketOffices() }));
-route('GET', '/api/market/skills/:id', async ({ p }) => market.detail(p.id, { offices: marketOffices() }));
+route('GET', '/api/market/skills', async () => market.list({ offices: marketTargets() }));
+route('GET', '/api/market/skills/:id', async ({ p }) => market.detail(p.id, { offices: marketTargets() }));
 route('GET', '/api/market/shareable', async () => market.shareable({ offices: marketOffices() }));
+// 이 PC 의 설치 현황: 사무실뿐 아니라 외부 봇(라피스 등)이 마켓에서 받은 스킬도 함께 본다.
+route('GET', '/api/market/installed', async () => market.shareable({ offices: marketTargets() }).then((r) => r.map((o) => ({ ...o, external: Boolean(marketTargets().find((t) => t.id === o.office)?.external), requests: [] }))));
 route('POST', '/api/market/inspect', async ({ body }) => { const o = marketOffice(body.office); const k = localSkill(o, body.skillId); return market.inspect({ skillDir: k.dir, id: k.id, honorifics: o.honorifics }); });
 route('POST', '/api/market/publish', async ({ body }) => {
   const o = marketOffice(body.office), k = localSkill(o, body.skillId);
@@ -199,8 +219,12 @@ route('POST', '/api/market/requests/dismiss', async ({ body }) => {
   return { ok: true };
 });
 route('POST', '/api/market/revoke', async ({ body }) => market.revoke({ id: body.id, reason: body.reason }));
-route('POST', '/api/market/install', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
-route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketOffice(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
+route('POST', '/api/market/install', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
+route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
+
+// ── 프로그램 업데이트 ── 감지는 자동(6시간마다), 설치는 사용자가 누를 때만(설정에서 「자동 설치」를 켠 경우 제외).
+route('POST', '/api/update/check', async () => updater.check());
+route('POST', '/api/update/apply', async () => updater.apply());
 
 route('POST', '/api/diagnostics/refresh', async () => { const v = await diagnostics(true); return { pollers: v.pollers }; });
 route('POST', '/api/diagnostics/clean-pollers', async () => { const r = await tg.cleanRoguePollers(); await diagnostics(true); return r; });
@@ -218,8 +242,9 @@ function serveStatic(url, res) {
   } catch { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('Not found'); }
 }
 
-export function startServer({ port } = {}) {
+export function startServer({ port, updater: custom, updateCheck = true } = {}) {
   port = port || getConfig().port;
+  if (custom) updater = custom;   // 테스트용: 인터넷 대신 가짜 업데이트 도구를 끼운다
   const send = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
 
   const server = http.createServer(async (req, res) => {
@@ -261,6 +286,23 @@ export function startServer({ port } = {}) {
   // 스킬 마켓이 연결되어 있으면 10분마다 원격의 새 스킬·새 버전 목록만 받아 온다(설치·업데이트는 사용자가 누를 때만).
   const marketTimer = setInterval(() => { market.autoSync().catch((e) => console.error('[ai-office] 마켓 새로고침 실패', e.message)); }, 60000);
   marketTimer.unref?.();
+
+  // 새 버전 감지: 시작 30초 뒤 한 번, 이후 6시간마다. 「자동 설치」를 켠 경우에만 감지 즉시 설치한다(같은 버전은 한 번만 시도).
+  let autoTried = '';
+  const updateTick = async () => {
+    try {
+      const v = await updater.check();
+      if (getConfig().autoUpdate && v.available && v.canApply && v.latest.version !== autoTried) {
+        autoTried = v.latest.version;
+        console.log(`[ai-office] 새 버전 ${v.latest.version} 을 자동으로 설치합니다.`);
+        await updater.apply();
+      }
+    } catch (e) { console.error('[ai-office] 업데이트 확인 실패', e.message); }
+  };
+  if (updateCheck) {
+    setTimeout(updateTick, 30000).unref?.();
+    setInterval(updateTick, 6 * 60 * 60 * 1000).unref?.();
+  }
 
   return new Promise((ok, fail) => {
     server.once('error', fail);
