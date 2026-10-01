@@ -95,6 +95,8 @@ const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 const bot = new Bot(TOKEN)
 let botUsername = ''
 let botId = 0
+// BotFather의 Group Privacy가 켜져 있으면(false) 관리자가 아닌 방에서는 멘션·명령·답장만 받는다.
+let botCanReadAll = true
 
 type PendingEntry = {
   senderId: string
@@ -388,11 +390,19 @@ function enrollGroup(access: Access, chat: ChatLike, by: string, announce: boole
   if (announce) {
     void bot.api.sendMessage(
       id,
-      `✅ 이 방이 연결되었습니다.\n호출: @${botUsername} 멘션 또는 제 메시지에 답장\n` +
-      `업무: ${r.task ?? '(미지정) — "/task 업무내용"으로 지정하세요'}`,
+      `✅ 이 방이 연결되었습니다. 이제 이 방에서 하시는 말씀은 바로 처리합니다.\n` +
+      `업무: ${r.task ?? '(미지정) — "/task 업무내용"으로 지정하세요'}` + privacyHint(r),
     ).catch(e => process.stderr.write(`telegram channel: enroll notice to ${id} failed: ${e}\n`))
   }
   return policy
+}
+
+// 멘션 없이 한 말을 봇이 못 받는 방이면 해결 방법을 알려 준다(관리자로 지정하면 바로 해결).
+function privacyHint(r: Room): string {
+  if (botCanReadAll || r.botStatus === 'administrator' || r.botStatus === 'creator') return ''
+  return '\n\n⚠️ 지금은 텔레그램 설정상 멘션 없이 한 말은 봇에게 전달되지 않습니다.\n' +
+    '해결: 이 방에서 봇을 관리자로 지정하세요(권한은 하나도 안 줘도 됩니다).\n' +
+    `또는 @BotFather → /setprivacy → @${botUsername} → Disable 후 봇을 방에서 내보냈다가 다시 초대하세요.`
 }
 
 const STATUS_KO: Record<string, string> = {
@@ -413,8 +423,7 @@ function renderRooms(): string {
   const head = `📋 봇이 아는 방: ${rooms.length}개` +
     (roomsDb.defaultTask ? `\n기본 업무(새 방 자동 적용): ${roomsDb.defaultTask}` : '')
   if (rooms.length === 0) {
-    return head + '\n\n아직 기록된 방이 없습니다. 봇을 방에 초대하거나, 방에서 본인이 @' + botUsername +
-      ' 를 멘션하면 기록됩니다.'
+    return head + '\n\n아직 기록된 방이 없습니다. 봇을 방에 초대하면 바로 기록·연결됩니다.'
   }
   const blocks = rooms.map((r, i) => {
     const policy = access.groups[r.id]
@@ -428,7 +437,7 @@ function renderRooms(): string {
         ? `   연결: ✅ 허용됨 (${policy.requireMention ?? true ? '멘션해야 응답' : '모든 메시지 응답'}, ` +
           `발언자 ${(policy.allowFrom ?? []).length ? `${policy.allowFrom.length}명 제한` : '제한 없음'})`
         : present
-          ? `   연결: ⏳ 미승인 — 본인이 방에서 @${botUsername} 를 멘션하거나 "/task 업무내용"을 보내면 자동 연결됩니다`
+          ? `   연결: ⏳ 미승인 — 본인이 방에서 아무 말이나 하거나 "/task 업무내용"을 보내면 자동 연결됩니다`
           : `   연결: ❌ 미승인`,
     ]
     if (r.invitedBy) lines.push(`   초대: ${r.invitedBy.name} · ${fmtTime(r.invitedAt)}`)
@@ -1062,6 +1071,14 @@ bot.on('my_chat_member', async ctx => {
     notifyOwners(`ℹ️ 방에 초대되었지만 정적 모드라 자동 연결할 수 없습니다: ${r.title} (${r.id})`)
     return
   }
+  if (access.allowFrom.length === 0) {
+    // 아직 페어링한 계정이 없어 승인을 물을 사람도 없다. 방에 다음 할 일을 알려 준다.
+    void bot.api.sendMessage(r.id,
+      `👋 초대 감사합니다. 아직 이 봇과 연결된 계정이 없습니다.\n` +
+      `봇(@${botUsername})에게 개인 메시지를 보내 받은 코드를 대시보드 「연결 · 계정」에 넣어 연결한 뒤, 이 방에서 아무 말이나 하시면 바로 연결됩니다.`,
+    ).catch(e => process.stderr.write(`telegram channel: unpaired notice to ${r.id} failed: ${e}\n`))
+    return
+  }
   if (access.allowFrom.includes(String(by.id))) {
     enrollGroup(access, chat as ChatLike, String(by.id), true)
     notifyOwners(`✅ 방에 연결되었습니다: ${r.title}\n업무: ${r.task ?? '(미지정) — 방에서 "/task 업무내용"으로 지정'}`)
@@ -1521,6 +1538,8 @@ void (async () => {
           attempt = 0
           botUsername = info.username
           botId = info.id
+          botCanReadAll = info.can_read_all_group_messages !== false
+          if (!botCanReadAll) process.stderr.write('telegram channel: group privacy mode is ON — non-admin groups only deliver mentions\n')
           process.stderr.write(`telegram channel: polling as @${info.username}\n`)
           void bot.api.setMyCommands(
             [

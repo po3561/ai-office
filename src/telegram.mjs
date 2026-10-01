@@ -25,7 +25,7 @@ async function getMe(token) {
     const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: ctl.signal });
     const j = await r.json().catch(() => ({}));
     if (!j.ok) return { ok: false, error: j.description || `오류 ${r.status}` };
-    return { ok: true, username: j.result.username, name: j.result.first_name, id: j.result.id };
+    return { ok: true, username: j.result.username, name: j.result.first_name, id: j.result.id, canReadAll: j.result.can_read_all_group_messages !== false };
   } catch (e) {
     return { ok: false, error: e.name === 'AbortError' ? '텔레그램에 연결하지 못했습니다(시간 초과).' : '텔레그램에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.' };
   } finally { clearTimeout(timer); }
@@ -38,7 +38,7 @@ export async function botInfo(stateDir) {
   const hit = botCache.get(token);
   if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.value;
   const me = await getMe(token);
-  const value = me.ok ? { username: me.username, name: me.name } : { error: me.error };
+  const value = me.ok ? { username: me.username, name: me.name, canReadAll: me.canReadAll } : { error: me.error };
   botCache.set(token, { at: Date.now(), value });
   return value;
 }
