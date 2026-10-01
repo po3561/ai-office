@@ -321,12 +321,28 @@ export function repairMarketRule(folder) {
   return true;
 }
 
+// 예전 견본의 차단 규칙. `.telegram/` 전체 읽기를 막으면 받은 사진·파일(.telegram/inbox)을 봇이 열 수 없어서, 민감 파일만 막는 규칙으로 바꿨다.
+const RETIRED_DENY = ['Read(./.telegram/**)'];
+const OLD_INBOX_RULE = '- `.telegram/`(봇 토큰)와 `.ai-office/` 폴더는 읽거나 수정하지 않는다.';
+
+// 지침의 옛 줄(".telegram/ 은 읽지 않는다")을 새 줄로 바꾼다. 그 줄이 그대로일 때만 바꾸고, 사용자가 고친 다른 내용은 건드리지 않는다.
+export function repairInboxRule(folder) {
+  const f = join(folder, 'CLAUDE.md');
+  if (!isFile(f)) return false;
+  const rule = /^- `\.telegram\/`의 봇 토큰\(`\.env`\)·허용 목록.*$/m.exec(readText(join(TEMPLATES, 'office', 'CLAUDE.md')));
+  const text = readText(f);
+  if (!rule || !text.includes(OLD_INBOX_RULE)) return false;
+  writeAtomic(f, text.replace(OLD_INBOX_RULE, () => rule[0]));
+  return true;
+}
+
 export function repairOffices() {
   const fixed = [];
   for (const o of listOffices()) {
     if (!o.managed || o.kind !== 'claude-office' || !isDir(o.folder)) continue;
     try { if (repairDocPaths(o.folder)) fixed.push(o.id); } catch { /* 지침 경로 보정이 실패해도 설정 점검은 계속한다 */ }
     try { if (repairMarketRule(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
+    try { if (repairInboxRule(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
     try {
       const file = join(o.folder, '.claude', 'settings.json');
       const cur = readJson(file, null);
@@ -335,14 +351,14 @@ export function repairOffices() {
       const tpl = JSON.parse(renderTemplate(readText(join(TEMPLATES, 'office', '.claude', 'settings.json')), vars));
       const wantHooks = JSON.stringify(tpl.hooks);
       // 새 버전이 더한 차단 규칙(deny)도 이미 있는 사무실에 채워 넣는다.
-      const denyOk = tpl.permissions.deny.every((d) => (cur?.permissions?.deny || []).includes(d));
+      const denyOk = tpl.permissions.deny.every((d) => (cur?.permissions?.deny || []).includes(d)) && !(cur?.permissions?.deny || []).some((d) => RETIRED_DENY.includes(d));
       if (cur && denyOk && JSON.stringify(cur.hooks) === wantHooks && (cur.permissions?.allow || []).some((a) => a.includes(vars.CLI))) continue;
       const next = cur || tpl;
       next.hooks = tpl.hooks;
       next.permissions ||= { allow: [], deny: [] };
       const keep = (next.permissions.allow || []).filter((a) => !/ai-office\.mjs/.test(a));
       next.permissions.allow = [...keep, ...tpl.permissions.allow.filter((a) => /ai-office\.mjs/.test(a))];
-      next.permissions.deny = [...new Set([...(next.permissions.deny || []), ...tpl.permissions.deny])];
+      next.permissions.deny = [...new Set([...(next.permissions.deny || []).filter((d) => !RETIRED_DENY.includes(d)), ...tpl.permissions.deny])];
       writeJson(file, next);
       saveOffice(o.folder, { ...office, appHome: fwd(resolve(CLI, '..', '..')) });
       fixed.push(o.id);
