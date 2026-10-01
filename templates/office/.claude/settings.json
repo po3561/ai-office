@@ -8,6 +8,7 @@
       "mcp__plugin_telegram_telegram__react",
       "mcp__plugin_telegram_telegram__edit_message",
       "mcp__plugin_telegram_telegram__download_attachment",
+      "Read(./.telegram/inbox/**)",
       "WebSearch",
       "WebFetch",
       "Bash(node \"{{CLI}}\" team *)",
@@ -16,7 +17,8 @@
       "PowerShell(node \"{{CLI}}\" office restart *)"
     ],
     "deny": [
-      "Read(./.telegram/**)",
+      "Read(./.telegram/.env)",
+      "Read(./.telegram/access.json)",
       "Edit(./.telegram/**)",
       "Edit(./.claude/settings.json)",
       "Edit(./.claude/settings.local.json)",
