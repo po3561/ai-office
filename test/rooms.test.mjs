@@ -71,7 +71,7 @@ test('connectRoom: 허용된 계정을 방 발언자로, 기본 업무 적용, �
   const d = setup({ allowFrom: ['111', '222'], rooms: { '-1002': room('-1002') }, defaultTask: '기본' });
   tg.connectRoom(d, '-1002');
   const a = readAccess(d);
-  assert.deepEqual(a.groups['-1002'], { requireMention: true, allowFrom: ['111', '222'] });
+  assert.deepEqual(a.groups['-1002'], { requireMention: false, allowFrom: ['111', '222'] });
   assert.equal(a.ackReaction, '👀');
   assert.equal(readRooms(d).rooms['-1002'].task, '기본');
   tg.connectRoom(d, '-1002');   // 두 번 눌러도 안전

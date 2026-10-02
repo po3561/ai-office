@@ -599,15 +599,16 @@ function roomsCard(o, d) {
     return `<div class="room" style="padding:14px 0;border-top:1px solid var(--line)">
       <div class="row"><div><b>${esc(r.title)}</b> ${pills}<div class="small muted"><span class="mono">${esc(r.id)}</span>${r.invitedBy ? ` · 초대: ${esc(r.invitedBy.name)}${r.invitedAt ? ' ' + dshort(r.invitedAt) : ''}` : ''}${r.connected ? ` · ${r.requireMention ? '멘션해야 응답' : '모든 메시지 응답'}, 허용된 계정 ${r.allowFromCount ? r.allowFromCount + '명만' : '제한 없음'}` : ''}</div>
         ${r.checkError ? `<div class="small" style="color:var(--warn)">확인 메시지: ${esc(r.checkError)}</div>` : ''}</div><span class="spacer"></span>${actions}</div>
-      ${!r.connected && present ? '<p class="small muted" style="margin:6px 0 0">연결하면 봇이 이 방에서 허용된 계정의 멘션에 응답합니다. 방에서 본인이 봇을 @멘션해도 자동으로 연결됩니다.</p>' : ''}
+      ${!r.connected && present ? '<p class="small muted" style="margin:6px 0 0">연결하면 봇이 이 방에서 허용된 계정의 말에 멘션 없이 바로 응답합니다. 방에서 본인이 아무 말이나 해도 자동으로 연결됩니다.</p>' : ''}
       <div class="small muted" style="margin:10px 0 6px">이 방의 업무</div>${roomTaskForm(r.id, '', r.task, teams, '예: 학원 문의에 답하고, 기밀 자료는 올리지 않기')}${topics}</div>`;
   }).join('');
   return `<div class="card"><div class="card-head"><div><h2>그룹방 · 주제별 업무</h2><p class="sub">봇이 초대된 방과 주제를 보여 주고, 방마다 맡길 업무를 정합니다. <b>허용된 계정이 봇을 방에 초대하면 자동으로 연결</b>되고, 모르는 사람이 초대하면 텔레그램으로 승인을 묻습니다. 업무는 저장하면 바로 적용됩니다(다시 출근 불필요).</p></div>
     <div class="row"><button class="btn sm" data-act="room-refresh">상태 확인</button></div></div>
     ${!o.running ? '<div class="banner warn"><span class="ic">⏸</span><div class="txt"><b>사무실이 꺼져 있습니다</b><span class="muted">봇이 켜져 있는 동안 초대된 방만 기록됩니다.</span></div></div>' : ''}
+    ${d.telegram && d.telegram.bot && d.telegram.bot.canReadAll === false ? `<div class="banner warn"><span class="ic">⚠️</span><div class="txt"><b>봇이 그룹방에서 멘션 없이 한 말을 못 받는 설정입니다</b><span class="muted">방에서 봇을 관리자로 지정하면(권한은 안 줘도 됨) 그 방은 바로 해결됩니다. 모든 방에 적용하려면 @BotFather → /setprivacy → @${esc(d.telegram.bot.username || '봇')} → Disable 후 봇을 방에서 내보냈다가 다시 초대하세요.</span></div></div>` : ''}
     <form class="stack" data-form="room-default-task" autocomplete="off" style="gap:6px;margin-bottom:6px"><div><b>기본 업무</b><span class="sub">새로 자동 연결되는 방에 처음 붙는 업무입니다. 이미 연결된 방은 바뀌지 않습니다.</span></div>
       <textarea name="task" maxlength="800" style="min-height:48px" placeholder="비워 두면 방마다 따로 정합니다">${esc(rm.defaultTask)}</textarea><div class="row end"><button class="btn sm" type="submit">기본 업무 저장</button></div></form>
-    ${items || '<p class="muted" style="border-top:1px solid var(--line);padding-top:14px">아직 봇이 아는 방이 없습니다. 봇을 그룹방에 초대해 보세요. 이미 들어가 있는 방은 그 방에서 봇을 @멘션하면 기록됩니다.</p>'}</div>`;
+    ${items || '<p class="muted" style="border-top:1px solid var(--line);padding-top:14px">아직 봇이 아는 방이 없습니다. 봇을 그룹방에 초대해 보세요. 이미 들어가 있는 방은 그 방에서 본인이 아무 말이나 하면 기록·연결됩니다.</p>'}</div>`;
 }
 
 // ── 예전 방식의 방 · 주제 / 정기 보고 ──
