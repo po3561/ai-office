@@ -9,6 +9,7 @@ import { readText, readJson, writeJson, writeAtomic, copyTree, isDir, isFile, no
 import { getConfig } from './config.mjs';
 import { addTeam, saveOffice, loadOffice, renderTeamsBlock, syncClaudeMd } from './teams.mjs';
 import { DEFAULT_PRESETS } from './presets.mjs';
+import { repairGrants } from './drives.mjs';
 
 const KINDS = ['claude-office', 'hermes'];
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
@@ -307,10 +308,13 @@ function repairDocPaths(folder) {
 
 // 새 버전의 보안 규칙 한 줄을 이미 있는 사무실의 지침(CLAUDE.md)에도 넣는다.
 // 사용자가 고친 다른 내용은 건드리지 않는다: 옛 규칙 줄만 바꾸고, 없으면 끝에 한 절을 덧붙인다.
-function repairRuleLine(folder, re, title) {
+// 권한 열기 규칙처럼 {{HONORIFIC}}·{{CLI}} 같은 자리표시자가 든 줄은 o(사무실 정보)를 넘겨 채워서 비교한다.
+function repairRuleLine(folder, re, title, o) {
   const f = join(folder, 'CLAUDE.md');
   if (!isFile(f)) return false;
-  const rule = re.exec(readText(join(TEMPLATES, 'office', 'CLAUDE.md')));
+  let tpl = readText(join(TEMPLATES, 'office', 'CLAUDE.md'));
+  if (o) tpl = renderTemplate(tpl, templateVars({ ...o, honorific: loadOffice(folder).honorific || getConfig().honorific }));
+  const rule = re.exec(tpl);
   if (!rule) return false;
   const text = readText(f);
   if (text.includes(rule[0])) return false;
@@ -339,6 +343,10 @@ function allowInboxRead(settings) {
   return true;
 }
 
+// 막힌 작업을 사용자 허용을 받아 푸는 절차(권한 열기)도 같은 방식으로 옛 사무실에 넣는다.
+const PERMIT_RULE_RE = /^- \*\*권한 열기\*\*.*$/m;
+export const repairPermitRule = (o) => repairRuleLine(o.folder, PERMIT_RULE_RE, '권한 열기 규칙', o);
+
 export function repairOffices() {
   const fixed = [];
   for (const o of listOffices()) {
@@ -355,6 +363,8 @@ export function repairOffices() {
     try { if (repairDocPaths(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 지침 경로 보정이 실패해도 설정 점검은 계속한다 */ }
     try { if (repairMarketRule(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
     try { if (repairInboxRule(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
+    try { if (repairPermitRule(o) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
+    try { if (repairGrants(o.folder) && !fixed.includes(o.id)) fixed.push(o.id); } catch { /* 드라이브 규칙 보강이 실패해도 설정 점검은 계속한다 */ }
     try {
       const file = join(o.folder, '.claude', 'settings.json');
       const cur = readJson(file, null);
@@ -364,7 +374,9 @@ export function repairOffices() {
       const wantHooks = JSON.stringify(tpl.hooks);
       // 새 버전이 더한 차단 규칙(deny)도 이미 있는 사무실에 채워 넣는다.
       const denyOk = tpl.permissions.deny.every((d) => (cur?.permissions?.deny || []).includes(d));
-      if (cur && denyOk && JSON.stringify(cur.hooks) === wantHooks && (cur.permissions?.allow || []).some((a) => a.includes(vars.CLI))) continue;
+      // 새 버전이 더한 허용 명령(예: permit)도 빠짐없이 들어 있어야 "이미 맞음"이다.
+      const cliAllowOk = tpl.permissions.allow.filter((a) => a.includes(vars.CLI)).every((a) => (cur?.permissions?.allow || []).includes(a));
+      if (cur && denyOk && JSON.stringify(cur.hooks) === wantHooks && cliAllowOk) continue;
       const next = cur || tpl;
       next.hooks = tpl.hooks;
       next.permissions ||= { allow: [], deny: [] };

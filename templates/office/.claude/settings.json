@@ -14,7 +14,9 @@
       "Bash(node \"{{CLI}}\" team *)",
       "PowerShell(node \"{{CLI}}\" team *)",
       "Bash(node \"{{CLI}}\" office restart *)",
-      "PowerShell(node \"{{CLI}}\" office restart *)"
+      "PowerShell(node \"{{CLI}}\" office restart *)",
+      "Bash(node \"{{CLI}}\" permit *)",
+      "PowerShell(node \"{{CLI}}\" permit *)"
     ],
     "deny": [
       "Read(./.telegram/.env*)",
@@ -24,6 +26,8 @@
       "Edit(./.claude/settings.json)",
       "Edit(./.claude/settings.local.json)",
       "Edit(./.ai-office/**)",
+      "Bash(node \"{{CLI}}\" drive *)",
+      "PowerShell(node \"{{CLI}}\" drive *)",
       "Bash(*x-ai-office*)",
       "PowerShell(*x-ai-office*)",
       "Bash(*/api/offices*)",
