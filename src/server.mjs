@@ -9,6 +9,7 @@ import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
+import { listGrants as listDriveGrants, setGrant as setDriveGrant, removeGrant as removeDriveGrant } from './drives.mjs';
 import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice, relocateOffice, moveCandidates, autoRelink } from './offices.mjs';
 import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
 import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
@@ -62,7 +63,7 @@ async function detail(o, d) {
   const bot = s.telegram.set ? await tg.botInfo(o.stateDir) : null;
   return {
     ...s, teams, skills, changes: readChanges(o.folder), events: (status.events || []).slice(0, 30), chief: status.chief || { state: 'idle' },
-    honorific: office.honorific, importedTeams: office.imported,
+    honorific: office.honorific, importedTeams: office.imported, drives: listDriveGrants(o.folder),
     telegram: { ...s.telegram, bot, access: tg.accessInfo(o.stateDir), rooms: tg.roomsInfo(o.stateDir), legacy: lr.isLegacy(o.stateDir) ? lr.legacyView(o.stateDir, teamList(teams)) : null },
   };
 }
@@ -154,6 +155,18 @@ route('POST', '/api/offices/:id/relocate', async ({ p, body }) => {
   need(o.launch || !runtime(o).running, '근무 중인 사무실은 위치를 바꿀 수 없습니다. 먼저 퇴근시킨 뒤 바꿔 주세요.', 409);
   const r = relocateOffice(p.id, body.folder);
   return { ...r, running: runtime(r).running };
+});
+// 드라이브 접근: 사용자가 대시보드에서만 켠다(봇은 이 주소를 부를 수 없다 — 견본이 막음). 삭제 포함은 확인 표시가 있어야 한다.
+route('POST', '/api/offices/:id/drives', async ({ p, body }) => {
+  const o = mutable(p.id);
+  need(body.level !== 'full' || body.confirmDelete === true, '삭제까지 맡기려면 확인 표시가 필요합니다.');
+  const grant = setDriveGrant(o.folder, { path: body.path, level: body.level || 'readwrite' });
+  return { grant, needsRestart: runtime(o).running };
+});
+route('DELETE', '/api/offices/:id/drives', async ({ p, body }) => {
+  const o = mutable(p.id);
+  const r = removeDriveGrant(o.folder, body.path);
+  return { ...r, needsRestart: runtime(o).running };
 });
 route('POST', '/api/open-data', async () => { openInExplorer(DATA_HOME); return { ok: true }; });
 
