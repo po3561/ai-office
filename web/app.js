@@ -153,7 +153,7 @@ function renderBanners(o) {
   }
   if (o && !o.readonly && !o.exists && !(o.moveCandidates || []).length) b.push(`<div class="banner bad"><span class="ic">📂</span><div class="txt"><b>사무실 폴더를 찾을 수 없습니다</b><span class="muted">${esc(o.folder)} — 폴더를 옮기셨다면 새 위치를 알려 주세요.</span></div><button class="btn sm primary" data-act="office-relocate">위치 바꾸기</button></div>`);
   if (o && !o.readonly && !o.exists) for (const c of (o.moveCandidates || []).slice(0, 2)) b.push(`<div class="banner info"><span class="ic">🔀</span><div class="txt"><b>같은 이름의 사무실이 다른 위치에서 발견됐습니다</b><span class="muted">${esc(c)} — 드라이브를 바꾸셨다면 이 위치로 바꿔 주세요. 폴더 안 파일은 건드리지 않습니다.</span></div><button class="btn sm primary" data-act="office-relocate-to" data-folder="${esc(c)}">이 위치로 바꾸기</button></div>`);
-  if (o && S.restartNeeded[o.id] && o.running) b.push(`<div class="banner info"><span class="ic">🔄</span><div class="txt"><b>부서·스킬 변경을 적용하려면 다시 출근해야 합니다</b><span class="muted">잠시 꺼졌다가 자동으로 다시 켜집니다. 진행 중인 업무가 없을 때 눌러 주세요.</span></div><button class="btn sm primary" data-act="office-restart">지금 다시 출근</button></div>`);
+  if (o && S.restartNeeded[o.id] && o.running) b.push(`<div class="banner info"><span class="ic">🔄</span><div class="txt"><b>부서·스킬·드라이브 변경을 적용하려면 다시 출근해야 합니다</b><span class="muted">잠시 꺼졌다가 자동으로 다시 켜집니다. 진행 중인 업무가 없을 때 눌러 주세요.</span></div><button class="btn sm primary" data-act="office-restart">지금 다시 출근</button></div>`);
   $('#banners').innerHTML = b.join('');
 }
 
@@ -668,6 +668,26 @@ function vUpdateCard(u, cfg) {
     ${u.canApply ? `<div class="setting" style="margin-top:10px"><div><b>새 버전이 나오면 바로 자동 설치</b><span class="sub">꺼 두면 알림만 뜨고 직접 눌러야 설치됩니다(기본). 켜면 확인되는 즉시 설치하고 대시보드를 다시 시작합니다. 사무실은 계속 근무하고, 이전 버전은 백업됩니다.</span></div><label class="switch"><input type="checkbox" data-change="autoupdate"${cfg.autoUpdate ? ' checked' : ''}><i></i></label></div>` : ''}</div>`;
 }
 
+// 드라이브 접근: D 드라이브 같은 위치를 사무실이 읽고·쓰고·(원하면) 지울 수 있게 사용자가 직접 맡긴다.
+const DRIVE_LEVEL = { readwrite: '읽기·쓰기·만들기·수정', full: '읽기·쓰기·만들기·수정·<b class="bad-text">삭제</b>' };
+function vDrives() {
+  const list = (S.detail && S.detail.drives) || [];
+  return `<div class="setting" style="align-items:flex-start"><div><b>드라이브 접근 (파일 서버처럼 쓰기)</b><span class="sub">D 드라이브처럼 사무실이 파일을 읽고, 만들고, 고치고, 필요하면 지울 수 있게 맡깁니다. 여기서 직접 켠 위치만 열리며, 봇이 스스로 열 수는 없습니다. 바꾼 뒤에는 다시 출근해야 새 지침이 적용됩니다.</span>
+    ${list.length ? `<div class="stack" style="margin-top:8px">${list.map((g) => `<div class="row" style="justify-content:space-between;gap:10px"><span><span class="code">${esc(g.path)}</span> · ${DRIVE_LEVEL[g.level] || ''}</span><button class="btn sm" data-act="drive-revoke" data-path="${esc(g.path)}">해제</button></div>`).join('')}</div>` : ''}</div>
+    <button class="btn sm" data-act="drive-add">위치 추가</button></div>`;
+}
+
+function dlgDriveAdd() {
+  openDlg(`<form data-form="drive-add"><div class="dlg-head"><h2>드라이브 접근 맡기기</h2><p>이 위치 안의 파일을 사무실(봇)이 텔레그램 지시에 따라 다룰 수 있게 합니다. 위치 밖과 봇의 토큰·설정 폴더는 계속 막혀 있습니다.</p></div>
+    <div class="dlg-body"><div class="stack">
+      <div class="field"><label>위치</label><input type="text" name="path" required placeholder="D:\\" value="D:\\" autofocus><span class="hint">드라이브 전체(D:\\) 또는 폴더(D:\\공유자료)를 적습니다.</span></div>
+      <div class="field"><label>맡길 범위</label><select name="level"><option value="readwrite">읽기·쓰기·만들기·수정·옮기기 (삭제 제외)</option><option value="full">위 + 삭제까지</option></select></div>
+      <label class="row" style="font-weight:500;color:var(--text);align-items:flex-start;gap:8px"><input type="checkbox" name="confirmDelete"><span>삭제까지 맡기면 <b>휴지통 없이 지워질 수 있고 되돌릴 수 없다</b>는 것을 알고 있습니다. (삭제를 고른 경우에만 체크)</span></label>
+      <p class="small muted">삭제 명령은 "명령에 이 경로가 들어 있을 때"만 허용하는 방식이라 경계가 완벽하지 않습니다. 정말 필요한 폴더만, 중요한 자료는 백업한 뒤 맡기세요. 폴더 통째·대량 삭제는 봇이 먼저 목록을 보고하고 허용을 받도록 지침에 들어갑니다.</p>
+    </div></div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit">맡기기</button></div></form>`);
+}
+
 function vSettings() {
   const cfg = S.ov.config, o = cur(), a = S.ov.app;
   let html = `<div class="card"><h2>일반</h2><p class="sub" style="margin-bottom:6px">새 사무실을 만들 때 쓰는 기본값과 화면 설정입니다.</p>
@@ -685,6 +705,7 @@ function vSettings() {
       <div class="setting"><div><b>항상 켜두기</b><span class="sub">이 프로그램이 켜져 있는 동안, 사무실이 꺼져 있으면 다시 출근시킵니다. 직접 퇴근시킨 경우에는 다시 켜지 않습니다.</span></div><label class="switch"><input type="checkbox" data-change="autostart"${o.autoStart ? ' checked' : ''}><i></i></label></div>
       <div class="setting"><div><b>사무실 폴더</b><span class="sub path">${esc(o.folder)}</span></div><div class="row"><button class="btn sm" data-act="office-relocate">위치 바꾸기</button><button class="btn sm" data-act="office-open">폴더 열기</button></div></div>
       ${!o.managed && String(o.folder).slice(0, 2).toLowerCase() === String(a.officesDir).slice(0, 2).toLowerCase() && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
+      ${vDrives()}
       <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>
       ${o.closable ? `<div class="setting"><div><b>사무실 폐쇄 (삭제)</b><span class="sub">사무실을 끄고 목록에서 없앱니다. 폴더(봇 토큰·업무 기록 포함)는 완전히 지우지 않고 <span class="code">${esc(a.dataHome)}\\closed</span> 로 옮겨 둡니다.</span></div><button class="btn sm danger" data-act="office-close">폐쇄하기</button></div>` : ''}`;
     }
@@ -843,6 +864,8 @@ const ACT = {
   'update-check': (b) => doing(b, async () => { const u = await api('POST', '/api/update/check'); await refresh(); toast(u.error || (u.available ? `새 버전 v${u.latest.version} 이(가) 있습니다.` : '지금이 최신 버전입니다.'), Boolean(u.error)); }),
   'update-apply': () => dlgUpdate(),
   'office-relocate': () => dlgRelocate(),
+  'drive-add': () => dlgDriveAdd(),
+  'drive-revoke': (b) => dlgConfirm({ title: '드라이브 접근을 거둘까요?', body: `<code>${esc(b.dataset.path)}</code> 에 맡긴 권한을 거둡니다. 이미 한 작업은 그대로입니다.`, ok: '해제', danger: true, onOk: async () => { try { const r = await api('DELETE', `/api/offices/${oid()}/drives`, { path: b.dataset.path }); if (r.needsRestart) S.restartNeeded[S.officeId] = true; toast('거뒀습니다.'); } catch (e) { toast(e.message, true); } refresh(); } }),
   'office-relocate-to': (b) => doing(b, async () => { const r = await api('POST', `/api/offices/${oid()}/relocate`, { folder: b.dataset.folder }); closeDlg(); toast(`사무실 위치를 바꿨습니다: ${r.folder}`); await refresh(); }),
   'office-migrate': () => dlgConfirm({ title: '고정 위치로 옮길까요?', body: '사무실 폴더를 고정 위치로 <b>복사</b>하고, 이후 새 위치를 사용합니다. 원본은 그대로 남습니다.', ok: '옮기기', onOk: async () => { try { const r = await api('POST', `/api/offices/${oid()}/migrate`); toast(`옮겼습니다: ${r.to}`); } catch (e) { toast(e.message, true); } refresh(); } }),
   'team-add': () => dlgTeamAdd('preset'),
@@ -934,6 +957,10 @@ document.addEventListener('submit', async (e) => {
     } else if (kind === 'office-close') {
       const r = await api('POST', `/api/offices/${oid()}/close`, { confirmName: fd.get('confirm') });
       S.officeId = ''; localStorage.removeItem('office'); closeDlg(); toast(`「${r.name}」 사무실을 폐쇄했습니다.`);
+    } else if (kind === 'drive-add') {
+      const r = await api('POST', `/api/offices/${oid()}/drives`, { path: fd.get('path'), level: fd.get('level'), confirmDelete: fd.get('confirmDelete') === 'on' });
+      if (r.needsRestart) S.restartNeeded[S.officeId] = true;
+      closeDlg(); toast(`맡겼습니다: ${r.grant.path}`);
     } else if (kind === 'relocate-office') {
       const r = await api('POST', `/api/offices/${oid()}/relocate`, { folder: fd.get('folder') });
       closeDlg(); toast(`사무실 위치를 바꿨습니다: ${r.folder}`);
