@@ -1,1 +1,1 @@
-{"name":"lapis-office-dashboard","version":"0.2.0","private":true,"type":"module","scripts":{"start":"node --no-warnings src/server.mjs","test":"node --no-warnings --test tests/*.test.mjs","build:office-ui":"node scripts/build-office-ui.mjs"},"engines":{"node":">=24"}}
+{"name":"lapis-office-dashboard","version":"0.3.0","private":true,"type":"module","scripts":{"start":"node --no-warnings src/server.mjs","test":"node --no-warnings --test tests/*.test.mjs","build:office-ui":"node scripts/build-office-ui.mjs"},"engines":{"node":">=24"}}
