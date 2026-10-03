@@ -10,6 +10,7 @@ import {createVault} from './vault.mjs';
 import {createCloud} from './lapis-cloud.mjs';
 import {createCalendarStore,createGoogleCalendar} from './calendar.mjs';
 import {createExtraRoutes} from './extra-routes.mjs';
+import {createTaskStore} from './tasks.mjs';
 import {rentalUrl as configuredRentalUrl} from './config.mjs';
 
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
@@ -71,6 +72,7 @@ export function createDashboardServer(options={}){
   const dataDir=options.dataDir||join(ROOT,'.runtime/data');
   const vault=options.vault||createVault(join(dataDir,'vault.bin'));
   const calendarStore=options.calendarStore||createCalendarStore(join(dataDir,'calendar.json'));
+  const taskStore=options.taskStore||createTaskStore(join(dataDir,'tasks.json'));
   const cloud=options.cloud||createCloud({vault,baseUrl:options.cloudBase||undefined,fetchImpl:options.cloudFetch});
   const gcal=options.googleCalendar||createGoogleCalendar({vault,store:calendarStore,fetchImpl:options.googleFetch});
   // 사무실에 맡긴 드라이브 위치(드라이브 접근)를 Office 에서 읽어 저장소 화면의 허용 범위로 쓴다.
@@ -81,7 +83,7 @@ export function createDashboardServer(options={}){
     const detail=await fetchJson(officeUrl+'/api/offices/'+encodeURIComponent(office.id));
     return (detail.drives||[]).map(g=>g.path);
   });
-  const extra=createExtraRoutes({cloud,calendar:calendarStore,gcal,getGrants,listLocal:options.listLocal,reveal:options.reveal});
+  const extra=createExtraRoutes({cloud,calendar:calendarStore,gcal,tasks:taskStore,getGrants,listLocal:options.listLocal,reveal:options.reveal});
   const sessions=new RentalSessions();
   const getTelegram=options.telegramSnapshot||(()=>import('./telegram.mjs').then(m=>m.telegramSnapshot()));
   let overviewCache=null,overviewPending=null;
@@ -112,7 +114,7 @@ export function createDashboardServer(options={}){
       }
       if(url.pathname==='/api/telegram'&&req.method==='GET')return json(res,200,await getTelegram());
       if(url.pathname==='/api/drives'&&req.method==='GET')return json(res,200,{drives:await getDrives()});
-      if(url.pathname==='/api/health'&&req.method==='GET')return json(res,200,{app:'lapis-office-dashboard',version:'0.2.0',receiversOwned:0});
+      if(url.pathname==='/api/health'&&req.method==='GET')return json(res,200,{app:'lapis-office-dashboard',version:'0.3.0',receiversOwned:0});
       if(url.pathname==='/api/hermes/health'&&req.method==='GET')return respond(res,await upstream(hermesUrl+'/health',{timeout:5000,limit:10000}));
       if(url.pathname==='/api/hermes/chat'&&req.method==='POST'){
         const body=await readJson(req);

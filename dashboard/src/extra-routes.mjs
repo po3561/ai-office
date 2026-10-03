@@ -3,16 +3,24 @@
 import {CloudError} from './lapis-cloud.mjs';
 import {CalendarError} from './calendar.mjs';
 import {StorageError,listLocal as listLocalDefault,reveal as revealDefault} from './storage.mjs';
+import {TaskError} from './tasks.mjs';
 
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const page=(title,body)=>`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><body style="font-family:'Malgun Gothic',system-ui,sans-serif;max-width:460px;margin:15vh auto;padding:0 20px;line-height:1.7"><h2>${esc(title)}</h2><p>${esc(body)}</p><p><a href="/#calendar">대시보드로 돌아가기</a></p><script>setTimeout(()=>{try{window.close()}catch(e){}},2500)</script></body></html>`;
 
-export function createExtraRoutes({cloud,calendar,gcal,getGrants,listLocal=listLocalDefault,reveal=revealDefault}){
+export function createExtraRoutes({cloud,calendar,gcal,tasks,getGrants,listLocal=listLocalDefault,reveal=revealDefault}){
   return async function handle(req,res,url,{json,readJson,port}){
     const path=url.pathname,method=req.method;
-    const known=path.startsWith('/api/cloud/')||path.startsWith('/api/calendar/')||path.startsWith('/api/storage/')||path==='/oauth/google/callback';
+    const known=path.startsWith('/api/cloud/')||path.startsWith('/api/calendar/')||path.startsWith('/api/storage/')||path==='/api/tasks'||path.startsWith('/api/tasks/')||path==='/oauth/google/callback';
     if(!known)return false;
     try{
+      // ── 할 일 ──
+      if(path==='/api/tasks'&&method==='GET')return json(res,200,{tasks:await tasks.list()}),true;
+      if(path==='/api/tasks'&&method==='POST')return json(res,201,{task:await tasks.create(await readJson(req))}),true;
+      if(path==='/api/tasks/clear-done'&&method==='POST')return json(res,200,await tasks.clearDone()),true;
+      const taskMatch=path.match(/^\/api\/tasks\/([0-9a-f-]{36})$/i);
+      if(taskMatch&&method==='PATCH')return json(res,200,{task:await tasks.update(taskMatch[1],await readJson(req))}),true;
+      if(taskMatch&&method==='DELETE')return json(res,200,await tasks.remove(taskMatch[1])),true;
       // ── 라피스 클라우드 ──
       if(path.startsWith('/api/cloud/')){
         const rest=path.slice('/api/cloud'.length);
@@ -56,7 +64,7 @@ export function createExtraRoutes({cloud,calendar,gcal,getGrants,listLocal=listL
       if(path==='/api/storage/local/list'&&method==='GET')return json(res,200,await listLocal(url.searchParams.get('path')||'',await getGrants())),true;
       if(path==='/api/storage/local/reveal'&&method==='POST'){const b=await readJson(req);return json(res,200,await reveal(String(b.path||''),await getGrants())),true;}
     }catch(error){
-      if(error instanceof CloudError||error instanceof CalendarError||error instanceof StorageError){json(res,error.status||500,{error:error.message});return true;}
+      if(error instanceof CloudError||error instanceof CalendarError||error instanceof StorageError||error instanceof TaskError){json(res,error.status||500,{error:error.message});return true;}
       throw error;
     }
     json(res,405,{error:'허용되지 않는 요청입니다.'});return true;
