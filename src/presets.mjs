@@ -131,6 +131,21 @@ export const PRESETS = [
     ].join('\n'),
   },
   {
+    key: 'codex', name: 'Codex 협업팀', emoji: '🤖', group: '연동',
+    role: 'OpenAI Codex 에 코딩·리뷰·디버깅을 맡기고 결과를 받아 오는 연결 부서',
+    description: 'Codex(OpenAI)에게 코드 작성·리뷰·디버깅·분석을 맡기거나, Claude 와 다른 시각의 교차 검토(세컨드 오피니언)가 필요할 때 맡긴다.',
+    instructions: [
+      '- 직접 코딩하지 않고 Codex CLI 로 일을 넘겨 결과를 받아 정리한다. Codex 는 이 PC 에 이미 로그인돼 있다.',
+      '- 실행 파일: 먼저 `codex` 를 시도하고, 없으면 `%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\*\\codex.exe` 중 가장 최근 폴더의 것을 쓴다.',
+      '- 읽기·분석·리뷰: `codex exec --sandbox read-only -C "<작업 폴더>" -o "<결과 파일>.md" "<지시문>"`',
+      '- 파일 수정이 필요한 작업: `--sandbox workspace-write` 를 쓰고, 작업 폴더는 사무실 폴더 안(`결과물/…` 또는 `개발/…`)으로만 지정한다.',
+      '- `--dangerously-bypass-approvals-and-sandbox`, `--sandbox danger-full-access` 는 쓰지 않는다.',
+      '- 지시문에는 목적·대상 파일(절대경로)·완료 기준·건드리면 안 되는 것(.system, .telegram, 보관함)을 적는다. Codex 는 텔레그램 대화를 모른다.',
+      '- Codex 의 스킬은 `~/.codex/skills`, 지침은 AGENTS.md 에서 읽는다. 사무실 지침(CLAUDE.md)을 따르게 하려면 지시문에 "CLAUDE.md 를 먼저 읽어라"라고 적는다.',
+      '- 받은 결과는 그대로 믿지 말고 핵심만 요약하며, Codex 가 바꾼 파일 목록(경로)을 반드시 함께 보고한다.',
+    ].join('\n'),
+  },
+  {
     key: 'translator', name: '번역·통역팀', emoji: '🌐', group: '창작',
     role: '번역, 감수, 다국어 안내문',
     description: '문서 번역, 번역 감수, 다국어 안내문 작성이 필요할 때 맡긴다.',
