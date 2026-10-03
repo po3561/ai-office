@@ -1,0 +1,8 @@
+{
+  "rentalUrl": "https://your-rental-worker.example.workers.dev",
+  "cloudBase": "https://your-lapis-worker.example.workers.dev/api/v1",
+  "botUsernames": {
+    "kao": "@your_office_bot",
+    "lapis": "@your_lapis_bot"
+  }
+}
