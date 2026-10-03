@@ -1,0 +1,3 @@
+/* 물품 대여(창고 관리) 화면을 통합 화면의 두 테마에 맞춘다. 통합 화면이 <html data-theme> 를 넣어 준다. 원본 파일은 바꾸지 않는다. */
+:root,:root[data-theme="light"]{--bg:#f1f8fe;--card:#ffffff;--tx:#13293d;--mut:#587388;--line:#dbe9f4;--pri:#1b8ad0;--pri-tx:#ffffff;--ok:#15803d;--warn:#a9570a;--err:#b42323;--chip:#e3f2fc;--accent:#1b8ad0;--accent-soft:#e3f2fc;--accent-ink:#126a9f}
+:root[data-theme="dark"]{--bg:#000000;--card:#0d0d0e;--tx:#ececee;--mut:#a1a1a8;--line:#29292b;--pri:#e3e3e6;--pri-tx:#0a0a0a;--ok:#6ee09a;--warn:#f0be5c;--err:#ff8585;--chip:#1b1b1d;--accent:#e3e3e6;--accent-soft:#1b1b1d;--accent-ink:#f4f4f5;color-scheme:dark}

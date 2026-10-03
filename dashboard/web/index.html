@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>LAPIS · 나의 업무 공간</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231b8ad0'/%3E%3Cpath d='M16 6l8 10-8 10-8-10z' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>try{var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t)}catch(e){document.documentElement.setAttribute('data-theme','light')}</script>
+<script>try{var p=JSON.parse(localStorage.getItem('lapis.prefs.v1')||'{}'),r=document.documentElement;r.setAttribute('data-accent',p.accent||'default');r.setAttribute('data-density',p.density||'normal');r.setAttribute('data-font',p.font||'normal')}catch(e){}</script>
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/office.css">
+<link rel="stylesheet" href="/lapis.css">
+<link rel="stylesheet" href="/pages.css">
+<link rel="stylesheet" href="/prefs.css">
+<script type="module" src="/office.js"></script>
+<script type="module" src="/lapis.js"></script>
+</head>
+<body>
+<a href="#main" class="skip-link">본문으로 이동</a>
+<div class="app">
+  <aside class="side" id="side">
+    <a class="brand" href="#home" aria-label="라피스 홈"><span class="brand-mark" aria-hidden="true">◈</span><span><b>LAPIS</b><small>나의 업무 공간</small></span></a>
+    <div class="switcher">
+      <label for="officeSel">사무실</label>
+      <div class="switcher-row">
+        <select id="officeSel" aria-label="사무실 선택"></select>
+        <button class="icon-btn" id="newOffice" title="사무실 추가" aria-label="사무실 추가">＋</button>
+      </div>
+    </div>
+    <nav id="nav" aria-label="주 메뉴"></nav>
+    <div class="side-foot">
+      <div id="acct"></div>
+      <button class="icon-btn" id="themeBtn" title="화면 색상 바꾸기 (화이트 · 블랙)" aria-label="화면 색상 바꾸기">☀</button>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <button class="icon-btn menu-btn" id="menuBtn" aria-label="메뉴 열기">☰</button>
+      <h1 id="title">오늘</h1>
+      <form id="workspace-search" class="global-search" role="search"><span aria-hidden="true">⌕</span><input id="global-query" aria-label="내 업무와 저장한 자료 검색" type="search" placeholder="내 할 일 · 자료 · 업무 흐름 검색" maxlength="120"><button type="submit">검색</button></form>
+      <div class="top-right"><span class="conn" id="conn"><i class="dot"></i><span>연결 중…</span></span><span class="date" id="today"></span><button id="refresh" class="icon-btn" aria-label="전체 새로고침" title="새로고침">↻</button></div>
+    </header>
+    <div id="banners"></div>
+    <main id="main" class="content" tabindex="-1">
+      <div id="storage-warning" class="banner warn" role="alert" hidden></div>
+
+      <!-- 오늘 -->
+      <section id="view-home" class="view">
+        <div class="hero">
+          <div><p class="eyebrow">오늘의 업무</p><h2>오늘도, 가볍게 시작해요</h2><p class="sub" id="hero-sub">해야 할 일과 사무실, 필요한 도구가 모두 이곳에 있어요.</p></div>
+          <button class="btn primary" data-add-task>＋ 할 일 추가</button>
+        </div>
+        <div id="home-hint"></div>
+        <div id="quick-tools" class="quick-tools"></div>
+        <div class="home-grid">
+          <section class="card task-panel"><div class="card-head"><div><h2>오늘의 할 일 <span id="task-count" class="pill accent">0</span></h2></div><span class="pill">이 브라우저에 저장</span></div>
+            <form id="task-form" class="row nowrap"><label class="sr-only" for="task-title">새 할 일</label><input id="task-title" type="text" maxlength="160" required placeholder="해야 할 일을 적고 추가하세요"><button class="btn primary" type="submit">추가</button></form>
+            <div class="tabs" role="group" aria-label="할 일 보기"><button data-task-filter="open" class="on">할 일</button><button data-task-filter="done">완료</button><button data-task-filter="all">전체</button></div>
+            <div id="task-list"></div></section>
+          <section class="card"><div class="card-head"><div><h2>오늘 일정</h2></div><a href="#calendar" class="small">캘린더 →</a></div><div id="home-events" class="stack"></div></section>
+          <section class="card"><div class="card-head"><div><h2>이어서 할 업무</h2></div><a href="#flows" class="small">전체 보기 →</a></div><div id="home-flows" class="stack"></div></section>
+          <section class="card"><div class="card-head"><div><h2>새로운 소식</h2></div><a href="#inbox" class="small">수신함 →</a></div><div id="recent-messages"><p class="empty-line">수신 기록을 확인하고 있습니다.</p></div></section>
+          <section class="card"><div class="card-head"><div><h2>빠른 메모</h2></div></div>
+            <form id="note-form"><label class="sr-only" for="quick-note">빠른 메모</label><textarea id="quick-note" rows="4" maxlength="4000" placeholder="아이디어, 회의 메모, 다음에 할 일…"></textarea>
+              <div class="row between" style="margin-top:10px"><span id="note-status" class="small muted">이 브라우저에만 저장됩니다.</span><button class="btn" type="submit">메모 저장</button></div></form></section>
+          <section class="card"><div class="card-head"><div><h2>물품 현황</h2><p class="sub">카오 물품관리 · 공개 재고</p></div><a href="#rental" class="small">물품 대여 →</a></div><div id="stock-list"><p class="empty-line">공개 재고 정보를 불러오는 중입니다.</p></div></section>
+          <section class="card"><div class="card-head"><div><h2>자주 찾는 자료</h2></div><a href="#library" class="small">자료 모음 →</a></div><div id="home-resources" class="stack"></div></section>
+        </div>
+        <div id="home-office"></div>
+      </section>
+
+      <!-- 업무 흐름 -->
+      <section id="view-flows" class="view" hidden>
+        <p class="view-intro">무엇부터 할지 막막할 때, 순서대로 따라가세요. 완료 표시는 직접 체크하는 진행 기록이며 외부 작업을 자동으로 실행하지 않습니다.</p>
+        <section id="flow-detail" class="card" hidden></section>
+        <div class="section-title"><h2>진행 중인 업무</h2></div><div id="active-flows" class="grid cols-3"></div>
+        <div class="section-title"><h2>이런 업무부터 시작해 보세요</h2><span class="sub">템플릿을 고르면 나만의 진행 목록이 만들어집니다.</span></div><div id="workflow-templates" class="grid cols-3"></div>
+      </section>
+
+      <!-- 자료 모음 -->
+      <section id="view-library" class="view" hidden>
+        <p class="view-intro">시트, 신청서, 영상 링크를 저장해 다시 찾기 쉽게. 이 브라우저에 링크만 보관하며 계정의 파일 목록을 가져오지는 않습니다.</p>
+        <div class="section-title"><h2>Google · YouTube 바로가기</h2></div><div id="google-services" class="quick-tools wide"></div>
+        <section class="card" style="margin-top:16px"><form id="resource-form" class="resource-form"><div class="field"><label for="resource-title">자료 이름</label><input id="resource-title" type="text" required maxlength="160" placeholder="예: 주간 업무 정리 시트"></div><div class="field"><label for="resource-url">Google 또는 YouTube 링크</label><input id="resource-url" type="text" inputmode="url" required maxlength="2048" placeholder="https://docs.google.com/…"></div><button class="btn primary" type="submit">＋ 자료 저장</button></form><p id="resource-error" class="banner bad" role="alert" hidden style="margin-top:12px"></p></section>
+        <div class="row between wrap" style="margin:18px 0 12px"><div id="resource-filters" class="tabs" style="margin:0" aria-label="자료 종류"></div><label><span class="sr-only">저장한 자료 검색</span><input id="resource-query" type="text" placeholder="저장한 자료 검색" style="width:240px"></label></div>
+        <div id="resource-list" class="grid cols-3"></div>
+      </section>
+
+      <!-- 검색 -->
+      <section id="view-search" class="view" hidden><p id="search-summary" class="view-intro">저장한 할 일, 자료, 업무 흐름을 검색합니다.</p><div id="search-results" class="card"></div></section>
+
+      <!-- 캘린더 -->
+      <section id="view-calendar" class="view" hidden>
+        <div class="cal-toolbar">
+          <div class="row nowrap"><button id="cal-prev" class="icon-btn" aria-label="이전">‹</button><button id="cal-next" class="icon-btn" aria-label="다음">›</button><button id="cal-today" class="btn sm">오늘</button><h2 id="cal-title" class="cal-title"></h2></div>
+          <div class="row wrap"><div id="cal-views" class="tabs" style="margin:0"><button data-cal-view="month" class="on">월</button><button data-cal-view="week">주</button><button data-cal-view="list">목록</button></div>
+            <span id="cal-google-state" class="pill">Google 미연결</span><button id="cal-sync" class="btn sm" hidden>↻ 동기화</button><button id="cal-google" class="btn sm">Google 연동</button><a class="btn sm" href="/api/calendar/export.ics" download>내보내기(.ics)</a><button id="cal-add" class="btn primary">＋ 일정</button></div>
+        </div>
+        <div class="cal-layout"><div id="cal-body" class="card cal-card"></div><aside id="cal-side" class="card"></aside></div>
+        <section class="card" style="margin-top:16px"><div class="card-head"><div><h2>라피스 계정의 오늘 일정</h2><p class="sub">라피스 계정에 연결된 Google 캘린더의 오늘 일정을 읽기 전용으로 보여 줘요.</p></div><button id="cal-cloud-load" class="btn sm">불러오기</button></div><div id="cal-cloud"></div></section>
+      </section>
+
+      <!-- 저장소 -->
+      <section id="view-storage" class="view" hidden>
+        <p class="view-intro">사무실에 맡긴 내 PC 드라이브, 연결한 Google Drive, 라피스 라이브러리를 한곳에서 봅니다. 파일을 바꾸거나 지우는 작업은 하지 않고, Google 시트·문서 쓰기는 미리보기와 승인을 거칩니다.</p>
+        <div id="storage-tabs" class="tabs"><button data-storage-tab="local" class="on">내 PC 드라이브</button><button data-storage-tab="drive">Google Drive</button><button data-storage-tab="library">라피스 라이브러리</button></div>
+        <div id="storage-body"></div>
+      </section>
+
+      <!-- 라피스 학습 -->
+      <section id="view-learning" class="view" hidden>
+        <p class="view-intro">라피스가 나를 어떻게 이해하고 있는지 보고, 틀린 것은 고치고, 직접 가르칠 수 있어요.</p>
+        <div id="learning-body" class="stack"></div>
+      </section>
+
+      <!-- 라피스 계정 · Google -->
+      <section id="view-account" class="view" hidden>
+        <p class="view-intro">에디터에서 쓰던 라피스 계정으로 로그인하면 기억·학습, Google 드라이브·시트·문서 기능을 쓸 수 있어요.</p>
+        <div id="account-box"></div><div id="google-box" style="margin-top:16px"></div>
+      </section>
+
+      <!-- 화면 설정 -->
+      <section id="view-appearance" class="view" hidden>
+        <p class="view-intro">테마와 화면을 내 방식대로 바꿔요. 설정은 이 브라우저에 저장됩니다.</p>
+        <div id="appearance-body" class="stack"></div>
+      </section>
+
+      <!-- 사무실(Office) 화면: 현황판 · 부서 · 스킬트리 · 스킬 마켓 · 연결 · 설정 · 드라이브 -->
+      <section id="view-office" class="view" hidden><div id="office-content"></div></section>
+
+      <!-- 텔레그램 수신함 -->
+      <section id="view-inbox" class="view" hidden>
+        <p class="view-intro">카오(Claude Office)와 라피스(Hermes) 두 봇의 수신 경로를 구분해서 보여 줍니다. 호출은 “라피스 …”, 업무방에서는 “카오 …”로 시작하세요.</p>
+        <div id="bot-cards" class="grid cols-2"></div>
+        <section class="card" style="margin-top:16px"><div class="card-head"><div><h2>메시지 기록</h2></div><span id="inbox-count" class="small muted"></span></div>
+          <div class="row between wrap"><div class="tabs" style="margin:0" aria-label="봇 필터"><button type="button" data-bot="all" class="on">전체</button><button type="button" data-bot="kao">카오</button><button type="button" data-bot="lapis">라피스</button></div><label><span class="sr-only">메시지 검색</span><input id="message-search" type="text" placeholder="메시지 검색" autocomplete="off" style="width:240px"></label></div>
+          <p class="small muted" style="margin-top:10px">응답 기록은 전달 완료를 보장하지 않습니다.</p><div id="telegram-errors" role="status"></div><div id="inbox-list"></div></section>
+      </section>
+
+      <!-- 라피스 대화 -->
+      <section id="view-chat" class="view" hidden>
+        <div id="chat-tabs" class="tabs"><button data-chat-tab="lapis" class="on">라피스</button><button data-chat-tab="hermes">Hermes</button></div>
+        <div id="chat-lapis"></div>
+        <div id="chat-hermes" hidden>
+        <section class="card chat-card"><div class="card-head"><div><h2>Hermes에게 요청하기</h2><p class="sub">Hermes에 텍스트 요청을 보냅니다. 문서 초안·정리·질문에 쓰세요. 파일·PC 실행 도구는 제공하지 않습니다.</p></div></div>
+          <form id="hermes-form"><label class="sr-only" for="hermes-message">요청 내용</label><textarea id="hermes-message" name="message" rows="6" maxlength="8000" required placeholder="작업 내용과 필요한 결과물을 적어주세요."></textarea>
+            <div class="row between" style="margin-top:10px"><span class="small muted">제출한 요청만 실행하며 자동으로 다시 보내지 않습니다.</span><button id="hermes-submit" class="btn primary" type="submit">요청 보내기 →</button></div></form>
+          <div id="hermes-result" class="hermes-result" role="status" hidden></div></section>
+        </div>
+      </section>
+
+      <!-- 물품 대여 -->
+      <section id="view-rental" class="view" hidden>
+        <p class="view-intro">카오 물품관리팀의 대여 기록·입출입·사진·물품목록입니다. 로그인 후의 조작은 실제 창고 시스템에 반영됩니다.</p>
+        <div class="frame-shell"><iframe id="rental-frame" title="창고 운영 관리 시스템" data-src="/modules/rental/admin.html"></iframe></div>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<dialog id="dlg"></dialog>
+<dialog id="ui-dlg"></dialog>
+<dialog id="palette" class="palette"><input id="palette-input" type="text" placeholder="이동하거나 실행할 항목을 입력하세요…" aria-label="빠른 이동" autocomplete="off"><ul id="palette-list"></ul></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div id="undo-toast" class="undo-toast" role="status" hidden><span id="undo-text"></span><button id="undo-run" hidden>실행 취소</button><button id="undo-close" aria-label="알림 닫기">×</button></div>
+</body>
+</html>

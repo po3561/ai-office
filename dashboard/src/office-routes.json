@@ -1,0 +1,246 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/ping"
+  },
+  {
+    "method": "GET",
+    "path": "/api/overview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/presets"
+  },
+  {
+    "method": "GET",
+    "path": "/api/discover"
+  },
+  {
+    "method": "GET",
+    "path": "/api/offices/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/offices/:id/teams/:key"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/config"
+  },
+  {
+    "method": "POST",
+    "path": "/api/claude/refresh"
+  },
+  {
+    "method": "GET",
+    "path": "/api/claude/diagnose"
+  },
+  {
+    "method": "POST",
+    "path": "/api/claude/login"
+  },
+  {
+    "method": "POST",
+    "path": "/api/claude/logout"
+  },
+  {
+    "method": "POST",
+    "path": "/api/claude/install"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/import"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/offices/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/close"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/offices/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/start"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/stop"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/restart"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/open"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/migrate"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/relocate"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/drives"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/offices/:id/drives"
+  },
+  {
+    "method": "POST",
+    "path": "/api/open-data"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/teams"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/offices/:id/teams/:key"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/offices/:id/teams/:key"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/token"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/offices/:id/telegram/token"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/pair"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/deny"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/remove"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/policy"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/rooms/refresh"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/rooms/task"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/rooms/default-task"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/rooms/connect"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/rooms/disconnect"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/rooms/forget"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/telegram/legacy/:action"
+  },
+  {
+    "method": "GET",
+    "path": "/api/market/status"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/connect"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/disconnect"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/refresh"
+  },
+  {
+    "method": "GET",
+    "path": "/api/market/skills"
+  },
+  {
+    "method": "GET",
+    "path": "/api/market/skills/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/market/shareable"
+  },
+  {
+    "method": "GET",
+    "path": "/api/market/installed"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/inspect"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/publish"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/requests/dismiss"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/revoke"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/install"
+  },
+  {
+    "method": "POST",
+    "path": "/api/market/uninstall"
+  },
+  {
+    "method": "POST",
+    "path": "/api/update/check"
+  },
+  {
+    "method": "POST",
+    "path": "/api/update/apply"
+  },
+  {
+    "method": "POST",
+    "path": "/api/diagnostics/refresh"
+  },
+  {
+    "method": "POST",
+    "path": "/api/diagnostics/clean-pollers"
+  },
+  {
+    "method": "POST",
+    "path": "/api/diagnostics/disable-global-plugin"
+  }
+]
