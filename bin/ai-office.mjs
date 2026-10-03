@@ -93,13 +93,15 @@ async function main() {
     case 'team': return teamCmd(sub, flags(rest));
     case 'permit': return permitCmd(sub, flags(rest));
     case 'drive': return driveCmd(sub, flags(rest));
+    case 'skills': return skillsCmd(sub, flags(rest));
     case 'doctor': return doctor();
     default:
-      line('사용법: ai-office <serve|open|stop|office|team|permit|drive|doctor>');
+      line('사용법: ai-office <serve|open|stop|office|team|permit|drive|skills|doctor>');
       line('  office list | create --name 이름 [--honorific 호칭] [--presets a,b] | import --folder 경로 [--name 이름] | remove --office id | restart --office id [--delay 초]');
       line('  team   list|add|update|remove|presets --office id …');
       line('  permit list|add|remove --office id [--rule 규칙 --reason 이유 --approved 사용자 승인 답장]');
       line('  drive  list|grant|revoke --office id [--path D:\\ --level readwrite|full --yes]   (사용자가 직접 실행. 봇은 쓸 수 없다)');
+      line('  skills sync [--dry-run] [--prefer newer] [--exclude a,b] [--office-to-global] [--watch 분] | task install|remove [--every 분]   (Claude 전역·사무실·Codex 스킬 맞추기)');
       process.exit(cmd ? 1 : 0);
   }
 }
@@ -244,6 +246,47 @@ async function driveCmd(action, f) {
       return;
     }
     default: fail('drive 하위 명령: list | grant | revoke');
+  }
+}
+
+// Claude 전역·사무실·Codex 의 스킬을 같은 세트로 맞춘다. 없는 쪽에만 복사하고 지우지 않는다.
+async function skillsCmd(action, f) {
+  const S = await import('../src/skill-sync.mjs');
+  const exclude = typeof f.exclude === 'string' ? f.exclude.split(',').map((x) => x.trim()).filter(Boolean) : [];
+  const prefer = f.prefer === 'newer' ? 'newer' : null;
+  if (f.prefer && !prefer) fail('--prefer 는 newer 만 쓸 수 있습니다.');
+  const once = () => {
+    const r = S.syncSkills({ exclude, prefer, officeToGlobal: f['office-to-global'] === true, dryRun: f['dry-run'] === true });
+    if (r.copied.length || r.updated.length || r.conflicts.length || f['dry-run'] === true || !f.watch) line(S.formatReport(r, { dryRun: f['dry-run'] === true }));
+    return r;
+  };
+  switch (action) {
+    case 'sync': {
+      const r = once();
+      if (!f.watch) { if (r.conflicts.length) process.exitCode = 2; return; }
+      const min = Math.max(1, Number(f.watch === true ? 10 : f.watch) || 10);
+      line(`${min}분마다 다시 맞춥니다. 끝내려면 Ctrl+C.`);
+      setInterval(() => { try { once(); } catch (e) { console.error(`⚠️ ${e.message}`); } }, min * 60_000);
+      return new Promise(() => {});
+    }
+    case 'task': {
+      const name = 'AI-Office 스킬 동기화';
+      if (!isWindows) fail('예약 작업 등록은 Windows 에서만 지원합니다. 다른 환경에서는 cron 에 `ai-office skills sync` 를 등록하세요.');
+      const mode = f._[0];
+      if (mode === 'remove') {
+        const r = await run('schtasks.exe', ['/Delete', '/TN', name, '/F']);
+        line(r.code === 0 ? '예약 작업을 지웠습니다.' : `지우지 못했습니다: ${(r.stderr || r.stdout).trim()}`);
+        return;
+      }
+      if (mode !== 'install') fail('task 하위 명령: install | remove');
+      const every = Math.max(5, Number(f.every) || 30);
+      const ex = exclude.length ? ` --exclude ${exclude.join(',')}` : '';
+      const tr = `powershell.exe -NoProfile -WindowStyle Hidden -Command "& '${process.execPath}' '${CLI}' skills sync${prefer ? ' --prefer newer' : ''}${ex}"`;
+      const r = await run('schtasks.exe', ['/Create', '/TN', name, '/SC', 'MINUTE', '/MO', String(every), '/TR', tr, '/F']);
+      line(r.code === 0 ? `예약 작업을 만들었습니다: ${every}분마다 스킬을 맞춥니다. (지우기: ai-office skills task remove)` : `만들지 못했습니다: ${(r.stderr || r.stdout).trim()}`);
+      return;
+    }
+    default: fail('skills 하위 명령: sync | task');
   }
 }
 
