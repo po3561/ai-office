@@ -187,7 +187,7 @@ internal sealed class Installer
                 var ser = new JavaScriptSerializer();
                 var rel = (Dictionary<string, object>)ser.DeserializeObject(DownloadText("https://api.github.com/repos/" + Repo + "/releases/latest"));
                 version = Convert.ToString(rel["tag_name"]);
-                foreach (object a in (ArrayList)rel["assets"])
+                foreach (object a in (System.Collections.IEnumerable)rel["assets"])
                 {
                     var asset = (Dictionary<string, object>)a;
                     if (Convert.ToString(asset["name"]) != AppAsset) continue;
