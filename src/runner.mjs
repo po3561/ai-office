@@ -9,6 +9,7 @@ import { isFile, readJson, writeJson, need, run, psQuote, isWindows, nowIso } fr
 import { getOffice, listOffices } from './offices.mjs';
 import { findClaude, claudeInfo } from './claude.mjs';
 import { tokenStatus } from './telegram.mjs';
+import { toolDirs } from './toolpath.mjs';
 
 const pidFile = (id) => join(RUN_DIR, `${id}.pid`);
 const scriptFile = (id) => join(RUN_DIR, `${id}.ps1`);
@@ -45,12 +46,13 @@ export function runtime(o, { legitPollers = 0 } = {}) {
   return { running: false, detail: '꺼짐' };
 }
 
-function launcherScript(o, claudePath) {
+function launcherScript(o, claudePath, extraDirs = toolDirs()) {
   return [
     "$ErrorActionPreference = 'Continue'",
     `$Host.UI.RawUI.WindowTitle = ${psQuote(`AI-Office · ${o.name}`)}`,
     `Set-Location -LiteralPath ${psQuote(o.folder)}`,
     `$env:TELEGRAM_STATE_DIR = ${psQuote(o.stateDir)}`,
+    ...(extraDirs.length ? [`$env:Path = ${psQuote(extraDirs.join(';') + ';')} + $env:Path`] : []),   // 앱이 설치한 Bun 등을 사무실 창이 찾도록
     "$env:MCP_TIMEOUT = '180000'",   // 저사양 PC에서는 텔레그램 플러그인 시작(bun install)이 30초를 넘겨 연결이 끊기므로 대기 시간을 늘린다.
     `New-Item -ItemType Directory -Force -Path ${psQuote(RUN_DIR)} | Out-Null`,
     `Set-Content -Path ${psQuote(pidFile(o.id))} -Value $PID`,

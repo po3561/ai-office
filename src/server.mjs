@@ -19,6 +19,9 @@ import { runtime, startOffice, stopOffice, requestRestart, watchdogTick, forgetR
 import { createUpdater } from './updater.mjs';
 import * as tg from './telegram.mjs';
 import * as lr from './rooms-legacy.mjs';
+import { createJobs } from './jobs.mjs';
+import { createComponents } from './components.mjs';
+import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -266,6 +269,20 @@ route('POST', '/api/market/requests/dismiss', async ({ body }) => {
 route('POST', '/api/market/revoke', async ({ body }) => market.revoke({ id: body.id, reason: body.reason }));
 route('POST', '/api/market/install', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
 route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
+
+// ── 설치 도우미: 필요한 도구 감지·설치(Claude Code·Bun·Codex·Ollama·Hermes), 로컬 AI 모델 ──
+// 설치는 화면에서 사용자가 누를 때만 시작하고, 진행 상황은 작업(jobs)으로 읽는다.
+export const jobs = createJobs();
+export const components = createComponents({ jobs });
+export const ollama = createOllama({ bin: () => cachedOllamaBin });
+let cachedOllamaBin = '';
+components.detect('ollama').then((d) => { cachedOllamaBin = d.path; }).catch(() => {});
+route('GET', '/api/components', async ({ url }) => ({ components: await components.list({ fresh: url.searchParams.get('fresh') === '1' }) }));
+route('POST', '/api/components/:id/install', async ({ p }) => { const j = components.install(p.id); return j; });
+route('GET', '/api/jobs', async () => ({ jobs: jobs.list() }));
+route('GET', '/api/jobs/:id', async ({ p }) => jobs.get(p.id));
+route('GET', '/api/ollama', async () => { const d = await components.detect('ollama'); cachedOllamaBin = d.path; return { installed: d.installed, version: d.version, recommended: OLLAMA_RECOMMENDED, ...(d.installed ? await ollama.models() : { running: false, models: [] }) }; });
+route('POST', '/api/ollama/pull', async ({ body }) => { const name = String(body.name || '').trim(); return jobs.start('ollama-pull:' + name, '모델 받기: ' + name, (ctx) => ollama.pull(name, ctx)); });
 
 // ── 프로그램 업데이트 ── 감지는 자동(6시간마다), 설치는 사용자가 누를 때만(설정에서 「자동 설치」를 켠 경우 제외).
 route('POST', '/api/update/check', async () => updater.check());
