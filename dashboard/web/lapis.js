@@ -361,6 +361,7 @@ document.addEventListener('cloud:state',e=>{
   const box=q('#home-hint');box.replaceChildren();
   if(!e.detail.signedIn){const card=node('div','banner info');put(card,node('span','ic','✨'),put(node('div','txt'),node('b','','라피스 계정을 연결해 보세요'),node('span','muted','Google 드라이브·시트, 라피스의 기억과 학습을 함께 쓸 수 있어요.')),link('로그인 →','#account','btn sm primary'));box.append(card);}
 });
+fetch('/api/features').then(r=>r.json()).then(f=>{if(!f.rental){window.__noRental=true;applyNavPrefs();document.querySelector('#quick-tools a[href="#rental"]')?.remove();}}).catch(()=>{});
 applyNavPrefs();
 if(!location.hash)location.replace('#'+(needsSetup()?'setup':startView()));
 showStorageWarning();render();route();refresh();setInterval(refresh,10000);

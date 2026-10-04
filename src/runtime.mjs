@@ -4,26 +4,15 @@ import { join } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readText, readJson, writeJson, isDir, HttpError } from './util.mjs';
 import { scanSkills, parseFrontmatter } from './skills.mjs';
+import { stripThinking, chunk, buildSystem as buildSystemCore, pickAgent } from './agentlogic.mjs';
+
+export { stripThinking, chunk, pickAgent };
+// 로컬 런타임용: 역할에 붙은 스킬 파일을 읽어 넣는다.
+export const buildSystem = (bot, { skillsDir, ...rest }) => buildSystemCore(bot, { ...rest, skillText: loadSkillText(skillsDir, rest.agent?.skills || []) });
 
 const HISTORY_MAX = 20;
-const MAX_REPLY = 3800;
 const STALE_SEC = 600;      // 10분 넘게 묵은 메시지는 재시작 직후 쏟아져 나오지 않도록 무시한다
 const sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true }); });
-
-export const stripThinking = (s) => String(s).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^\s*<think>[\s\S]*$/i, '').trim();
-export function chunk(text, size = MAX_REPLY) {
-  const out = [];
-  let rest = String(text);
-  while (rest.length > size) {
-    let cut = rest.lastIndexOf('\n', size);
-    if (cut < size * 0.5) cut = rest.lastIndexOf(' ', size);
-    if (cut < size * 0.5) cut = size;
-    out.push(rest.slice(0, cut).trimEnd());
-    rest = rest.slice(cut).trimStart();
-  }
-  if (rest) out.push(rest);
-  return out;
-}
 
 // 스킬 본문(머리말 뒤)을 읽어 지침으로 붙인다. 너무 길면 자른다.
 export function loadSkillText(skillsDir, ids) {
@@ -42,25 +31,6 @@ export function loadSkillText(skillsDir, ids) {
     parts.push(`### 스킬: ${s.name}\n${s.description ? s.description + '\n' : ''}${body}`);
   }
   return parts.join('\n\n');
-}
-
-export function buildSystem(bot, { agent, room, topic, skillsDir, now = new Date() }) {
-  const parts = [bot.persona || ''];
-  parts.push(`사용자를 "${bot.honorific || '사용자님'}"이라 부른다. 오늘은 ${now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}이다.`);
-  if (agent) parts.push(`## 지금 맡은 역할: ${agent.emoji} ${agent.name}\n${agent.role ? agent.role + '\n' : ''}${agent.instructions || ''}`.trim());
-  if (room?.instructions) parts.push(`## 이 방의 지침\n${room.instructions}`);
-  if (topic?.instructions) parts.push(`## 이 주제의 지침\n${topic.instructions}`);
-  const skillText = loadSkillText(skillsDir, agent?.skills || []);
-  if (skillText) parts.push(`## 쓸 수 있는 스킬\n${skillText}`);
-  if (bot.agents?.length > 1) parts.push(`## 같은 사무실의 다른 역할\n${bot.agents.map((a) => `- ${a.emoji} ${a.name}(${a.key}): ${a.role}`).join('\n')}\n사용자가 다른 역할이 필요한 요청을 하면 "/agent 키" 로 바꿔 달라고 안내한다.`);
-  return parts.filter(Boolean).join('\n\n');
-}
-
-export function pickAgent(bot, { room, topic, text }) {
-  const byKey = (k) => bot.agents.find((a) => a.key === k);
-  const called = bot.agents.find((a) => new RegExp(`^(@?${a.key}|${a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?=[\\s,:：]|$)`, 'i').test(text.trim()));
-  if (called) return { agent: called, text: text.trim().slice(text.trim().match(new RegExp(`^(@?${called.key}|${called.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i'))[0].length).replace(/^[\s,:：]+/, '') || text };
-  return { agent: (topic?.agent && byKey(topic.agent)) || (room?.agent && byKey(room.agent)) || byKey(bot.defaultAgent) || null, text };
 }
 
 export function createRuntime({ bots, engines, tg, log = () => {}, nowMs = () => Date.now(), pollTimeout = 25 }) {

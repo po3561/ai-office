@@ -24,7 +24,7 @@ export function setTheme(pref){
 }
 export function applyNavPrefs(){
   const {hidden}=loadPrefs();
-  qa('#nav .nav-item').forEach(a=>{a.hidden=hidden.includes(a.dataset.nav)&&!LOCKED.includes(a.dataset.nav);});
+  qa('#nav .nav-item').forEach(a=>{a.hidden=(hidden.includes(a.dataset.nav)&&!LOCKED.includes(a.dataset.nav))||(a.dataset.nav==='rental'&&window.__noRental===true);});
   // 항목이 모두 숨겨진 묶음의 제목도 숨긴다.
   qa('#nav .nav-group').forEach(g=>{let n=g.nextElementSibling,any=false;while(n&&!n.classList.contains('nav-group')){if(!n.hidden)any=true;n=n.nextElementSibling;}g.hidden=!any;});
 }

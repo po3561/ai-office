@@ -1,6 +1,6 @@
 name: Release
 
-# v0.1.0 같은 태그를 올리면 설치 파일(AI-Office-Setup.exe)과 zip 을 만들어 릴리스에 붙인다.
+# v0.1.0 같은 태그를 올리면 설치 파일(LAPIS-Setup.exe)과 zip 을 만들어 릴리스에 붙인다.
 # 태그를 올릴 수 없을 때는 Actions 에서 직접 실행하면 package.json 의 버전으로 태그(vX.Y.Z)를 만들어 릴리스한다.
 on:
   push:
@@ -28,6 +28,6 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
           files: |
-            dist/AI-Office-Setup.exe
+            dist/LAPIS-Setup.exe
             dist/ai-office-app.zip
           generate_release_notes: true

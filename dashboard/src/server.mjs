@@ -114,6 +114,8 @@ export function createDashboardServer(options={}){
       }
       if(url.pathname==='/api/telegram'&&req.method==='GET')return json(res,200,await getTelegram());
       if(url.pathname==='/api/drives'&&req.method==='GET')return json(res,200,{drives:await getDrives()});
+      // 개인용 연결(물품 대여 등)은 주소가 설정돼 있을 때만 화면에 보인다.
+      if(url.pathname==='/api/features'&&req.method==='GET')return json(res,200,{rental:Boolean(rentalUrl),cloud:true});
       if(url.pathname==='/api/health'&&req.method==='GET')return json(res,200,{app:'lapis-office-dashboard',version:'0.3.0',receiversOwned:0});
       if(url.pathname==='/api/hermes/health'&&req.method==='GET')return respond(res,await upstream(hermesUrl+'/health',{timeout:5000,limit:10000}));
       if(url.pathname==='/api/hermes/chat'&&req.method==='POST'){
@@ -175,7 +177,7 @@ export function createDashboardServer(options={}){
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   const port=Number(process.env.LAPIS_DASHBOARD_PORT||4310);
   if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid dashboard port');
-  const server=createDashboardServer({dataDir:process.env.LAPIS_DATA_DIR||undefined});
+  const server=createDashboardServer({dataDir:process.env.LAPIS_DATA_DIR||undefined,officeUrl:process.env.LAPIS_OFFICE_URL||undefined});
   server.listen(port,'127.0.0.1',()=>console.log('LAPIS Office: http://127.0.0.1:'+port));
   server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'지정한 포트가 이미 사용 중입니다.':'대시보드 시작 실패');process.exitCode=1;});
 }
