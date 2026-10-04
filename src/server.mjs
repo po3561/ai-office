@@ -28,6 +28,7 @@ import { createTgApi } from './tgapi.mjs';
 import { createEngines, ENGINE_TYPES } from './engines.mjs';
 import { createBots, AGENT_PRESETS } from './bots.mjs';
 import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
+import { createPublisher } from './publish.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -329,6 +330,14 @@ route('POST', '/api/bots/:id/telegram/policy', async ({ p, body }) => { bots.set
 route('POST', '/api/bots/:id/telegram/rooms/:chat', async ({ p, body }) => bots.setRoom(p.id, p.chat, body));
 route('DELETE', '/api/bots/:id/telegram/rooms/:chat', async ({ p }) => { bots.forgetRoom(p.id, p.chat); return { ok: true }; });
 route('POST', '/api/bots/:id/telegram/rooms/:chat/topics/:thread', async ({ p, body }) => bots.setTopic(p.id, p.chat, p.thread, body));
+// LAPIS_CF_BASE 는 개발·시험용(가짜 Cloudflare 서버로 돌려 볼 때)이다.
+export const publisher = createPublisher({ bots, secrets, tg: tgApi, stopLocal: (id) => runtimeBots.stop(id), cfBase: process.env.LAPIS_CF_BASE || undefined });
+// 웹 배포(Cloudflare Workers): 올리기는 화면에서 사용자가 누를 때만. 비밀번호는 보기 요청(POST)으로만 돌려준다.
+route('GET', '/api/bots/:id/publish', async ({ p }) => ({ plan: await publisher.plan(p.id), status: publisher.status(p.id) }));
+route('POST', '/api/bots/:id/publish', async ({ p, body }) => jobs.start('publish:' + p.id, '웹 배포', (ctx) => publisher.deploy(p.id, body, ctx)));
+route('POST', '/api/bots/:id/publish/password', async ({ p }) => ({ password: await publisher.revealPassword(p.id) }));
+route('POST', '/api/bots/:id/publish/restore-local', async ({ p }) => publisher.restoreLocal(p.id));
+route('DELETE', '/api/bots/:id/publish', async ({ p }) => publisher.remove(p.id));
 route('GET', '/api/bots/:id/skills', async ({ p }) => ({ skills: bots.listSkills(p.id) }));
 route('POST', '/api/bots/:id/skills', async ({ p, body }) => bots.saveSkill(p.id, body));
 route('DELETE', '/api/bots/:id/skills/:skill', async ({ p }) => bots.removeSkill(p.id, p.skill));

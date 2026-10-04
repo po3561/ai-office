@@ -1,7 +1,7 @@
 // 봇 스튜디오: 봇을 하나든 여러 개든 만들고, 엔진·역할(에이전트)·텔레그램 방과 주제·스킬을 설정한다.
 // LAPIS 봇(런타임)과 기존 Claude 사무실·Hermes 를 한 목록에서 본다.
 import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,input,textarea,field,select} from './ui.js';
-import {eng} from './platform.js';
+import {eng,watchJob,progressBox} from './platform.js';
 
 const ENGINE_ORDER=['claude','codex','ollama','openai','anthropic','hermes'];
 const ENGINE_HINT={
@@ -19,7 +19,7 @@ let tab='overview';
 const root=()=>q('#studio-body');
 const go=hash=>{location.hash=hash;};
 async function loadMeta(){const d=await eng('/api/bots');meta={engineTypes:d.engineTypes,agentPresets:d.agentPresets,readiness:d.readiness};return d;}
-const engineLabel=e=>e?`${meta?.engineTypes[e.type]?.label||e.type}${e.model?' · '+e.model:''}`:'-';
+const engineLabel=e=>e?`${e.type==='workersai'?'Cloudflare 무료 AI':meta?.engineTypes[e.type]?.label||e.type}${e.model?' · '+e.model:''}`:'-';
 
 // ── 모델 고르기: 엔진에 따라 선택 목록 또는 직접 입력 ──
 async function modelPicker(type,current=''){
@@ -50,7 +50,7 @@ function readinessNote(type){
 // ── 목록 ──
 async function renderList(){
   const [d,ov]=await Promise.all([loadMeta(),eng('/api/overview').catch(()=>({offices:[]}))]);
-  const head=put(node('div','row between wrap'),node('p','view-intro','봇은 하나만 써도, 여러 개를 만들어 역할별로 나눠도 돼요. 봇마다 두뇌(AI)와 역할, 텔레그램 방을 따로 정해요.'),link('＋ 새 봇 만들기','#studio/new','btn primary'));
+  const head=put(node('div','row between wrap'),node('p','view-intro','봇은 하나만 써도, 여러 개를 만들어 역할별로 나눠도 돼요. 봇마다 두뇌(AI)와 역할, 텔레그램 방을 따로 정해요.'),put(node('div','row'),button('Claude 사무실(고급) 만들기',()=>document.querySelector('#newOffice')?.click(),'btn'),link('＋ 새 봇 만들기','#studio/new','btn primary')));
   const grid=node('div','grid cols-2');
   for(const b of d.bots){
     const c=node('article','card bot-card');
@@ -114,7 +114,7 @@ async function renderNew(){
 }
 
 // ── 상세 ──
-const tabs=[['overview','개요'],['agents','역할(에이전트)'],['telegram','텔레그램 · 방과 주제'],['skills','스킬'],['test','시험 대화']];
+const tabs=[['overview','개요'],['agents','역할(에이전트)'],['telegram','텔레그램 · 방과 주제'],['skills','스킬'],['test','시험 대화'],['publish','웹 배포']];
 async function renderDetail(id){
   await loadMeta();
   let b;
@@ -128,7 +128,7 @@ async function renderDetail(id){
   for(const [k,label] of tabs)bar.append(button(label,()=>{tab=k;renderDetail(id);},k===tab?'on':''));
   const err=rt.error?node('p','banner warn',rt.error):null;
   const body=node('div','stack');
-  const view={overview:detailOverview,agents:detailAgents,telegram:detailTelegram,skills:detailSkills,test:detailTest}[tab];
+  const view={overview:detailOverview,agents:detailAgents,telegram:detailTelegram,skills:detailSkills,test:detailTest,publish:detailPublish}[tab];
   await view(b,body,()=>renderDetail(id));
   root().replaceChildren(...[head,err,bar,body].filter(Boolean));
 }
@@ -267,6 +267,83 @@ async function detailTest(b,body){
     catch(e){out.textContent='⚠️ '+errorText(e);}finally{this.disabled=false;}
   },'btn primary');
   put(body,put(node('section','card'),put(node('div','card-head'),node('h2','','시험 대화')),field('역할',ag),msg,put(node('div','row'),send),out));
+}
+
+// ── 웹 배포: 이 봇을 내 Cloudflare 계정의 웹 주소로 올린다 ──
+function randomPassword(){const a='abcdefghjkmnpqrstuvwxyz23456789';const b=new Uint8Array(12);crypto.getRandomValues(b);return [...b].map(x=>a[x%a.length]).join('').replace(/(.{4})(?=.)/g,'$1-');}
+async function detailPublish(b,body,refresh){
+  const {plan,status}=await eng(`/api/bots/${b.id}/publish`);
+  const intro=put(node('section','card'),put(node('div','card-head'),put(node('div'),node('h2','','웹 주소로 배포'),node('p','sub','이 봇을 내 Cloudflare 계정에 올려요. 올리면 PC가 꺼져 있어도 웹 주소(와 텔레그램)에서 대답해요.'))),
+    put(node('ul','guide'),node('li','','웹에서는 PC의 파일과 Claude·ChatGPT 로그인을 쓸 수 없어요. API 키 엔진(GPT·Claude) 또는 Cloudflare 무료 AI로 대답해요.'),
+      node('li','','올라가는 것: 봇 이름·성격·역할·지침·스킬 글, 선택한 AI의 API 키(비밀 값으로만), 텔레그램 토큰(연결했을 때).'),
+      node('li','','웹 주소는 비밀번호로 보호돼요. 언제든 지우거나 PC로 되돌릴 수 있어요.')));
+  body.append(intro);
+  if(!plan.tokenSet){
+    body.append(put(node('section','card'),put(node('div','card-head'),node('h2','','Cloudflare 계정 연결이 필요해요')),node('p','sub','연결 허브에서 Cloudflare API 토큰을 한 번만 넣으면 돼요.'),put(node('div','row'),link('연결 허브로 가기 →','#hub','btn primary'))));
+    return;
+  }
+  for(const i of plan.issues.filter(i=>i.code==='token'))body.append(node('p','banner bad',i.text));
+  if(status){
+    const pw=node('span','small muted');
+    body.append(put(node('section','card'),put(node('div','card-head'),put(node('div'),node('h2','','배포 중'),node('p','sub',status.alive?'웹 주소가 열려 있어요.':'올렸어요. 주소가 열리기까지 1~2분 걸릴 수 있어요.')),pill('웹에서 동작','ok')),
+      put(node('div','row wrap'),link(status.url,status.url,'btn primary'),button('주소 복사',async()=>{try{await navigator.clipboard.writeText(status.url);toast('주소를 복사했어요.');}catch{toast('복사하지 못했어요. 주소를 직접 선택해 복사해 주세요.',true);}},'btn sm'),
+        button('비밀번호 보기',async function(){await doing(this,async()=>{const r=await eng(`/api/bots/${b.id}/publish/password`,{method:'POST',body:{}});pw.textContent='비밀번호: '+r.password;});},'btn sm'),pw),
+      node('p','small muted',`엔진: ${engineLabel(status.engine)} · 텔레그램: ${status.telegram?'웹이 받고 있어요(PC 수신은 꺼짐)':'PC가 받아요'} · 올린 때 ${new Date(status.deployedAt).toLocaleString('ko-KR')}`),
+      put(node('div','row wrap'),status.telegram?button('텔레그램을 PC로 되돌리기',async function(){await doing(this,async()=>{await eng(`/api/bots/${b.id}/publish/restore-local`,{method:'POST',body:{}});toast('텔레그램 수신을 PC로 되돌렸어요. 이제 「켜기」를 누르면 PC가 받아요.');refresh();});},'btn sm'):null,
+        button('배포 지우기…',async function(){if(!await confirmDialog({title:'웹 배포를 지울까요?',body:'Cloudflare 의 Worker 와 대화 기록 저장소를 지우고, 텔레그램 웹 연결도 풀어요. PC의 봇은 그대로 남아요.',ok:'지우기',danger:true}))return;await doing(this,async()=>{await eng(`/api/bots/${b.id}/publish`,{method:'DELETE',body:{}});toast('지웠어요.');refresh();});},'btn sm danger'))));
+  }
+  // 올리기 / 다시 올리기 양식
+  const engines=plan.engines;
+  const first=(status&&engines.find(e=>e.type===status.engine.type&&e.ready))||engines.find(e=>e.ready)||engines[0];
+  let chosen=first.type;
+  const engBox=node('div','engine-grid');
+  const modelSlot=node('div');let getModel=()=> '';
+  async function pickCloudEngine(type){
+    chosen=type;
+    engBox.querySelectorAll('.engine').forEach(e=>e.classList.toggle('on',e.dataset.type===type));
+    let list=[];
+    try{
+      if(type==='workersai')list=plan.workersAiModels||[];
+      else list=(await eng('/api/connections/models/'+type)).models;
+    }catch{ /* 키가 없으면 목록이 비어 직접 입력 */ }
+    const keep=status?.engine?.type===type?status.engine.model:'';
+    if(list.length){const sel=select(list.map(m=>[m,m]),list.includes(keep)?keep:list[0]);getModel=()=>sel.value;modelSlot.replaceChildren(put(node('div','field'),node('label','','모델'),sel));}
+    else{const i=input({maxLength:100,placeholder:type==='workersai'?'@cf/meta/…':'모델 이름',value:keep});getModel=()=>i.value.trim();modelSlot.replaceChildren(put(node('div','field'),node('label','','모델'),i));}
+  }
+  for(const e of engines){
+    const el=node('button','engine');el.type='button';el.dataset.type=e.type;
+    put(el,node('b','',e.label),e.ready?pill('바로 쓸 수 있어요','ok'):put(node('span','row nowrap'),pill('키가 필요해요','warn'),link('연결 허브 →','#hub','small')));
+    el.addEventListener('click',()=>pickCloudEngine(e.type));engBox.append(el);
+  }
+  await pickCloudEngine(chosen);
+  const name=input({value:status?.name||plan.suggestedName,maxLength:51});
+  const pwIn=input({type:'text',maxLength:60,placeholder:plan.hasPassword?'비워 두면 지금 비밀번호 그대로':'8자 이상',value:plan.hasPassword?'':randomPassword(),autocomplete:'off'});
+  const sub=plan.subdomain?null:input({placeholder:'예: my-lapis (영문 소문자·숫자·하이픈)',maxLength:40});
+  const tgOn=node('input');tgOn.type='checkbox';tgOn.checked=Boolean(plan.telegram);tgOn.disabled=!plan.telegram;
+  const prog=progressBox();
+  const go=button(status?'다시 올리기':'웹으로 올리기',async function(){
+    const e=engines.find(x=>x.type===chosen);
+    if(!e.ready){toast('먼저 연결 허브에서 키를 연결해 주세요.',true);return;}
+    const model=getModel();
+    if(!model){toast('모델을 골라 주세요.',true);return;}
+    if(!await confirmDialog({title:'내 Cloudflare 계정에 올릴까요?',body:`"${name.value}" 이름으로 Worker 를 올리고(주소: ${name.value}.${plan.subdomain||sub?.value||'…'}.workers.dev) 대화 기록용 KV 저장소를 만들어요. ${tgOn.checked?'텔레그램은 웹이 받도록 바꾸고 PC 수신은 멈춰요. ':''}Cloudflare 요금제 한도 안에서 쓰는 걸 권장해요.`,ok:'올리기'}))return;
+    this.disabled=true;
+    try{
+      const job=await eng(`/api/bots/${b.id}/publish`,{method:'POST',body:{name:name.value.trim(),engine:{type:chosen,model},password:pwIn.value||undefined,subdomain:sub?.value.trim()||undefined,telegram:tgOn.checked}});
+      prog.update(job);
+      const done=await watchJob(job.id,j=>prog.update(j));
+      if(done.state==='error')throw new Error(done.error);
+      toast('올렸어요!');refresh();
+    }catch(err){toast(errorText(err),true);}finally{this.disabled=false;}
+  },'btn primary');
+  put(body,put(node('section','card'),put(node('div','card-head'),node('h2','',status?'다시 올리기 (설정 바꾸기)':'올리기')),
+    node('div','group-title','웹에서 쓸 AI'),engBox,modelSlot,
+    field('웹 주소 이름',name,'주소는 이름.계정이름.workers.dev 가 돼요.'),
+    sub?field('내 workers.dev 계정 이름 (처음 한 번)',sub,'Cloudflare 계정에 아직 없어서 만들어요.'):null,
+    field('웹 접속 비밀번호',pwIn,plan.hasPassword?'바꾸려면 새 비밀번호를 적어요.':'웹 주소에 들어갈 때 쓰는 비밀번호예요. 자동으로 만들어 두었어요. 올린 뒤 「비밀번호 보기」로 다시 볼 수 있어요.'),
+    put(node('label','row nowrap'),tgOn,node('span','',plan.telegram?'텔레그램도 웹으로 옮기기 (PC가 꺼져도 답해요)':'텔레그램 봇을 연결하면 텔레그램도 웹으로 옮길 수 있어요')),
+    plan.note?node('p','banner info',plan.note):null,
+    put(node('div','row'),go),prog.box));
 }
 
 registerPage('studio',{async show(sub){

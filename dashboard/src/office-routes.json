@@ -378,5 +378,25 @@
   {
     "method": "POST",
     "path": "/api/bots/:id/test"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bots/:id/publish"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/publish"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/publish/password"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/publish/restore-local"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bots/:id/publish"
   }
 ]
