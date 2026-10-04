@@ -77,3 +77,17 @@ test('봇 스킬: 직접 만들고 목록에서 보고, 지우면 보관함으�
   assert.deepEqual((await get(`/api/bots/${id}`)).json.agents[0].skills, []);
   assert.equal((await call(`/api/bots/${id}/skills/..%2F..`, {}, 'DELETE')).status, 404);
 });
+
+test('방 현황: 봇이 초대된 방을 모아 주고, 화면 밖에서도 읽기만 되며 보안 헤더가 붙는다', async () => {
+  const c = await call('/api/bots', { name: '방 봇', engine: { type: 'ollama', model: 'm' } });
+  const r = await get('/api/rooms');
+  assert.equal(r.status, 200);
+  const g = r.json.groups.find((x) => x.id === c.json.id);
+  assert.ok(g && g.source === 'lapis' && Array.isArray(g.rooms) && g.total === 0);
+  assert.equal(typeof r.json.total, 'number');
+  const res = await fetch(`${base}/api/ping`);
+  assert.equal(res.headers.get('x-frame-options'), 'DENY');
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(res.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.equal((await fetch(`${base}/`)).headers.get('x-frame-options'), 'DENY');
+});

@@ -2,6 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { sandbox } from './helpers.mjs';
 
 const root = sandbox();
@@ -49,7 +50,7 @@ const fakeTools = ({ digest, version = '0.4.0', files, name = 'ai-office' } = {}
   const calls = { restart: 0 };
   return {
     calls,
-    fetchJson: async () => rel({}, { digest: digest ?? '' }),
+    fetchJson: async () => rel({}, { digest: digest ?? `sha256:${createHash('sha256').update('zip-bytes').digest('hex')}` }),
     download: async (_u, dest) => writeFileSync(dest, 'zip-bytes'),
     extract: async (_z, dir) => {
       const all = files || { 'package.json': `{"name":"${name}","version":"${version}"}`, 'bin/ai-office.mjs': '// new', 'src/server.mjs': '// new', 'web/index.html': 'new', 'web/app.js': '// new' };
@@ -79,6 +80,14 @@ test('업데이트: 새 파일로 바꾸고, 옛 파일은 지우고, 백업을 
 test('업데이트: 검증값이 다르면 아무것도 바꾸지 않는다', async () => {
   const { data, app } = fakeInstall('0.3.0');
   const up = U.createUpdater({ current: '0.3.0', appHome: app, dataHome: data, updateDir: join(data, 'update'), tools: fakeTools({ digest: `sha256:${'b'.repeat(64)}` }) });
+  await up.check();
+  await assert.rejects(() => up.apply(), /검증값/);
+  assert.equal(readFileSync(join(app, 'src', 'server.mjs'), 'utf8'), '// old');
+});
+
+test('업데이트: 릴리스에 검증값이 없으면 적용하지 않는다', async () => {
+  const { data, app } = fakeInstall('0.3.0');
+  const up = U.createUpdater({ current: '0.3.0', appHome: app, dataHome: data, updateDir: join(data, 'update'), tools: fakeTools({ digest: '' }) });
   await up.check();
   await assert.rejects(() => up.apply(), /검증값/);
   assert.equal(readFileSync(join(app, 'src', 'server.mjs'), 'utf8'), '// old');

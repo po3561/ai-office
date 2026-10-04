@@ -5,12 +5,15 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readText, readJson, writeJson, isDir, HttpError } from './util.mjs';
 import { scanSkills, parseFrontmatter } from './skills.mjs';
 import { stripThinking, chunk, buildSystem as buildSystemCore, pickAgent } from './agentlogic.mjs';
+import { redact } from './redact.mjs';
 
 export { stripThinking, chunk, pickAgent };
 // 로컬 런타임용: 역할에 붙은 스킬 파일을 읽어 넣는다.
 export const buildSystem = (bot, { skillsDir, ...rest }) => buildSystemCore(bot, { ...rest, skillText: loadSkillText(skillsDir, rest.agent?.skills || []) });
 
 const HISTORY_MAX = 20;
+const RATE_MAX = 15;        // 한 사람이 1분에 AI 를 부를 수 있는 횟수(계정이 뚫리거나 도배되어도 비용이 폭주하지 않게)
+const RATE_WINDOW_MS = 60_000;
 const STALE_SEC = 600;      // 10분 넘게 묵은 메시지는 재시작 직후 쏟아져 나오지 않도록 무시한다
 const sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true }); });
 
@@ -33,7 +36,10 @@ export function loadSkillText(skillsDir, ids) {
   return parts.join('\n\n');
 }
 
-export function createRuntime({ bots, engines, tg, log = () => {}, nowMs = () => Date.now(), pollTimeout = 25 }) {
+export function createRuntime({ bots, engines, tg, log: rawLog = () => {}, nowMs = () => Date.now(), pollTimeout = 25 }) {
+  const log = (line) => rawLog(redact(line));
+  const recent = new Map();   // botId:보낸사람 → 최근 호출 시각들
+  const warnedAt = new Map(); // 같은 사람에게 '쉬어요' 안내를 1분에 한 번만
   const state = new Map();   // botId → {running, error, since, handled, username, abort}
   const chains = new Map();  // botId:chat:thread → Promise (같은 대화는 순서대로 처리)
 
@@ -104,6 +110,17 @@ export function createRuntime({ bots, engines, tg, log = () => {}, nowMs = () =>
       }
     }
 
+    const rateKey = `${botId}:${senderId}`;
+    const now = nowMs();
+    const hits = (recent.get(rateKey) || []).filter((t) => now - t < RATE_WINDOW_MS);
+    if (hits.length >= RATE_MAX) {
+      recent.set(rateKey, hits);
+      if (now - (warnedAt.get(rateKey) || 0) > RATE_WINDOW_MS) { warnedAt.set(rateKey, now); await reply(token, msg, '메시지가 너무 빨리 많이 와서 잠시 쉬어요. 1분 뒤에 다시 말해 주세요.', thread); }
+      return;
+    }
+    hits.push(now);
+    recent.set(rateKey, hits);
+
     const topic = thread && room ? room.topics?.[String(thread)] : null;
     const picked = pickAgent(bot, { room, topic, text });
     const engine = picked.agent?.engine?.type ? picked.agent.engine : bot.engine;
@@ -115,12 +132,12 @@ export function createRuntime({ bots, engines, tg, log = () => {}, nowMs = () =>
     const typing = setInterval(() => tg.sendChatAction(token, { chat_id: msg.chat.id, action: 'typing', ...(thread ? { message_thread_id: thread } : {}) }), 4500);
     let answer;
     try {
-      answer = stripThinking(await engines.complete({ engine, system, messages, cwd: join(bots.folder(botId), 'work'), access }));
+      answer = redact(stripThinking(await engines.complete({ engine, system, messages, cwd: join(bots.folder(botId), 'work'), access })), { paths: false });
       if (!answer) throw new Error('빈 답');
     } catch (e) {
       log(`[lapis:${botId}] 엔진 오류: ${e.message}`);
       clearInterval(typing);
-      await reply(token, msg, `⚠️ 답을 만들지 못했어요: ${String(e.message).slice(0, 300)}`, thread);
+      await reply(token, msg, `⚠️ 답을 만들지 못했어요: ${redact(e.message).slice(0, 300)}`, thread);
       return;
     }
     clearInterval(typing);

@@ -9,6 +9,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/rooms"
+  },
+  {
+    "method": "GET",
     "path": "/api/presets"
   },
   {

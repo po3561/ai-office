@@ -1,6 +1,7 @@
 // 오래 걸리는 일(설치·모델 받기·배포)을 백그라운드에서 돌리고, 화면이 진행 상황을 볼 수 있게 기록한다.
 import { randomUUID } from 'node:crypto';
 import { HttpError } from './util.mjs';
+import { redact } from './redact.mjs';
 
 const MAX_LOG = 400;
 const KEEP = 40;
@@ -24,13 +25,13 @@ export function createJobs() {
     const job = { id: randomUUID(), kind, label, state: 'running', step: '', progress: { done: 0, total: 0 }, log: [], error: '', startedAt: Date.now(), endedAt: 0, result: null };
     jobs.set(job.id, job);
     const ctx = {
-      log: (line) => { for (const l of String(line).split(/\r?\n/)) if (l.trim()) { job.log.push(l.trim().slice(0, 300)); if (job.log.length > MAX_LOG) job.log.shift(); } },
+      log: (line) => { for (const l of String(line).split(/\r?\n/)) if (l.trim()) { job.log.push(redact(l.trim()).slice(0, 300)); if (job.log.length > MAX_LOG) job.log.shift(); } },
       step: (name) => { job.step = name; job.progress = { done: 0, total: 0 }; ctx.log(`▶ ${name}`); },
       progress: (done, total = 0) => { job.progress = { done, total }; },
     };
     Promise.resolve().then(() => fn(ctx)).then(
       (result) => { job.state = 'done'; job.result = result ?? null; job.endedAt = Date.now(); ctx.log('✓ 끝났습니다.'); prune(); },
-      (e) => { job.state = 'error'; job.error = e?.message || String(e); job.endedAt = Date.now(); ctx.log(`✗ ${job.error}`); prune(); },
+      (e) => { job.state = 'error'; job.error = redact(e?.message || String(e)); job.endedAt = Date.now(); ctx.log(`✗ ${job.error}`); prune(); },
     );
     return view(job);
   }

@@ -1,9 +1,9 @@
 // 대시보드(프로그램) 업데이트: 새 버전 감지 → 사용자가 누르면 내려받아 교체하고 서버를 다시 시작한다.
-// - 새 버전은 GitHub 릴리스(ai-office-app.zip)에서만 받는다. 주소는 이 저장소의 릴리스 경로로 고정하고, 릴리스가 알려 주는 sha256 이 있으면 검증한다.
+// - 새 버전은 GitHub 릴리스(ai-office-app.zip)에서만 받는다. 주소는 이 저장소의 릴리스 경로로 고정하고, 릴리스가 알려 주는 sha256 으로 반드시 검증한다(없으면 적용하지 않는다).
 // - 설치된 프로그램(<설치폴더>\app)만 교체한다. 소스에서 바로 실행 중이면 감지만 하고 `git pull` 을 안내한다.
 // - 교체 전에 현재 프로그램을 백업하고, 새 파일 검사나 복사가 실패하면 되돌린다. 사무실(봇)과 데이터는 건드리지 않는다.
 import { join, resolve } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, statSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, statSync, readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { APP_HOME, DATA_HOME, UPDATE_DIR } from './paths.mjs';
 import { readJson, writeJson, copyTree, isFile, isDir, need, run, ps, psQuote, isWindows, nowIso, stamp, HttpError } from './util.mjs';
@@ -27,6 +27,16 @@ export function compareVersions(a, b) {
 }
 
 // GitHub 릴리스 JSON → 업데이트 정보. 이 저장소의 릴리스 주소가 아니거나 zip 이 없으면 null.
+// 압축을 푼 폴더 밖을 가리키는 바로가기(심볼릭 링크·정션)가 들어 있으면 거부한다.
+function assertContained(dir) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) throw new HttpError(502, '내려받은 파일에 바로가기(링크)가 들어 있어 업데이트를 중단했습니다.');
+    if (st.isDirectory()) assertContained(p);
+  }
+}
+
 export function parseRelease(rel, repo = REPO) {
   if (!rel || rel.draft || rel.prerelease || !parseVersion(rel.tag_name)) return null;
   const asset = (rel.assets || []).find((a) => a && a.name === ASSET);
@@ -126,9 +136,11 @@ export function createUpdater({ current, appHome = APP_HOME, dataHome = DATA_HOM
       const zip = join(work, ASSET);
       await t.download(l.url, zip);
       if (statSync(zip).size > MAX_ZIP) throw new Error('파일이 너무 큽니다.');
-      if (l.sha256 && sha256(zip) !== l.sha256) throw new Error('내려받은 파일이 릴리스의 검증값(sha256)과 다릅니다. 업데이트를 중단했습니다.');
+      need(l.sha256, '이 릴리스에는 파일 검증값(sha256)이 없어 안전하게 확인할 수 없습니다. 업데이트를 중단했습니다.', 502);
+      if (sha256(zip) !== l.sha256) throw new Error('내려받은 파일이 릴리스의 검증값(sha256)과 다릅니다. 업데이트를 중단했습니다.');
       const out = join(work, 'x');
       await t.extract(zip, out);
+      assertContained(out);
 
       // 새 파일 점검: 우리 프로그램이 맞는지, 정말 새 버전인지, 코드가 문법 오류 없이 읽히는지.
       const pkg = readJson(join(out, 'package.json'), null);
