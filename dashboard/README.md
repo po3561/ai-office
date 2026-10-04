@@ -35,3 +35,11 @@ Claude Office와 라피스(하늘색 업무 공간)를 **하나의 화면**으�
 ## 설정 파일
 
 개인 주소와 봇 이름은 `config.local.json`(깃에 올라가지 않음)에 둡니다. `config.example.json` 을 복사해 값을 채우세요: `rentalUrl`(물품 대여 서버), `cloudBase`(라피스 클라우드 API 주소), `botUsernames`. 비어 있으면 해당 연결 기능만 꺼진 것으로 안내합니다.
+
+## 시작하기 · 연결 허브 · 봇 스튜디오 (v0.4)
+
+- **시작 마법사**(`web/setup.js`): 첫 실행 때 자동으로 열립니다. 쓸 엔진 묶음(Claude 사무실·로컬 AI·GPT·Hermes)을 고르면 필요한 도구를 공식 사이트에서 받아 설치하고, 계정 연결과 첫 봇 만들기로 이어집니다.
+- **연결 허브**(`web/hub.js`): Claude·ChatGPT(Codex)·API 키·Google·Ollama 모델·Hermes·Cloudflare 토큰.
+- **봇 스튜디오**(`web/studio.js`): 봇·역할·텔레그램 방/주제·스킬·시험 대화·웹 배포. 엔진 호출은 `src/office-routes.json` 허용 목록을 거칩니다(엔진에 새 API 를 만들면 여기에도 추가).
+- 개발: 저장소 루트에서 `npm run dev:lapis` (임시 데이터, 엔진+화면). `-- --fake-cloudflare` 를 붙이면 가짜 Cloudflare 로 웹 배포 흐름을 끝까지 시험할 수 있습니다.
+- 기본 클라우드 주소는 공식 라피스 클라우드이고, `config.local.json` 의 `cloudBase` 로 바꿀 수 있습니다. `rentalUrl` 을 비워 두면 「물품 대여」 메뉴는 숨겨집니다.

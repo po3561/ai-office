@@ -154,7 +154,14 @@ export default {
     if (req.method === 'GET' && url.pathname === '/api/info') return json({ app: 'lapis-bot', name: cfg.name });
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       const given = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-      if (!env.ACCESS_PASSWORD || !(await same(given, env.ACCESS_PASSWORD))) return json({ error: '비밀번호가 맞지 않아요.' }, 401);
+      // 비밀번호를 계속 틀리면 15분 동안 막는다(같은 주소 기준, 최선의 방어).
+      const failKey = 'f:' + (req.headers.get('cf-connecting-ip') || 'unknown');
+      const fails = Number((await env.KV.get(failKey)) || 0);
+      if (fails >= 10) return json({ error: '비밀번호를 너무 많이 틀렸어요. 잠시 뒤 다시 시도해 주세요.' }, 429);
+      if (!env.ACCESS_PASSWORD || !(await same(given, env.ACCESS_PASSWORD))) {
+        await env.KV.put(failKey, String(fails + 1), { expirationTtl: 900 });
+        return json({ error: '비밀번호가 맞지 않아요.' }, 401);
+      }
       const body = await req.json().catch(() => ({}));
       if (body.ping) return json({ ok: true });
       const text = String(body.message || '').trim().slice(0, 4000);

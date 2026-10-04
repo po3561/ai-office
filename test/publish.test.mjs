@@ -226,6 +226,10 @@ test('Worker: 비밀번호 확인, 웹 채팅, 기억, 텔레그램 웹훅(허�
   assert.equal((await (await req('/api/info')).json()).app, 'lapis-bot');
   // 비밀번호
   assert.equal((await chat({ message: 'hi' }, 'nope')).status, 401);
+  for (let i = 0; i < 9; i++) await chat({ message: 'hi' }, 'nope');
+  assert.equal((await chat({ message: 'hi' }, 'nope')).status, 429);
+  assert.equal((await chat({ ping: true })).status, 429);   // 막힌 동안은 맞는 비밀번호도 받지 않는다
+  kv.delete('f:unknown');
   assert.equal((await chat({ ping: true })).status, 200);
   assert.equal((await chat({ message: '' })).status, 400);
   // 웹 채팅: 기억, 생각 과정 숨김, 역할 지정
