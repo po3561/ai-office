@@ -85,7 +85,7 @@ export function createBots({ dir = BOTS_DIR, secrets, tg, nowMs = () => Date.now
     async listSummaries() { return Promise.all(list().map(summary)); },
     async detail(id) {
       const b = load(id);
-      return { ...b, ...(await summary(b)), telegram: { ...b.telegram, set: await secrets.has(tokenName(id)), pending: pendingView(b, nowMs()) } };
+      return { ...(await summary(b)), ...b, telegram: { ...b.telegram, set: await secrets.has(tokenName(id)), pending: pendingView(b, nowMs()) } };
     },
 
     create({ name, engine, persona, honorific, presets, access } = {}) {
