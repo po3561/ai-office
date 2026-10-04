@@ -141,20 +141,26 @@ export function createRuntime({ bots, engines, tg, log = () => {}, nowMs = () =>
     let backoff = 3000;
     const token = await bots.token(botId);
     let me;
+    // 읽어 온 위치(offset)는 처리가 끝난 메시지까지만 파일에 남긴다: 처리 중에 꺼져도 다음에 그 메시지를 다시 받는다.
+    let offset = readJson(offsetFile(botId), { offset: 0 }).offset;
+    const inflight = new Set();
+    const persist = (seen) => writeJson(offsetFile(botId), { offset: inflight.size ? Math.min(...inflight) : seen });
     while (!st.abort.signal.aborted) {
       try {
         me ||= await tg.getMe(token);
         st.username = me.username; st.error = '';
-        let offset = readJson(offsetFile(botId), { offset: 0 }).offset;
         const updates = await tg.getUpdates(token, { offset, timeout: pollTimeout, allowed_updates: ['message'] }, { signal: st.abort.signal });
         backoff = 3000;
         for (const u of updates) {
           offset = Math.max(offset, u.update_id + 1);
           st.handled++;
           const m = u.message;
-          if (m) queued(`${botId}:${m.chat?.id}:${m.message_thread_id || 0}`, () => handleMessage(botId, token, me, m));
+          if (m) {
+            inflight.add(u.update_id);
+            queued(`${botId}:${m.chat?.id}:${m.message_thread_id || 0}`, () => handleMessage(botId, token, me, m)).finally(() => { inflight.delete(u.update_id); persist(offset); });
+          }
         }
-        if (updates.length) writeJson(offsetFile(botId), { offset });
+        if (updates.length) persist(offset);
       } catch (e) {
         if (st.abort.signal.aborted) break;
         st.error = e.status === 409 ? '다른 곳에서 이 봇의 메시지를 받고 있어요. (같은 봇 토큰은 한 곳에서만 쓸 수 있어요. Claude Office·Hermes 등 다른 프로그램을 꺼 주세요.)' : e.message;

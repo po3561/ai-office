@@ -102,8 +102,6 @@ internal static class Launcher
                 if (!trayOnly) RunCli("app", true, 60000);
                 return 0;
             }
-            RunCli(trayOnly ? "app --tray" : "app", true, 90000);
-
             tray = new NotifyIcon();
             try { tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { tray.Icon = SystemIcons.Application; }
             tray.Text = "LAPIS — 봇이 일하고 있어요";
@@ -128,6 +126,9 @@ internal static class Launcher
             });
             tray.ContextMenuStrip = menu;
             tray.DoubleClick += delegate { RunCli("app", false, 0); };
+            // 트레이를 먼저 보여 주고, 엔진·화면은 뒤에서 켠다(느린 PC에서도 아이콘이 바로 뜬다).
+            bool tray2 = trayOnly;
+            ThreadPool.QueueUserWorkItem(delegate { RunCli(tray2 ? "app --tray" : "app", true, 90000); });
             Application.Run();
             tray.Visible = false;
             tray.Dispose();

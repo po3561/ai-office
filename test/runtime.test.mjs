@@ -273,3 +273,19 @@ test('봇 폐쇄: 이름을 똑같이 입력해야 하고, 폴더는 보관 위�
   assert.equal(existsSync(bots.folder(bot.id)), false);
   assert.equal(await secrets.has('tg:' + bot.id), false);
 });
+
+test('읽어 온 위치는 처리가 끝난 메시지까지만 저장한다', async (t) => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { tgState, bots, rt, bot } = await setup(t, { engineReply: async () => { await gate; return '늦은 답'; } });
+  bots.requestPairing(bot.id, { senderId: 5001, chatId: 5001 });
+  bots.pair(bot.id, Object.keys(bots.load(bot.id).telegram.pending)[0]);
+  const file = join(bots.folder(bot.id), 'offset.json');
+  await rt.start(bot.id);
+  tgState.queue.push({ update_id: 41, message: msg({ text: '오래 걸리는 질문' }) });
+  await waitFor(() => existsSync(file));
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).offset, 41);   // 아직 처리 중이므로 이 메시지를 다시 받을 수 있다
+  release();
+  await waitFor(() => tgState.sent.length === 1);
+  await waitFor(() => JSON.parse(readFileSync(file, 'utf8')).offset === 42);
+});
