@@ -9,6 +9,7 @@ import { isFile, readJson, writeJson, need, run, psQuote, isWindows, nowIso } fr
 import { getOffice, listOffices } from './offices.mjs';
 import { findClaude, claudeInfo } from './claude.mjs';
 import { tokenStatus } from './telegram.mjs';
+import { toolDirs } from './toolpath.mjs';
 
 const pidFile = (id) => join(RUN_DIR, `${id}.pid`);
 const scriptFile = (id) => join(RUN_DIR, `${id}.ps1`);
@@ -45,12 +46,13 @@ export function runtime(o, { legitPollers = 0 } = {}) {
   return { running: false, detail: '꺼짐' };
 }
 
-function launcherScript(o, claudePath) {
+function launcherScript(o, claudePath, extraDirs = toolDirs()) {
   return [
     "$ErrorActionPreference = 'Continue'",
     `$Host.UI.RawUI.WindowTitle = ${psQuote(`AI-Office · ${o.name}`)}`,
     `Set-Location -LiteralPath ${psQuote(o.folder)}`,
     `$env:TELEGRAM_STATE_DIR = ${psQuote(o.stateDir)}`,
+    ...(extraDirs.length ? [`$env:Path = ${psQuote(extraDirs.join(';') + ';')} + $env:Path`] : []),   // 앱이 설치한 Bun 등을 사무실 창이 찾도록
     "$env:MCP_TIMEOUT = '180000'",   // 저사양 PC에서는 텔레그램 플러그인 시작(bun install)이 30초를 넘겨 연결이 끊기므로 대기 시간을 늘린다.
     `New-Item -ItemType Directory -Force -Path ${psQuote(RUN_DIR)} | Out-Null`,
     `Set-Content -Path ${psQuote(pidFile(o.id))} -Value $PID`,
@@ -80,7 +82,8 @@ export async function startOffice(id, ctx = {}) {
   startedAt.set(id, Date.now());
   if (o.launch && o.launch.start) {
     // 예전 방식으로 만들어진 사무실은 그 사무실의 출근 스크립트를 그대로 쓴다.
-    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.start], { cwd: o.folder, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    // detached 금지: 콘솔 없이 뜬 Windows PowerShell 5.1 은 스크립트를 실행하지 않고 끝난다.
+    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.start], { cwd: o.folder, stdio: 'ignore', windowsHide: true }).unref();
     return { started: true, via: 'script' };
   }
   mkdirSync(RUN_DIR, { recursive: true });
@@ -101,7 +104,7 @@ export async function stopOffice(id) {
     const r = await run('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { timeout: 15000 });
     stopped = r.code === 0;
   } else if (o.launch && o.launch.stop) {
-    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.stop], { cwd: o.folder, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.stop], { cwd: o.folder, stdio: 'ignore', windowsHide: true }).unref();
     stopped = true;
   }
   rmSync(pidFile(id), { force: true });

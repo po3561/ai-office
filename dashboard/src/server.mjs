@@ -74,7 +74,7 @@ export function createDashboardServer(options={}){
   const calendarStore=options.calendarStore||createCalendarStore(join(dataDir,'calendar.json'));
   const taskStore=options.taskStore||createTaskStore(join(dataDir,'tasks.json'));
   const cloud=options.cloud||createCloud({vault,baseUrl:options.cloudBase||undefined,fetchImpl:options.cloudFetch});
-  const gcal=options.googleCalendar||createGoogleCalendar({vault,store:calendarStore,fetchImpl:options.googleFetch});
+  const gcal=options.googleCalendar||createGoogleCalendar({vault,store:calendarStore,cloud,fetchImpl:options.googleFetch});
   // 사무실에 맡긴 드라이브 위치(드라이브 접근)를 Office 에서 읽어 저장소 화면의 허용 범위로 쓴다.
   const getGrants=options.grants||(async()=>{
     const overview=await fetchJson(officeUrl+'/api/overview');
@@ -114,6 +114,8 @@ export function createDashboardServer(options={}){
       }
       if(url.pathname==='/api/telegram'&&req.method==='GET')return json(res,200,await getTelegram());
       if(url.pathname==='/api/drives'&&req.method==='GET')return json(res,200,{drives:await getDrives()});
+      // 개인용 연결(물품 대여 등)은 주소가 설정돼 있을 때만 화면에 보인다.
+      if(url.pathname==='/api/features'&&req.method==='GET')return json(res,200,{rental:Boolean(rentalUrl),cloud:true});
       if(url.pathname==='/api/health'&&req.method==='GET')return json(res,200,{app:'lapis-office-dashboard',version:'0.3.0',receiversOwned:0});
       if(url.pathname==='/api/hermes/health'&&req.method==='GET')return respond(res,await upstream(hermesUrl+'/health',{timeout:5000,limit:10000}));
       if(url.pathname==='/api/hermes/chat'&&req.method==='POST'){
@@ -136,7 +138,9 @@ export function createDashboardServer(options={}){
         const path=url.pathname.slice('/office'.length);
         if(!OFFICE_ROUTES.some(r=>r.method===req.method&&r.re.test(path)))throw new RequestError(404,'연결되지 않은 Office 기능입니다.');
         const body=write?await readLimited(req,200000):undefined;
-        const result=await upstream(officeUrl+path+url.search,{method:req.method,body,headers:write?{'content-type':'application/json','x-ai-office':'1'}:{},timeout:60000});
+        // 로컬 AI 시험 대화처럼 오래 걸리는 요청은 더 기다린다.
+        const slow=/^\/api\/bots\/[^/]+\/test$/.test(path);
+        const result=await upstream(officeUrl+path+url.search,{method:req.method,body,headers:write?{'content-type':'application/json','x-ai-office':'1'}:{},timeout:slow?190000:60000});
         overviewCache=null;return respond(res,result);
       }
       if(url.pathname.startsWith('/rental/')){
@@ -173,7 +177,7 @@ export function createDashboardServer(options={}){
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   const port=Number(process.env.LAPIS_DASHBOARD_PORT||4310);
   if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid dashboard port');
-  const server=createDashboardServer({dataDir:process.env.LAPIS_DATA_DIR||undefined});
+  const server=createDashboardServer({dataDir:process.env.LAPIS_DATA_DIR||undefined,officeUrl:process.env.LAPIS_OFFICE_URL||undefined});
   server.listen(port,'127.0.0.1',()=>console.log('LAPIS Office: http://127.0.0.1:'+port));
   server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'지정한 포트가 이미 사용 중입니다.':'대시보드 시작 실패');process.exitCode=1;});
 }

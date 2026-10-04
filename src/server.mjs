@@ -6,7 +6,7 @@ import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
-import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
+import { readJson, HttpError, need, isDir, isWindows, run } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listGrants as listDriveGrants, setGrant as setDriveGrant, removeGrant as removeDriveGrant } from './drives.mjs';
@@ -19,6 +19,16 @@ import { runtime, startOffice, stopOffice, requestRestart, watchdogTick, forgetR
 import { createUpdater } from './updater.mjs';
 import * as tg from './telegram.mjs';
 import * as lr from './rooms-legacy.mjs';
+import { createJobs } from './jobs.mjs';
+import { createComponents } from './components.mjs';
+import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
+import { createSecrets } from './secrets.mjs';
+import { createConnections } from './connections.mjs';
+import { createTgApi } from './tgapi.mjs';
+import { createEngines, ENGINE_TYPES } from './engines.mjs';
+import { createBots, AGENT_PRESETS } from './bots.mjs';
+import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
+import { createPublisher } from './publish.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -218,8 +228,13 @@ const builtinSkills = () => findSkillDirs(join(TEMPLATES, 'office', '.claude', '
 const market = createMarket({ home: DATA_HOME, settings: () => getConfig().market, log: logChange, builtin: builtinSkills });
 const honorificOf = (o) => { try { return loadOffice(o.folder).honorific; } catch { return ''; } };
 // 마켓에서 다루는 사무실: 읽기 전용(Hermes)은 제외한다.
-const marketOffices = () => listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
-  .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) }));
+// LAPIS 봇(런타임)은 스킬을 메시지마다 다시 읽으므로 설치해도 재출근이 필요 없다(hot).
+const lapisBotTargets = () => bots.list().map((b) => ({ id: `bot-${b.id}`, name: `${b.name} (LAPIS 봇)`, folder: bots.folder(b.id), skillsDir: bots.skillsDir(b.id), honorifics: [b.honorific].filter(Boolean), hot: true }));
+const marketOffices = () => [
+  ...listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
+    .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) })),
+  ...lapisBotTargets(),
+];
 // 마켓에서 스킬을 받을 수 있는 곳 = 내 사무실 + 읽기 전용 외부 봇(Hermes: 라피스 등).
 // 외부 봇은 설치·업데이트·제거할 때만 예외로, 그 봇의 `skills/<스킬 이름>/` 폴더 안에서만 파일을 쓴다. 게시(내보내기)·부서·설정·실행은 여전히 못 한다.
 const hermesTargets = () => listOffices().filter((o) => o.kind === 'hermes' && isDir(join(o.folder, 'skills')))
@@ -228,7 +243,7 @@ const marketTargets = () => [...marketOffices(), ...hermesTargets()];
 const marketTarget = (id) => { const o = marketTargets().find((x) => x.id === id); need(o, '설치할 곳을 찾을 수 없습니다.', 404); return o; };
 const marketOffice = (id) => { const o = marketOffices().find((x) => x.id === id); need(o, '사무실을 찾을 수 없습니다.', 404); return o; };
 const localSkill = (o, skillId) => { const k = findSkillDirs(o.skillsDir).find((x) => x.id === skillId); need(k, '이 사무실에 없는 스킬입니다.', 404); return k; };   // 화면이 보낸 이름으로 경로를 만들지 않고 목록에서 찾는다
-const marketRestart = (o, r) => ({ ...r, external: Boolean(o.external), needsRestart: !o.external && runtime(getOffice(o.id)).running });
+const marketRestart = (o, r) => ({ ...r, external: Boolean(o.external), needsRestart: !o.external && !o.hot && runtime(getOffice(o.id)).running });
 
 route('GET', '/api/market/status', async () => market.status());
 route('POST', '/api/market/connect', async ({ body }) => {
@@ -266,6 +281,77 @@ route('POST', '/api/market/requests/dismiss', async ({ body }) => {
 route('POST', '/api/market/revoke', async ({ body }) => market.revoke({ id: body.id, reason: body.reason }));
 route('POST', '/api/market/install', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.install({ id: body.id, office: o, allowRisk: body.allowRisk === true, overwrite: body.overwrite === true })); });
 route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketTarget(body.office); return marketRestart(o, await market.uninstall({ id: body.id, office: o })); });
+
+// ── 설치 도우미: 필요한 도구 감지·설치(Claude Code·Bun·Codex·Ollama·Hermes), 로컬 AI 모델 ──
+// 설치는 화면에서 사용자가 누를 때만 시작하고, 진행 상황은 작업(jobs)으로 읽는다.
+export const jobs = createJobs();
+export const components = createComponents({ jobs });
+export const ollama = createOllama({ bin: () => cachedOllamaBin });
+let cachedOllamaBin = '';
+components.detect('ollama').then((d) => { cachedOllamaBin = d.path; }).catch(() => {});
+route('GET', '/api/components', async ({ url }) => ({ components: await components.list({ fresh: url.searchParams.get('fresh') === '1' }) }));
+route('POST', '/api/components/:id/install', async ({ p }) => { const j = components.install(p.id); return j; });
+route('GET', '/api/jobs', async () => ({ jobs: jobs.list() }));
+route('GET', '/api/jobs/:id', async ({ p }) => jobs.get(p.id));
+route('GET', '/api/ollama', async () => { const d = await components.detect('ollama'); cachedOllamaBin = d.path; return { installed: d.installed, version: d.version, recommended: OLLAMA_RECOMMENDED, ...(d.installed ? await ollama.models() : { running: false, models: [] }) }; });
+route('POST', '/api/ollama/pull', async ({ body }) => { const name = String(body.name || '').trim(); return jobs.start('ollama-pull:' + name, '모델 받기: ' + name, (ctx) => ollama.pull(name, ctx)); });
+
+// ── 연결 허브: GPT(ChatGPT 로그인·API 키)·Anthropic·Cloudflare 키. 키 값은 응답에 담지 않는다. ──
+export const secrets = createSecrets();
+export const connections = createConnections({ components, secrets, ollama, runImpl: run });
+route('GET', '/api/connections', async () => connections.status());
+route('POST', '/api/connections/codex/login', async () => connections.startCodexLogin());
+route('PUT', '/api/connections/keys/:name', async ({ p, body }) => connections.setKey(p.name, body.key));
+route('DELETE', '/api/connections/keys/:name', async ({ p }) => connections.clearKey(p.name));
+route('GET', '/api/connections/models/:provider', async ({ p }) => connections.models(p.provider));
+
+// ── 봇 스튜디오(LAPIS 런타임 봇): 봇·에이전트·방·주제 설정과 텔레그램 수신 ──
+// 엔진은 봇·에이전트마다 고른다(로컬 AI·GPT·Claude·Hermes). 텔레그램 허용(페어링)은 이 화면에서만 바뀐다.
+export const tgApi = createTgApi();
+export const engines = createEngines({ ollama, secrets, components, runImpl: run });
+export const bots = createBots({ secrets, tg: tgApi });
+export const runtimeBots = createRuntime({ bots, engines, tg: tgApi, log: (m) => console.log(m) });
+route('GET', '/api/bots', async () => ({ bots: await bots.listSummaries(), engineTypes: ENGINE_TYPES, agentPresets: AGENT_PRESETS, readiness: await connections.readiness() }));
+route('POST', '/api/bots', async ({ body }) => { const b = bots.create(body); return bots.detail(b.id); });
+route('GET', '/api/bots/:id', async ({ p }) => ({ ...(await bots.detail(p.id)), runtime: runtimeBots.view(p.id) }));
+route('PATCH', '/api/bots/:id', async ({ p, body }) => { bots.update(p.id, body); return bots.detail(p.id); });
+route('POST', '/api/bots/:id/close', async ({ p, body }) => { await runtimeBots.stop(p.id); return bots.close(p.id, body.confirmName); });
+route('POST', '/api/bots/:id/start', async ({ p }) => runtimeBots.start(p.id));
+route('POST', '/api/bots/:id/stop', async ({ p }) => runtimeBots.stop(p.id));
+route('POST', '/api/bots/:id/agents', async ({ p, body }) => bots.addAgent(p.id, body));
+route('PATCH', '/api/bots/:id/agents/:key', async ({ p, body }) => bots.updateAgent(p.id, p.key, body));
+route('DELETE', '/api/bots/:id/agents/:key', async ({ p }) => bots.removeAgent(p.id, p.key));
+route('POST', '/api/bots/:id/telegram/token', async ({ p, body }) => bots.saveToken(p.id, body.token));
+route('DELETE', '/api/bots/:id/telegram/token', async ({ p }) => { await runtimeBots.stop(p.id); await bots.clearToken(p.id); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/pair', async ({ p, body }) => bots.pair(p.id, body.code));
+route('POST', '/api/bots/:id/telegram/deny', async ({ p, body }) => { bots.deny(p.id, body.code); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/remove', async ({ p, body }) => { bots.removeSender(p.id, body.senderId); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/policy', async ({ p, body }) => { bots.setPolicy(p.id, body.mode); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/rooms/:chat', async ({ p, body }) => bots.setRoom(p.id, p.chat, body));
+route('DELETE', '/api/bots/:id/telegram/rooms/:chat', async ({ p }) => { bots.forgetRoom(p.id, p.chat); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/rooms/:chat/topics/:thread', async ({ p, body }) => bots.setTopic(p.id, p.chat, p.thread, body));
+// LAPIS_CF_BASE 는 개발·시험용(가짜 Cloudflare 서버로 돌려 볼 때)이다.
+export const publisher = createPublisher({ bots, secrets, tg: tgApi, stopLocal: (id) => runtimeBots.stop(id), cfBase: process.env.LAPIS_CF_BASE || undefined });
+// 웹 배포(Cloudflare Workers): 올리기는 화면에서 사용자가 누를 때만. 비밀번호는 보기 요청(POST)으로만 돌려준다.
+route('GET', '/api/bots/:id/publish', async ({ p }) => ({ plan: await publisher.plan(p.id), status: publisher.status(p.id) }));
+route('POST', '/api/bots/:id/publish', async ({ p, body }) => jobs.start('publish:' + p.id, '웹 배포', (ctx) => publisher.deploy(p.id, body, ctx)));
+route('POST', '/api/bots/:id/publish/password', async ({ p }) => ({ password: await publisher.revealPassword(p.id) }));
+route('POST', '/api/bots/:id/publish/restore-local', async ({ p }) => publisher.restoreLocal(p.id));
+route('DELETE', '/api/bots/:id/publish', async ({ p }) => publisher.remove(p.id));
+route('GET', '/api/bots/:id/skills', async ({ p }) => ({ skills: bots.listSkills(p.id) }));
+route('POST', '/api/bots/:id/skills', async ({ p, body }) => bots.saveSkill(p.id, body));
+route('DELETE', '/api/bots/:id/skills/:skill', async ({ p }) => bots.removeSkill(p.id, p.skill));
+// 텔레그램 없이 엔진 설정을 바로 시험한다(역할을 고르면 그 역할로 답한다).
+route('POST', '/api/bots/:id/test', async ({ p, body }) => {
+  const b = bots.load(p.id);
+  const text = String(body.message || '').trim();
+  need(text && text.length <= 4000, '시험 문장을 1~4,000자로 적어 주세요.');
+  const picked = body.agent ? { agent: b.agents.find((a) => a.key === body.agent) || null, text } : pickAgent(b, { text });
+  const engine = picked.agent?.engine?.type ? picked.agent.engine : b.engine;
+  const system = buildSystem(b, { agent: picked.agent, skillsDir: bots.skillsDir(p.id) });
+  const answer = await engines.complete({ engine, system, messages: [{ role: 'user', content: picked.text }], cwd: join(bots.folder(p.id), 'work'), access: picked.agent?.access || b.access });
+  return { answer, agent: picked.agent?.key || '', engine };
+});
 
 // ── 프로그램 업데이트 ── 감지는 자동(6시간마다), 설치는 사용자가 누를 때만(설정에서 「자동 설치」를 켠 경우 제외).
 route('POST', '/api/update/check', async () => updater.check());
@@ -353,6 +439,8 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
     setInterval(updateTick, 6 * 60 * 60 * 1000).unref?.();
   }
 
+  components.list().catch(() => {});   // 도구 감지를 미리 데워 두면 첫 화면이 빨리 열린다
+  runtimeBots.startAll().catch((e) => console.error('[ai-office] 봇 자동 시작 실패', e.message));
   return new Promise((ok, fail) => {
     server.once('error', fail);
     server.listen(port, '127.0.0.1', () => ok({ server, port }));

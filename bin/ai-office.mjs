@@ -2,7 +2,8 @@
 // AI-Office 명령줄
 //   ai-office serve [--port N]        대시보드 서버 실행(창 없이)
 //   ai-office open                    서버가 없으면 켜고, 대시보드 창을 연다
-//   ai-office stop                    서버 끄기
+//   ai-office app [--tray]            앱 실행: 엔진과 LAPIS 대시보드를 창 없이 켜고 앱 창을 연다(--tray 는 창 없이 켜기만)
+//   ai-office stop                    서버 끄기(엔진·대시보드)
 //   ai-office office list|create|import|remove|restart …
 //   ai-office team   list|add|update|remove|presets --office <id> …   (비서실장 봇도 이 명령으로 부서를 관리한다)
 //   ai-office permit list|add|remove --office <id> …   (사용자가 텔레그램으로 허용한 좁은 규칙만 봇이 이 명령으로 연다)
@@ -11,10 +12,12 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { CLI, APP_HOME, DATA_HOME, LOG_DIR } from '../src/paths.mjs';
+const DASH_PORT = Number(process.env.LAPIS_DASHBOARD_PORT) || 4310;
+const DASH_ENTRY = join(APP_HOME, 'dashboard', 'src', 'server.mjs');
 import { getConfig } from '../src/config.mjs';
 import { PRESETS } from '../src/presets.mjs';
 import { isWindows, run, HttpError, isDir } from '../src/util.mjs';
-import { mkdirSync, openSync } from 'node:fs';
+import { mkdirSync, openSync, existsSync } from 'node:fs';
 
 const [, , cmd, sub, ...rest] = process.argv;
 
@@ -47,6 +50,25 @@ async function ensureServer(port) {
   return false;
 }
 
+async function pingDashboard() {
+  try {
+    const r = await fetch(`http://127.0.0.1:${DASH_PORT}/api/health`, { signal: AbortSignal.timeout(1500) });
+    return (await r.json()).app === 'lapis-office-dashboard';
+  } catch { return false; }
+}
+
+// LAPIS 대시보드(화면)를 창 없이 켠다. 엔진 주소와 데이터 폴더는 환경 값으로 넘긴다.
+async function ensureDashboard(enginePort) {
+  if (await pingDashboard()) return true;
+  if (!existsSync(DASH_ENTRY)) return false;
+  mkdirSync(LOG_DIR, { recursive: true });
+  const out = openSync(join(LOG_DIR, 'dashboard.log'), 'a');
+  const env = { ...process.env, LAPIS_DASHBOARD_PORT: String(DASH_PORT), LAPIS_OFFICE_URL: `http://127.0.0.1:${enginePort}`, LAPIS_DATA_DIR: join(DATA_HOME, 'lapis'), LAPIS_CONFIG: process.env.LAPIS_CONFIG || join(DATA_HOME, 'lapis-config.json') };
+  spawn(process.execPath, ['--no-warnings', DASH_ENTRY], { cwd: join(APP_HOME, 'dashboard'), env, detached: true, stdio: ['ignore', out, out], windowsHide: true }).unref();
+  for (let i = 0; i < 40; i++) { await new Promise((r) => setTimeout(r, 300)); if (await pingDashboard()) return true; }
+  return false;
+}
+
 // 앱 창(주소창 없는 창)으로 연다. Edge → Chrome → 기본 브라우저 순서.
 function openWindow(url) {
   if (!isWindows) { spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { detached: true, stdio: 'ignore' }).unref(); return; }
@@ -54,7 +76,7 @@ function openWindow(url) {
   const cands = pf.flatMap((p) => [join(p, 'Microsoft', 'Edge', 'Application', 'msedge.exe'), join(p, 'Google', 'Chrome', 'Application', 'chrome.exe')]);
   import('node:fs').then(({ existsSync }) => {
     const exe = cands.find((c) => existsSync(c));
-    if (exe) spawn(exe, [`--app=${url}`, '--window-size=1280,860'], { detached: true, stdio: 'ignore' }).unref();
+    if (exe) spawn(exe, [`--app=${url}`, '--window-size=1280,860', `--user-data-dir=${join(DATA_HOME, 'window')}`, '--no-first-run', '--no-default-browser-check'], { detached: true, stdio: 'ignore' }).unref();
     else spawn('cmd.exe', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   });
 }
@@ -81,10 +103,22 @@ async function main() {
       openWindow(`http://127.0.0.1:${cfg.port}/`);
       return;
     }
+    case 'app': {
+      const f = flags([sub, ...rest].filter(Boolean));
+      if (!(await ensureServer(cfg.port))) fail('엔진을 시작하지 못했습니다. 로그: ' + join(LOG_DIR, 'server.log'));
+      const dash = await ensureDashboard(cfg.port);
+      if (!dash) { line('LAPIS 화면 파일이 없어 기본 대시보드를 엽니다.'); if (!f.tray) openWindow(`http://127.0.0.1:${cfg.port}/`); return; }
+      if (!f.tray) openWindow(`http://127.0.0.1:${DASH_PORT}/`);
+      return;
+    }
     case 'stop': {
-      if (!(await ping(cfg.port))) { line('실행 중인 서버가 없습니다.'); return; }
+      // 우리 서버로 확인된 포트만 끈다(다른 프로그램이 쓰는 포트는 건드리지 않는다).
+      const ports = [];
+      if (await ping(cfg.port)) ports.push(cfg.port);
+      if (await pingDashboard()) ports.push(DASH_PORT);
+      if (!ports.length) { line('실행 중인 서버가 없습니다.'); return; }
       if (isWindows) {
-        const r = await run('powershell.exe', ['-NoProfile', '-Command', `Get-NetTCPConnection -LocalPort ${cfg.port} -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`]);
+        const r = await run('powershell.exe', ['-NoProfile', '-Command', `Get-NetTCPConnection -LocalPort ${ports.join(',')} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`]);
         line(r.code === 0 ? '서버를 껐습니다.' : '서버를 끄지 못했습니다.');
       } else line('터미널에서 서버 프로세스를 종료해 주세요.');
       return;
@@ -95,7 +129,7 @@ async function main() {
     case 'drive': return driveCmd(sub, flags(rest));
     case 'doctor': return doctor();
     default:
-      line('사용법: ai-office <serve|open|stop|office|team|permit|drive|doctor>');
+      line('사용법: ai-office <app|serve|open|stop|office|team|permit|drive|doctor>');
       line('  office list | create --name 이름 [--honorific 호칭] [--presets a,b] | import --folder 경로 [--name 이름] | remove --office id | restart --office id [--delay 초]');
       line('  team   list|add|update|remove|presets --office id …');
       line('  permit list|add|remove --office id [--rule 규칙 --reason 이유 --approved 사용자 승인 답장]');

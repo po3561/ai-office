@@ -15,7 +15,7 @@ export function loginPrompt(text='이 기능은 라피스 계정으로 로그인
 }
 
 // 브라우저에서 인증을 마칠 때까지 기다린다(2.5초마다 확인, 최대 10분).
-async function waitForAuth({start,poll,status,onDone}){
+export async function waitForAuth({start,poll,status,onDone}){
   const first=await start();
   const authUrl=safeHttps(first.url);
   if(!authUrl)throw new Error('인증 주소가 올바르지 않습니다.');

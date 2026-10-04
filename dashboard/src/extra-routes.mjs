@@ -1,4 +1,4 @@
-// 통합 서버의 추가 기능 경로: 라피스 계정·Google(클라우드), 자체 캘린더와 Google 캘린더 연동, 저장소(맡긴 드라이브 보기).
+// 통합 서버의 추가 기능 경로: 라피스 계정·Google(클라우드), 자체 캘린더와 Google 캘린더 연동(라피스 계정 또는 내 OAuth 클라이언트), 저장소(맡긴 드라이브 보기).
 // 변경 요청이 대시보드 화면에서 온 것인지 등의 공통 검사는 server.mjs 가 먼저 한다.
 import {CloudError} from './lapis-cloud.mjs';
 import {CalendarError} from './calendar.mjs';
@@ -55,6 +55,9 @@ export function createExtraRoutes({cloud,calendar,gcal,tasks,getGrants,listLocal
         res.writeHead(200,{'content-type':'text/calendar; charset=utf-8','content-disposition':'attachment; filename="lapis-calendar.ics"','cache-control':'no-store'});res.end(await calendar.ics());return true;
       }
       if(path==='/api/calendar/google'&&method==='GET')return json(res,200,await gcal.status()),true;
+      if(path==='/api/calendar/google/lapis/connect'&&method==='POST')return json(res,200,await gcal.beginLapis()),true;
+      if(path==='/api/calendar/google/lapis/poll'&&method==='POST'){const b=await readJson(req);return json(res,200,await gcal.pollLapis(b.attemptId)),true;}
+      if(path==='/api/calendar/google/lapis/use'&&method==='POST')return json(res,200,await gcal.useLapis()),true;
       if(path==='/api/calendar/google/config'&&method==='POST')return json(res,200,await gcal.saveConfig(await readJson(req))),true;
       if(path==='/api/calendar/google/connect'&&method==='POST')return json(res,200,await gcal.beginAuth('http://127.0.0.1:'+port+'/oauth/google/callback')),true;
       if(path==='/api/calendar/google/sync'&&method==='POST')return json(res,200,await gcal.sync()),true;

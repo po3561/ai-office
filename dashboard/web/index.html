@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/lapis.css">
 <link rel="stylesheet" href="/pages.css">
 <link rel="stylesheet" href="/prefs.css">
+<link rel="stylesheet" href="/platform.css">
 <script type="module" src="/office.js"></script>
 <script type="module" src="/lapis.js"></script>
 </head>
@@ -100,6 +101,18 @@
         <div class="cal-layout"><div id="cal-body" class="card cal-card"></div><aside id="cal-side" class="card"></aside></div>
         <section class="card" style="margin-top:16px"><div class="card-head"><div><h2>라피스 계정의 오늘 일정</h2><p class="sub">라피스 계정에 연결된 Google 캘린더의 오늘 일정을 읽기 전용으로 보여 줘요.</p></div><button id="cal-cloud-load" class="btn sm">불러오기</button></div><div id="cal-cloud"></div></section>
       </section>
+
+      <!-- 시작 마법사 -->
+      <section id="view-setup" class="view" hidden><div id="setup-body" class="stack"></div></section>
+
+      <!-- 연결 허브 -->
+      <section id="view-hub" class="view" hidden>
+        <p class="view-intro">Claude · GPT · Google · 로컬 AI · Hermes 를 한곳에서 연결해요. 터미널은 필요 없어요.</p>
+        <div id="hub-body"></div>
+      </section>
+
+      <!-- 봇 스튜디오 -->
+      <section id="view-studio" class="view" hidden><div id="studio-body"></div></section>
 
       <!-- 저장소 -->
       <section id="view-storage" class="view" hidden>

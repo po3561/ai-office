@@ -153,7 +153,8 @@ test('Google Calendar connects with PKCE and syncs both ways without duplicating
   const dir=await tmp(),google=fakeGoogle();
   const vault=createVault(join(dir,'v.bin'),plain),store=createCalendarStore(join(dir,'cal.json'));
   const gcal=createGoogleCalendar({vault,store,fetchImpl:google.handler});
-  assert.deepEqual(await gcal.status(),{configured:false,connected:false,clientId:null,lastSync:null});
+  const initial=await gcal.status();
+  assert.deepEqual([initial.mode,initial.configured,initial.connected,initial.signedIn],['lapis',false,false,false],'without an own client the LAPIS account is the default');
   await assert.rejects(()=>gcal.saveConfig({clientId:'bad',clientSecret:'GOCSPX-secretvalue'}),/클라이언트 ID/);
   await gcal.saveConfig({clientId:'123-abc.apps.googleusercontent.com',clientSecret:'GOCSPX-secretvalue'});
   const {url}=await gcal.beginAuth('http://127.0.0.1:4310/oauth/google/callback');
@@ -163,7 +164,8 @@ test('Google Calendar connects with PKCE and syncs both ways without duplicating
   await assert.rejects(()=>gcal.completeAuth({state:'forged',code:'good-code'}),/만료되었거나/);
   await gcal.beginAuth('http://127.0.0.1:4310/oauth/google/callback');
   const second=new URL((await gcal.beginAuth('http://127.0.0.1:4310/oauth/google/callback')).url).searchParams.get('state');
-  assert.equal((await gcal.completeAuth({state:second,code:'good-code'})).connected,true);
+  const connected=await gcal.completeAuth({state:second,code:'good-code'});
+  assert.deepEqual([connected.mode,connected.connected],['own',true]);
   await assert.rejects(()=>gcal.completeAuth({state:second,code:'good-code'}),/만료되었거나/,'state is single use');
   assert.equal(JSON.stringify(await gcal.status()).includes('secret'),false);
 
@@ -193,6 +195,68 @@ test('Google Calendar connects with PKCE and syncs both ways without duplicating
   assert.equal((await store.all()).some(e=>e.title==='종일 행사'),false,'a cancelled Google event is removed locally');
   assert.equal([...google.remote.values()].some(e=>e.summary==='로컬에서 이름 변경'),false,'a local deletion is removed from Google');
   assert.equal((await gcal.disconnect()).connected,false);
+});
+
+function fakeLapisCalendar(){
+  const cals={primary:new Map(),'youth@example.com':new Map()},log=[];let seq=0;
+  const status={ok:true,connected:true,readable:true,writable:true,calendars:true,reauthRequired:false,account:'me@example.com'};
+  return {cals,log,status,
+    state:async()=>({signedIn:true,user:{id:'u1',email:'me@example.com',name:'나'}}),
+    startGoogleCalendarConnect:async()=>({attemptId:'a1',url:'https://accounts.google.com/o/oauth2/v2/auth?x=1'}),
+    pollGoogleConnect:async id=>({status:id==='a1'?'completed':'pending'}),
+    async calendarApi(method,path,{body}={}){
+      log.push(method+' '+path);
+      if(path==='/status')return {...status};
+      if(path==='/users/me/calendarList')return {items:[{id:'me@example.com',summary:'나',primary:true,accessRole:'owner',selected:true},{id:'youth@example.com',summary:'청년회',accessRole:'reader',selected:true},{id:'off@example.com',summary:'꺼 둔 캘린더',accessRole:'owner',selected:false}]};
+      const m=path.match(/^\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/),events=cals[decodeURIComponent(m[1])],id=m[2]&&decodeURIComponent(m[2]);
+      if(method==='GET')return {items:[...events.values()]};
+      if(method==='POST'){const e={id:'n'+(++seq),status:'confirmed',updated:new Date().toISOString(),...body};events.set(e.id,e);return e;}
+      if(method==='PATCH'){Object.assign(events.get(id),body,{updated:new Date(Date.now()+1000).toISOString()});return events.get(id);}
+      if(method==='DELETE'){if(!events.delete(id))throw Object.assign(new Error('gone'),{status:404});return {ok:true};}
+    }};
+}
+test('Google Calendar syncs through the LAPIS account across calendars and keeps read-only calendars read-only',async()=>{
+  const dir=await tmp(),cloud=fakeLapisCalendar();
+  const vault=createVault(join(dir,'v.bin'),plain),store=createCalendarStore(join(dir,'cal.json'));
+  const gcal=createGoogleCalendar({vault,store,cloud,fetchImpl:async()=>{throw Error('no direct Google calls in LAPIS mode');}});
+  const before=await gcal.status();
+  assert.deepEqual([before.mode,before.signedIn,before.linked,before.connected],['lapis',true,true,false],'linked on the account but not yet synced on this PC');
+  await assert.rejects(()=>gcal.sync(),/연결되어 있지 않습니다/);
+  assert.equal((await gcal.beginLapis()).attemptId,'a1');
+  assert.deepEqual(await gcal.pollLapis('a1'),{status:'completed'});
+  assert.equal((await gcal.status()).connected,true);
+
+  cloud.cals.primary.set('p1',{id:'p1',status:'confirmed',summary:'내 회의',start:{dateTime:'2026-10-07T01:00:00Z'},end:{dateTime:'2026-10-07T02:00:00Z'},updated:'2026-10-01T00:00:00Z'});
+  cloud.cals['youth@example.com'].set('y1',{id:'y1',status:'confirmed',summary:'청년회 모임',start:{date:'2026-10-11'},end:{date:'2026-10-12'},updated:'2026-10-01T00:00:00Z'});
+  const local=await store.create({title:'라피스에서 만든 일정',allDay:true,start:'2026-10-20',end:'2026-10-20'});
+  const first=await gcal.sync();
+  assert.deepEqual({pulled:first.pulled,pushed:first.pushed,errors:first.errors},{pulled:2,pushed:1,errors:[]});
+  assert.equal(cloud.log.some(l=>l.includes('off%40example.com')),false,'calendars hidden in Google are not synced');
+  const all=await store.all(),youth=all.find(e=>e.title==='청년회 모임'),mine=all.find(e=>e.title==='내 회의');
+  assert.deepEqual([youth.readOnly,youth.calendarName,youth.googleCalendarId],[true,'청년회','youth@example.com']);
+  assert.equal(mine.readOnly,false);assert.notEqual(youth.color,mine.color);
+  assert.ok([...cloud.cals.primary.values()].some(e=>e.summary==='라피스에서 만든 일정'),'new local events go to the primary calendar');
+  await assert.rejects(()=>store.update(youth.id,{title:'바꾸기'}),/읽기 전용/);
+  await assert.rejects(()=>store.remove(youth.id),/읽기 전용/);
+  const second=await gcal.sync();
+  assert.deepEqual({pulled:second.pulled,pushed:second.pushed},{pulled:0,pushed:0},'a second sync changes nothing');
+
+  await store.update(mine.id,{title:'내 회의(변경)'});await store.remove(local.id);
+  const third=await gcal.sync();
+  assert.equal(third.errors.length,0);
+  assert.equal(cloud.cals.primary.get('p1').summary,'내 회의(변경)');
+  assert.equal([...cloud.cals.primary.values()].some(e=>e.summary==='라피스에서 만든 일정'),false,'a local deletion reaches Google');
+
+  cloud.status.writable=false;
+  await store.create({title:'쓰기 권한 없을 때',allDay:true,start:'2026-10-21',end:'2026-10-21'});
+  const posts=cloud.log.filter(l=>l.startsWith('POST')).length;
+  const fourth=await gcal.sync();
+  assert.ok(fourth.errors.some(e=>e.includes('쓰기 권한')));
+  assert.equal(cloud.log.filter(l=>l.startsWith('POST')).length,posts,'nothing is written without the write scope');
+  assert.equal((await store.all()).find(e=>e.title==='내 회의(변경)').readOnly,true,'every Google event becomes read-only without the write scope');
+
+  const off=await gcal.disconnect();
+  assert.deepEqual([off.connected,off.linked],[false,true],'turning sync off keeps the account-level Google connection');
 });
 
 test('storage only lists drives the office was granted and never shows bot secrets',async()=>{
@@ -265,4 +329,14 @@ test('storage routes use the office grants and refuse everything else',async t=>
   const listed=await (await fetch(base+'/api/storage/local/list?path='+encodeURIComponent(share))).json();
   assert.equal(listed.entries[0].name,'a.txt');
   assert.equal((await fetch(base+'/api/storage/local/list?path='+encodeURIComponent(root.replace(/\\/g,'/')))).status,403);
+});
+test('the cloud calendar proxy only reaches calendar paths with the stored login',async()=>{
+  const dir=await tmp(),vault=createVault(join(dir,'v.bin'),plain),calls=[];
+  await vault.update({cloud:{accessToken:'access-1',refreshToken:'refresh-1',user:{id:'u1',email:'me@example.com',name:'나'}}});
+  const cloud=createCloud({baseUrl:'https://cloud.test/api/v1',vault,fetchImpl:async(url,init)=>{calls.push({url,init});return reply(200,{items:[]});}});
+  await cloud.calendarApi('GET','/calendars/'+encodeURIComponent('youth@example.com')+'/events',{query:{timeMin:'2026-10-01T00:00:00Z',pageToken:undefined}});
+  assert.equal(calls[0].url,'https://cloud.test/api/v1/integrations/google-calendar/calendars/youth%40example.com/events?timeMin=2026-10-01T00%3A00%3A00Z');
+  assert.equal(calls[0].init.headers.Authorization,'Bearer access-1');
+  for(const path of ['/calendars/primary/acl','/../admin/users','/users/me/settings'])await assert.rejects(()=>cloud.calendarApi('GET',path),/연결되지 않은/);
+  assert.equal(calls.length,1);
 });

@@ -1,0 +1,47 @@
+/* 시작 마법사 · 연결 허브 · 봇 스튜디오 */
+.setup-hero{margin-bottom:16px}
+.setup-step{margin:0 0 16px!important}
+.setup-step .card-head > div:first-child{display:flex;gap:14px;align-items:flex-start}
+.step-n{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--accent);color:var(--on-accent);flex:none}
+.step-n.done{background:var(--ok-soft);color:var(--ok)}
+.pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.pack{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer}
+.pack:hover{background:var(--panel-2)}
+.pack.on{border-color:var(--accent);background:var(--accent-soft)}
+.pack input{margin-top:4px}
+.pack p{margin-top:2px}
+.comp-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.comp-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;padding:12px 14px;border-top:1px solid var(--line);align-items:center}
+.comp-row:first-child{border-top:0}
+.comp-row .job-box{grid-column:1/-1}
+.comp-text .faint,.faint{color:var(--faint)}
+.job-box{margin-top:2px}
+.job-label{font-size:12.5px;font-weight:700;margin-bottom:5px}
+.job-log{margin-top:5px;overflow-wrap:anywhere}
+.meter.bad i{background:var(--bad)}
+.meter.indeterminate i{width:35%!important;animation:slide 1.4s ease-in-out infinite}
+@keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+.card.inner{box-shadow:none;background:var(--panel-2)}
+.conn-row{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.conn-row:first-child{border-top:0}
+.hub-card{margin:0!important;display:flex;flex-direction:column;gap:12px}
+.hub-card .card-head{margin-bottom:0}
+.engine-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:12px}
+.engine{display:flex;flex-direction:column;gap:6px;align-items:flex-start;text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.engine:hover{background:var(--panel-2)}
+.engine.on{border-color:var(--accent);background:var(--accent-soft)}
+.bot-card{margin:0!important;display:flex;flex-direction:column;gap:12px}
+.bot-card .card-head{margin-bottom:0}
+.bot-title{font-size:22px;letter-spacing:-.4px;margin:4px 0 2px}
+.agent-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0}
+.agent-card > summary{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 14px;cursor:pointer;list-style:none}
+.agent-card > summary::-webkit-details-marker{display:none}
+.agent-card[open] > summary{border-bottom:1px solid var(--line)}
+.agent-form{display:flex;flex-direction:column;gap:12px;padding:14px}
+.room{border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:12px;display:flex;flex-direction:column;gap:10px}
+.topic-row{display:grid;grid-template-columns:70px 160px 180px minmax(0,1fr) auto;gap:8px;align-items:start}
+.guide{margin:0 0 12px;padding-left:20px;color:var(--muted)}
+.guide li{margin:3px 0}
+.card .field + .field,.card .field + .row,.card .row + .field{margin-top:10px}
+.agent-form textarea,.card textarea{width:100%}
+@media (max-width:760px){.topic-row{grid-template-columns:1fr}.comp-row{grid-template-columns:1fr}}

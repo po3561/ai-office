@@ -51,7 +51,7 @@ if (Test-Path $cli) {
     Start-Sleep -Seconds 1
 }
 New-Item -ItemType Directory -Force -Path $app | Out-Null
-$items = 'bin', 'src', 'web', 'templates', 'scripts', 'assets'
+$items = 'bin', 'src', 'web', 'dashboard', 'templates', 'scripts', 'assets'
 foreach ($i in $items) {
     $from = Join-Path $SourceDir $i
     if (Test-Path $from) { robocopy $from (Join-Path $app $i) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null }
@@ -74,7 +74,7 @@ if (-not $NoShortcuts) {
         param($path)
         $l = $sh.CreateShortcut($path)
         $l.TargetPath = "$env:SystemRoot\System32\wscript.exe"
-        $l.Arguments = "`"$vbs`" `"$node`" `"$cli`" open"
+        $l.Arguments = "`"$vbs`" `"$node`" `"$cli`" app"
         $l.WorkingDirectory = $app
         $l.Description = 'AI-Office 대시보드'
         if (Test-Path $icon) { $l.IconLocation = $icon }
@@ -114,4 +114,4 @@ else {
 
 Say ''
 Say '  설치가 끝났습니다. 시작 메뉴의 「AI-Office 대시보드」로 열 수 있습니다.' 'Green'
-if (-not $NoLaunch) { Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList "`"$vbs`" `"$node`" `"$cli`" open" }
+if (-not $NoLaunch) { Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList "`"$vbs`" `"$node`" `"$cli`" app" }

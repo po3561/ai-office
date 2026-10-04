@@ -11,7 +11,7 @@ import { readJson, writeJson, copyTree, isFile, isDir, need, run, ps, psQuote, i
 export const REPO = 'po3561/ai-office';
 const ASSET = 'ai-office-app.zip';
 const MAX_ZIP = 40 * 1024 * 1024;
-const APP_ITEMS = ['bin', 'src', 'web', 'templates', 'scripts', 'assets'];       // install.ps1 과 같은 구성
+const APP_ITEMS = ['bin', 'src', 'web', 'dashboard', 'templates', 'scripts', 'assets'];       // install.ps1 과 같은 구성
 const APP_FILES = ['package.json', 'README.md', 'LICENSE', 'install.ps1', 'uninstall.ps1'];
 
 // "v0.3.1" / "0.3.1" → [0,3,1]. 알아볼 수 없으면 null (미리보기 같은 "-beta" 꼬리표는 버린다).

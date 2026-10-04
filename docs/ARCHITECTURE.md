@@ -3,13 +3,17 @@
 외부 패키지 없이 Node.js 표준 라이브러리만 씁니다. 화면(`web/`)은 빌드 없이 그대로 실행되는 순수 JavaScript입니다.
 
 ```
-bin/ai-office.mjs        명령줄 (serve, open, stop, office, team, doctor)
+bin/ai-office.mjs        명령줄 (app, serve, open, stop, office, team, doctor)
 src/
   server.mjs             127.0.0.1 HTTP 서버: 정적 화면 + JSON API + 자동 복구 타이머
   offices.mjs            사무실 등록부(만들기·불러오기·찾기·해제·경로 복구·옮기기)
   teams.mjs              부서 추가·수정·삭제, 에이전트 파일 생성, CLAUDE.md 조직도 동기화
   presets.mjs            추천 부서
   runner.mjs             사무실 켜기·끄기·재시작 예약, 감시(watchdog)
+  components.mjs         도구(Claude·Bun·Codex·Ollama·Hermes) 감지·설치, download.mjs(허용 호스트·이어받기·해시), jobs.mjs(진행 기록)
+  connections.mjs        연결 허브(ChatGPT 로그인·API 키·엔진 준비 상태), secrets.mjs(DPAPI 비밀 저장소)
+  bots.mjs · runtime.mjs LAPIS 봇 저장소와 텔레그램 롱폴링 런타임, engines.mjs(엔진 어댑터), agentlogic.mjs(역할 선택·지침 — Worker 와 공유)
+  publish.mjs            웹 배포(Cloudflare REST API), worker-bot.mjs 가 올라가는 Worker 본체
   updater.mjs            새 버전 감지(GitHub 릴리스)·내려받기·교체·되돌리기·서버 재시작
   claude.mjs             Claude Code 설치·로그인 상태, 공식 로그인 창 열기
   telegram.mjs           토큰 저장, 페어링, 수신 프로세스 진단, 전역 플러그인 끄기
@@ -88,3 +92,18 @@ Claude Code는 에이전트를 세션 시작 때 읽으므로 변경은 다시 �
 ## 보안 경계
 
 `SECURITY.md` 참고. 테스트(`test/server.test.mjs`)가 Origin·Host·경로 이탈 방어를, `test/offices.test.mjs`가 읽기 전용 보장을 확인합니다.
+
+
+## LAPIS 앱 구조 (v0.4)
+
+```
+LAPIS-Setup.exe (scripts/Bootstrap.cs) ─ 앱 zip + 휴대용 Node 내려받기(SHASUMS 검증) → %LOCALAPPDATA%\AI-Office
+LAPIS.exe       (scripts/Launcher.cs)  ─ 트레이 아이콘, `ai-office app` 실행, 종료 시 `ai-office stop`
+엔진(src/, 포트는 config.port)         ─ 사무실·봇·런타임·설치·배포 API (/api/…)
+대시보드(dashboard/, 포트 4310)        ─ 화면(web/*.js)과 엔진 호출 허용 목록(src/office-routes.json)
+```
+
+- **봇 엔진 어댑터**(`engines.mjs`): `complete({engine, system, messages, cwd, access})` 하나로 ollama·openai·anthropic·claude(`claude -p`)·codex(`codex exec`)·hermes(`hermes -z`)를 부릅니다. 권한(access)은 claude·codex 에서만 도구 사용으로 이어집니다.
+- **런타임**(`runtime.mjs`): 봇마다 `getUpdates` 롱폴링 → 허용 확인(`bots.mjs` 페어링) → 방·주제·역할 결정(`agentlogic.mjs`) → 엔진 호출 → 답장. 대화 기록은 `bots/<id>/history`.
+- **웹 배포**(`publish.mjs`): 계정 확인 → KV 만들기 → Worker 모듈 업로드(`worker-bot.mjs` + `agentlogic.mjs`, 비밀은 secret 바인딩) → workers.dev 켜기 → 텔레그램 `setWebhook`. `LAPIS_CF_BASE` 환경 값으로 가짜 서버에 돌려 볼 수 있습니다.
+- **보안 경계**: 내려받기는 `download.mjs` 의 허용 호스트만, 설치·로그인·배포는 화면에서 사용자가 누를 때만, 비밀은 DPAPI 로 암호화해 API 응답·로그에 담지 않습니다.

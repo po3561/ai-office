@@ -133,6 +133,20 @@ export function createCloud({baseUrl=cloudBase(),vault,fetchImpl=fetch,appVersio
       if(data.status==='completed')attempts.delete(attemptId);
       return {status:data.status==='completed'?'completed':'pending'};
     },
+    // Google 캘린더 양방향 동기화: 서버의 OAuth 앱으로 권한(읽기+일정 쓰기)을 받는다. 확인은 pollGoogleConnect 로 한다.
+    async startGoogleCalendarConnect(){
+      const result=await authed('/integrations/google-calendar/authorize',{method:'POST',body:{}});
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'Google 캘린더 연결을 시작하지 못했습니다'));
+      return rememberAttempt('connect',parse(result.text));
+    },
+    // 서버의 캘린더 프록시. 경로 모양은 Google Calendar API v3 와 같다.
+    async calendarApi(method,path,{query,body}={}){
+      if(!/^\/(status|users\/me\/calendarList|calendars\/[^/]+\/events(\/[^/]+)?)$/.test(path))throw new CloudError(404,'연결되지 않은 캘린더 기능입니다.');
+      const search=query?'?'+new URLSearchParams(Object.entries(query).filter(([,v])=>v!==undefined&&v!=='')):'';
+      const result=await authed('/integrations/google-calendar'+path+search,{method,body});
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'Google 캘린더 요청에 실패했습니다'));
+      return parse(result.text);
+    },
     // 허용 목록 안의 서버 경로를 로그인 정보로 대신 호출한다.
     async call(method,path,{query='',body}={}){
       if(!cloudRouteAllowed(method,path))throw new CloudError(404,'연결되지 않은 라피스 기능입니다.');
