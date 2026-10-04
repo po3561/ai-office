@@ -280,7 +280,7 @@ test('storage only lists drives the office was granted and never shows bot secre
 
 async function serve(t,options){
   const dir=await tmp();
-  const server=createDashboardServer({telegramSnapshot:async()=>({bots:[],messages:[]}),dataDir:dir,vault:createVault(join(dir,'v.bin'),plain),...options});
+  const server=createDashboardServer({requireLogin:false,telegramSnapshot:async()=>({bots:[],messages:[]}),dataDir:dir,vault:createVault(join(dir,'v.bin'),plain),...options});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r);}));
   return 'http://127.0.0.1:'+server.address().port;

@@ -68,6 +68,10 @@
     "path": "/api/offices/:id/close"
   },
   {
+    "method": "POST",
+    "path": "/api/offices/:id/remove"
+  },
+  {
     "method": "PATCH",
     "path": "/api/offices/:id"
   },

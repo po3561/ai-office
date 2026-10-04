@@ -62,6 +62,20 @@ export function createTaskStore(file){
       const d=await load();find(id);
       d.tasks=d.tasks.filter(t=>t.id!==id);await save();return {removed:id};
     }),
+    // 계정 동기화: 클라우드에서 받은 할 일로 통째로 바꾼다. 잘못된 항목은 건너뛴다.
+    replaceAll:list=>exclusive(async()=>{
+      const d=await load();
+      if(!Array.isArray(list))bad('할 일 자료가 올바르지 않습니다.');
+      const now=new Date().toISOString(),stamp=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))?v:now;
+      const next=[];
+      for(const t of list.slice(0,MAX)){
+        try{
+          const c=cleanTask(t);
+          next.push({id:/^[0-9a-f-]{36}$/i.test(String(t?.id))?t.id:randomUUID(),...c,createdAt:stamp(t?.createdAt),updatedAt:stamp(t?.updatedAt),doneAt:c.done?stamp(t?.doneAt):null});
+        }catch{ /* 형식이 틀린 항목은 건너뛴다 */ }
+      }
+      d.tasks=next;await save();return {count:next.length};
+    }),
     clearDone:()=>exclusive(async()=>{
       const d=await load();const before=d.tasks.length;
       d.tasks=d.tasks.filter(t=>!t.done);await save();return {removed:before-d.tasks.length};

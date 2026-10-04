@@ -22,6 +22,7 @@ export async function api(path,{method='GET',body,timeout}={}){
       headers:method==='GET'?{}:{'content-type':'application/json','x-lapis-request':'1'},
       body:body===undefined?undefined:JSON.stringify(body)});
     const data=await response.json().catch(()=>({}));
+    if(response.status===401&&data.error==='로그인이 필요해요.'&&!path.startsWith('/api/cloud/')){setTimeout(()=>location.reload(),300);}   // 로그인이 풀렸으면 로그인 화면으로
     if(!response.ok){const e=new Error(data.error||data.message||'요청 실패 ('+response.status+')');e.status=response.status;throw e;}
     return data;
   }catch(e){if(e.name==='AbortError')throw new Error('응답이 늦어지고 있습니다. 잠시 뒤 다시 시도해 주세요.');throw e;}

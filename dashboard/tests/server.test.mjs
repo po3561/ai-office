@@ -10,7 +10,7 @@ async function fixture(t, handler) {
   return 'http://127.0.0.1:' + server.address().port;
 }
 async function app(t, options={}) {
-  const server = createDashboardServer({telegramSnapshot:async()=>({bots:[],messages:[]}), ...options});
+  const server = createDashboardServer({requireLogin:false,telegramSnapshot:async()=>({bots:[],messages:[]}), ...options});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r);}));
   return 'http://127.0.0.1:'+server.address().port;
@@ -124,7 +124,9 @@ test('Office screens are embedded in the unified page and keep the guarded proxy
   assert.ok(js.includes("'x-lapis-request': '1'"),'Mutations require local request guard');
   assert.ok(js.includes("drive: vDrive"),'Drive access has its own screen');
   const page=await (await fetch(base+'/')).text();
-  assert.ok(page.includes('/office.js')&&page.includes('/lapis.js')&&page.includes('id="office-content"'));
+  const gate=await (await fetch(base+'/gate.js')).text();
+  assert.ok(page.includes('/gate.js')&&page.includes('id="office-content"'),'the page starts at the membership gate');
+  assert.ok(gate.includes("import('/office.js')")&&gate.includes("import('/lapis.js')"),'the gate loads the app after login');
   assert.ok(!/<iframe[^>]*office/i.test(page),'Office is no longer shown in a separate frame');
   for(const theme of ['theme.css','office.css','lapis.css'])assert.equal((await fetch(base+'/'+theme)).status,200);
   const css=await (await fetch(base+'/theme.css')).text();
@@ -169,6 +171,6 @@ test('unified page wires every new screen and its scripts and styles exist',asyn
     assert.ok(lapis.includes("'./"+mod+".js'"),mod+' is loaded');
     assert.equal((await fetch(base+'/'+mod+'.js')).status,200);
   }
-  for(const css of ['pages.css','prefs.css'])assert.equal((await fetch(base+'/'+css)).status,200);
-  for(const key of ["['calendar','캘린더']","['learning','라피스 학습']","['storage','저장소']","['account','계정 · Google']","['appearance','화면 설정']"])assert.ok(lapis.includes(key),key);
+  for(const css of ['pages.css','prefs.css','account.css'])assert.equal((await fetch(base+'/'+css)).status,200);
+  for(const key of ["['calendar','캘린더']","['learning','라피스 학습']","['storage','저장소']","['account','내 계정 · 프로필']","['appearance','화면 설정']"])assert.ok(lapis.includes(key),key);
 });

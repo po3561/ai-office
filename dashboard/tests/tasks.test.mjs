@@ -42,7 +42,7 @@ test('할 일 저장소: 깨진 파일은 덮어쓰지 않는다', async () => {
 
 test('서버: /api/tasks 는 쓰기 표시가 있어야 바뀐다', async () => {
   const dir=await mkdtemp(join(tmpdir(),'lapis-tasks-'));
-  const server=createDashboardServer({dataDir:dir,officeUrl:'http://127.0.0.1:9',rentalUrl:'http://127.0.0.1:9',cloudBase:'https://cloud.test/api/v1'});
+  const server=createDashboardServer({requireLogin:false,dataDir:dir,officeUrl:'http://127.0.0.1:9',rentalUrl:'http://127.0.0.1:9',cloudBase:'https://cloud.test/api/v1'});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const base='http://127.0.0.1:'+server.address().port;
   try{

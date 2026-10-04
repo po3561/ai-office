@@ -14,10 +14,11 @@
 <link rel="stylesheet" href="/pages.css">
 <link rel="stylesheet" href="/prefs.css">
 <link rel="stylesheet" href="/platform.css">
-<script type="module" src="/office.js"></script>
-<script type="module" src="/lapis.js"></script>
+<link rel="stylesheet" href="/account.css">
+<script type="module" src="/gate.js"></script>
 </head>
-<body>
+<body class="gated">
+<div id="gate" class="gate" aria-live="polite"></div>
 <a href="#main" class="skip-link">본문으로 이동</a>
 <div class="app">
   <aside class="side" id="side">
@@ -103,7 +104,6 @@
       </section>
 
       <!-- 시작 마법사 -->
-      <section id="view-setup" class="view" hidden><div id="setup-body" class="stack"></div></section>
 
       <!-- 연결 허브 -->
       <section id="view-hub" class="view" hidden>
@@ -135,8 +135,8 @@
 
       <!-- 라피스 계정 · Google -->
       <section id="view-account" class="view" hidden>
-        <p class="view-intro">에디터에서 쓰던 라피스 계정으로 로그인하면 기억·학습, Google 드라이브·시트·문서 기능을 쓸 수 있어요.</p>
-        <div id="account-box"></div><div id="google-box" style="margin-top:16px"></div>
+        <p class="view-intro">내 프로필과 설정 동기화, Google 연결을 한곳에서 관리해요. 설정과 기록은 계정마다 따로 저장돼요.</p>
+        <div id="account-box"></div><div id="sync-box" style="margin-top:16px"></div><div id="google-box" style="margin-top:16px"></div><div id="session-box" style="margin-top:16px"></div>
       </section>
 
       <!-- 화면 설정 -->

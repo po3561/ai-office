@@ -1,6 +1,7 @@
 // 사무실(=봇 하나가 일하는 분리된 환경 폴더) 등록부: 만들기·불러오기·찾기·해제·점검.
 //   claude-office : Claude Code 로 돌아가는 사무실. 이 프로그램이 만들거나(managed) 기존 폴더를 불러온 것.
-//   hermes        : Hermes(라피스 등) 같은 별개의 봇. **읽기 전용** — 인식해서 보여 주기만 하고 어떤 것도 바꾸거나 실행하지 않는다.
+//   hermes        : Hermes(라피스 등) 같은 별개의 봇. 기본은 **읽기 전용**(인식해서 보여 주기만 함).
+//                   사용자가 「사무실용」 모드로 바꾼 것만 이 프로그램이 켜고 끄고 항상 켜두기를 맡는다(부서·텔레그램·드라이브는 여전히 Hermes 자체 설정).
 import { join, resolve, basename } from 'node:path';
 import { readdirSync, mkdirSync, copyFileSync, renameSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -29,10 +30,24 @@ export function getOffice(id) {
   return o;
 }
 
-// 읽기 전용 봇에 대한 모든 변경 시도를 여기서 막는다.
+// 읽기 전용 여부: Hermes 는 `mode` 가 'office' 로 바뀐 것만 읽기 전용이 아니다. 옛 등록(mode 없음)은 읽기 전용으로 본다.
+export const isReadonly = (o) => (o.kind === 'hermes' ? o.mode !== 'office' : Boolean(o.readonly));
+export const MODES = ['readonly', 'office'];
+
+// 켜기·끄기·재시작처럼 "이 프로그램이 직접 다뤄도 되는" 봇만 통과시킨다(읽기 전용은 막는다).
+export function controllable(id) {
+  const o = getOffice(id);
+  need(!isReadonly(o), `"${o.name}"은(는) 읽기 전용입니다. 이 프로그램은 인식만 하고 바꾸지 않아요. 「사무실용」 모드로 바꾸면 켜고 끌 수 있습니다.`, 403);
+  return o;
+}
+
+// Claude 사무실만 할 수 있는 일(부서·텔레그램·드라이브·위치 등)은 여기서 막는다. Hermes 는 사무실용이어도 자체 설정으로 관리한다.
 export function mutable(id) {
   const o = getOffice(id);
-  need(o.kind !== 'hermes' && !o.readonly, `"${o.name}"은(는) 별개의 봇이라 읽기 전용입니다. 이 프로그램은 인식만 하고 바꾸지 않습니다.`, 403);
+  need(o.kind !== 'hermes', o.mode === 'office'
+    ? `"${o.name}"은(는) Hermes 라서 이 프로그램은 켜고 끄는 일만 도와요. 부서·텔레그램·드라이브는 Hermes 자체 설정으로 바꿔 주세요.`
+    : `"${o.name}"은(는) 별개의 봇이라 읽기 전용입니다. 이 프로그램은 인식만 하고 바꾸지 않습니다.`, 403);
+  need(!o.readonly, `"${o.name}"은(는) 읽기 전용입니다.`, 403);
   return o;
 }
 
@@ -40,6 +55,18 @@ export function updateOffice(id, patch) {
   const reg = readRegistry();
   const o = reg.offices.find((x) => x.id === id);
   need(o, `등록되지 않은 사무실입니다: ${id}`, 404);
+  if ('mode' in patch) {
+    need(o.kind === 'hermes', '사용 모드는 Hermes 봇만 바꿀 수 있습니다.');
+    need(MODES.includes(patch.mode), '모드는 readonly(읽기 전용) 또는 office(사무실용) 입니다.');
+  }
+  const others = Object.keys(patch).filter((k) => k !== 'mode');
+  if (others.length) need(!isReadonly({ ...o, ...('mode' in patch ? { mode: patch.mode } : {}) }), `"${o.name}"은(는) 읽기 전용입니다. 먼저 「사무실용」 모드로 바꿔 주세요.`, 403);
+  if ('mode' in patch) {
+    o.mode = patch.mode;
+    o.readonly = patch.mode === 'readonly';
+    o.note = patch.mode === 'office' ? '별개의 봇 — 사무실용(켜고 끄기만 이 프로그램이 맡습니다)' : '별개의 봇 — 읽기 전용(인식만 합니다)';
+    if (o.readonly) o.autoStart = false;   // 읽기 전용이 되면 자동 출근도 끈다
+  }
   if ('name' in patch) { const n = String(patch.name || '').trim(); need(n && n.length <= 40, '이름은 1~40자로 적어 주세요.'); o.name = n; }
   if ('autoStart' in patch) o.autoStart = Boolean(patch.autoStart);
   writeRegistry(reg);
@@ -53,6 +80,16 @@ export function unregisterOffice(id) {
   const [gone] = reg.offices.splice(i, 1);
   writeRegistry(reg);
   return gone;
+}
+
+// 봇 삭제: 이름을 똑같이 입력해야 한다. 이 프로그램이 만든 사무실은 폴더를 보관 위치로 옮기고(closeOffice),
+// 직접 불러온 폴더·Hermes 는 폴더와 파일을 그대로 두고 목록에서만 없앤다. 끄는 일은 부르는 쪽(server)이 먼저 한다.
+export function removeOffice(id, { confirmName } = {}) {
+  const o = getOffice(id);
+  need(String(confirmName || '').trim() === o.name, '확인을 위해 이름을 똑같이 입력해 주세요.');
+  if (isClosable(o)) return { ...closeOffice(id, { confirmName }), kind: 'closed' };
+  unregisterOffice(id);
+  return { id, name: o.name, archived: '', kept: o.folder, kind: 'unregistered' };
 }
 
 // ── 사무실 폐쇄(삭제) ──
@@ -156,7 +193,7 @@ export function importOffice({ name, folder, kind } = {}) {
   const id = uniqueId(label, reg);
   let office;
   if (kind === 'hermes') {
-    office = { id, name: label, kind, folder: dir, managed: false, readonly: true, note: '별개의 봇 — 읽기 전용(인식만 합니다)', createdAt: nowIso() };
+    office = { id, name: label, kind, folder: dir, managed: false, readonly: true, mode: 'readonly', note: '별개의 봇 — 읽기 전용(인식만 합니다)', createdAt: nowIso() };
   } else {
     const own = join(dir, '.telegram');
     const script = join(dir, '.system', 'scripts', 'start-office.ps1');

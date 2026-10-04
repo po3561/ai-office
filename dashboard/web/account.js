@@ -1,5 +1,6 @@
-// 라피스 계정(클라우드) 로그인과 Google 서비스 연결. 로그인 토큰은 서버가 보관하고 이 화면에는 오지 않는다.
-import {q,node,put,button,pill,link,emptyLine,api,cloud,toast,doing,errorText,fmtDate,confirmDialog,registerPage,safeHttps} from './ui.js';
+// 내 계정: 프로필(사진·닉네임·전화번호)·설정 동기화·Google 서비스 연결·로그아웃. 로그인은 입구(gate.js)에서 한다. 로그인 토큰은 서버가 보관하고 이 화면에는 오지 않는다.
+import {q,node,put,button,pill,link,emptyLine,field,api,cloud,toast,doing,errorText,fmtDate,confirmDialog,registerPage,safeHttps} from './ui.js';
+import {knownConnections,syncStatus} from './sync.js';
 
 export let session={signedIn:false,user:null,loaded:false};
 export async function refreshSession(){
@@ -40,30 +41,105 @@ const SERVICES=[
 ];
 export const hasScope=(scopes,key)=>(scopes||[]).some(s=>String(s).toLowerCase().includes(key));
 
-function renderAccount(){
-  const box=q('#account-box');box.replaceChildren();
-  const card=node('div','card');
-  if(!session.signedIn){
-    const status=node('p','small muted');
-    const go=button('Google로 로그인',async()=>{
-      await doing(go,async()=>{
-        const ok=await waitForAuth({start:()=>cloud('POST','/login/start',{}),poll:id=>cloud('POST','/login/poll',{attemptId:id}),status,
-          onDone:async()=>{await refreshSession();toast('로그인했습니다.');}});
-        if(ok)renderAll();
-      });
-    },'btn primary');
-    put(card,put(node('div','card-head'),put(node('div'),node('h2','','라피스 계정'),node('p','sub','라피스 기억·학습·Google 드라이브·시트 기능을 쓰려면 로그인하세요. 에디터에서 쓰던 같은 계정입니다.')),pill('로그아웃 상태','warn')),
-      put(node('div','row'),go),status,node('p','small muted','로그인 정보는 이 PC의 Windows 계정으로 암호화해 보관되며 화면이나 로그에 드러나지 않습니다.'));
-  }else{
-    const out=button('로그아웃',async()=>{
-      if(!await confirmDialog({title:'로그아웃할까요?',body:'이 대시보드에서 라피스 계정 연결이 끊어집니다. 계정과 Google 연결 자체는 그대로 남습니다.',ok:'로그아웃',danger:true}))return;
-      await doing(out,async()=>{await cloud('POST','/logout',{});await refreshSession();renderAll();toast('로그아웃했습니다.');});
-    },'btn');
-    put(card,put(node('div','card-head'),put(node('div'),node('h2','','라피스 계정'),node('p','sub',session.user.email)),pill('로그인됨','ok')),
-      put(node('div','row'),put(node('div','avatar',(session.user.name||'나')[0]),),put(node('div'),node('b','',session.user.name),node('div','small muted',session.user.email)),node('span','spacer'),out));
-  }
-  box.append(card);
+// ── 내 프로필: 사진 · 닉네임 · 전화번호 · 회원 정보 ──
+const initialOf=name=>String(name||'나').trim().slice(0,1).toUpperCase()||'나';
+let photoVersion=Date.now();
+function avatarNode(cls,name){
+  const box=node('div',cls,initialOf(name));
+  const img=new Image();img.alt='';img.src='/api/cloud/avatar?v='+photoVersion;
+  img.addEventListener('load',()=>{box.replaceChildren(img);});
+  return box;
 }
+// 올릴 사진은 브라우저에서 먼저 512px 이하로 줄여 용량을 아낀다(서버는 PNG·JPG·WEBP 만 받는다).
+async function shrink(file){
+  if(!/^image\/(png|jpeg|webp)$/.test(file.type))throw new Error('PNG · JPG · WEBP 사진만 올릴 수 있어요.');
+  if(file.size>20*1024*1024)throw new Error('사진 파일이 너무 커요.');
+  const bitmap=await createImageBitmap(file).catch(()=>{throw new Error('사진을 읽지 못했어요. 다른 파일로 시도해 주세요.');});
+  const scale=Math.min(1,512/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+  const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.9));
+  if(!blob)throw new Error('사진을 줄이지 못했어요.');
+  return blob;
+}
+async function uploadPhoto(blob){
+  const response=await fetch('/api/cloud/avatar',{method:'PUT',credentials:'same-origin',headers:{'content-type':blob.type||'application/octet-stream','x-lapis-request':'1'},body:blob});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||'사진을 올리지 못했어요.');
+}
+
+async function renderProfile(){
+  const box=q('#account-box');box.replaceChildren(emptyLine('내 정보를 불러오는 중…'));
+  let me;
+  try{me=await cloud('GET','/profile');}
+  catch(error){box.replaceChildren(node('p','banner warn','내 정보를 읽지 못했어요: '+errorText(error)));return;}
+  let revision=me.revision;
+  const name=node('input');name.type='text';name.maxLength=80;name.value=me.profile.name||me.user.name;name.setAttribute('aria-label','닉네임');
+  const phone=node('input');phone.type='tel';phone.maxLength=24;phone.value=me.profile.phone||'';phone.placeholder='010-0000-0000';phone.setAttribute('aria-label','전화번호');
+  const ro=(value)=>{const i=node('input');i.type='text';i.value=value;i.readOnly=true;return i;};
+  const file=node('input');file.type='file';file.accept='image/png,image/jpeg,image/webp';file.hidden=true;
+  const photo=avatarNode('avatar-big',name.value);
+  const pick=button('사진 바꾸기',()=>file.click(),'btn sm');
+  file.addEventListener('change',async()=>{
+    const chosen=file.files[0];file.value='';if(!chosen)return;
+    await doing(pick,async()=>{await uploadPhoto(await shrink(chosen));photoVersion=Date.now();toast('프로필 사진을 바꿨어요.');renderProfile();refreshSession();});
+  });
+  const remove=button('사진 지우기',async function(){
+    if(!await confirmDialog({title:'프로필 사진을 지울까요?',body:'지워도 언제든 다시 올릴 수 있어요.',ok:'지우기',danger:true}))return;
+    await doing(this,async()=>{await cloud('DELETE','/avatar');photoVersion=Date.now();toast('사진을 지웠어요.');renderProfile();refreshSession();});
+  },'btn sm');
+  const save=button('저장',async()=>{
+    await doing(save,async()=>{
+      const r=await cloud('PUT','/profile',{name:name.value,phone:phone.value,revision});
+      revision=r.revision;toast('프로필을 저장했어요.');await refreshSession();
+    });
+  },'btn primary');
+  const card=node('div','card');
+  put(card,put(node('div','card-head'),put(node('div'),node('h2','','내 프로필'),node('p','sub','앱 곳곳에 보이는 이름과 사진이에요. 전화번호는 암호화해 저장돼요.')),pill('로그인됨','ok')),
+    put(node('div','profile-top'),photo,put(node('div','stack'),put(node('div','row'),pick,remove),node('p','small muted','PNG · JPG · WEBP, 알아서 작게 줄여 올려요.')),file),
+    put(node('div','formgrid-2'),field('닉네임',name),field('전화번호 (선택)',phone,me.profile.phoneNeedsReview?'저장된 번호의 형식을 확인해 주세요.':'한국 번호는 +82 형식으로 정리돼요.'),
+      field('아이디',ro(me.user.username||'(Google 계정)')),field('이메일',ro(me.user.email),'아이디·이메일은 여기서 바꿀 수 없어요.')),
+    put(node('div','row'),save));
+  box.replaceChildren(card);
+}
+
+// ── 동기화·로그아웃 ──
+function renderSync(){
+  const box=q('#sync-box');box.replaceChildren();
+  const line=node('span','small muted');
+  const paint=s=>{line.textContent=(s.state==='syncing'?'동기화하는 중…':s.state==='error'?'⚠️ '+s.message:(s.message||'준비됐어요')+(s.at?' · 마지막 '+fmtDate(s.at):''));};
+  const card=node('div','card');
+  const now=button('지금 동기화',async function(){await doing(this,async()=>{const r=await window.__lapisSync?.reconcile({ask:true});if(r?.state==='error')throw new Error(r.message);});},'btn');
+  const pull=button('클라우드에서 다시 가져오기',async function(){
+    if(!await confirmDialog({title:'클라우드 내용으로 바꿀까요?',body:'이 계정으로 저장해 둔 설정·할 일·일정으로 이 PC의 내용을 바꿔요. 지금 내용은 한 칸 백업해 둬요.',ok:'가져오기'}))return;
+    await doing(this,()=>window.__lapisSync?.pullNow());
+  },'btn');
+  const sync=node('div','sync-line');put(sync,now,pull,line);
+  const known=knownConnections();
+  const names={claude:'Claude',gpt:'GPT'};
+  const list=known?Object.entries(known).filter(([,v])=>v).map(([k])=>names[k]||k):[];
+  put(card,put(node('div','card-head'),put(node('div'),node('h2','','설정·기록 동기화'),node('p','sub','화면 설정, 할 일, 일정, 메모가 계정에 저장돼요. 다른 PC에서 로그인해도 그대로 이어져요.'))),sync,
+    node('p','small muted','Claude·GPT·Google 로그인 정보와 토큰은 보안을 위해 이 PC에만 보관돼요. 다른 PC에서는 한 번씩 다시 로그인해 주세요.'+(list.length?` 이 계정은 ${list.join('·')}를 연결해 쓰던 기록이 있어요.`:'')));
+  box.append(card);paint(syncStatus());
+  document.addEventListener('sync:state',e=>paint(e.detail));
+}
+function renderSession(){
+  const box=q('#session-box');box.replaceChildren();
+  const out=button('로그아웃',async()=>{
+    if(!await confirmDialog({title:'로그아웃할까요?',body:'이 PC에서 라피스 계정이 로그아웃돼요. 설정과 기록은 계정에 그대로 남아 있어요.',ok:'로그아웃',danger:true}))return;
+    await doing(out,async()=>{try{await window.__lapisSync?.reconcile({ask:false});}catch{ /* 올리지 못해도 로그아웃은 한다 */ }await cloud('POST','/logout',{});location.reload();});
+  },'btn danger');
+  box.append(put(node('div','card'),put(node('div','card-head'),put(node('div'),node('h2','','계정'),node('p','sub','로그인 정보는 이 PC의 Windows 계정으로 암호화해 보관되며 화면이나 로그에 드러나지 않아요.'))),put(node('div','row'),out)));
+}
+
+// 위쪽 막대의 내 이름표(사진 + 닉네임). 누르면 이 화면으로 와요.
+function paintChip(){
+  const slot=q('.top-right');if(!slot||!session.signedIn)return;
+  let chip=q('#me-chip');
+  if(!chip){chip=node('a','me-chip');chip.id='me-chip';chip.href='#account';chip.title='내 계정 · 프로필';slot.prepend(chip);}
+  chip.replaceChildren(avatarNode('avatar-mini',session.user.name),node('span','',session.user.name||'내 계정'));
+}
+document.addEventListener('cloud:state',paintChip);
 
 async function renderGoogle(){
   const box=q('#google-box');box.replaceChildren();
@@ -103,7 +179,7 @@ async function renderGoogle(){
   if(connected&&data.connection?.connected_at)card.append(node('p','small muted','연결 시각 '+fmtDate(data.connection.connected_at)));
   box.append(card);
 }
-function renderAll(){renderAccount();renderGoogle();}
+function renderAll(){renderProfile();renderSync();renderGoogle();renderSession();}
 
 registerPage('account',{show(){refreshSession().then(renderAll);}});
 refreshSession();

@@ -1,4 +1,4 @@
-/* 자동 생성: scripts/build-office-ui.mjs — Claude Office 0.3.5 화면을 통합용으로 변환한 것. 직접 고치지 말고 스크립트를 고치세요. */
+/* 자동 생성: scripts/build-office-ui.mjs — Claude Office 0.4.2 화면을 통합용으로 변환한 것. 직접 고치지 말고 스크립트를 고치세요. */
 /* 공통 부품 */
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; }
 .card + .card { margin-top: 16px; }
@@ -53,6 +53,11 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.5; }
 .setting:first-of-type { border-top: 0; }
 .setting b { display: block; font-size: 14px; }
 .setting .sub { font-size: 12.5px; color: var(--muted); }
+.setting.block { display: block; }
+.mode-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--panel); }
+.mode-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.mode-card .top-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.mode-list { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
 
 .banner { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); }
 .banner.warn { background: var(--warn-soft); border-color: transparent; color: var(--text); }
