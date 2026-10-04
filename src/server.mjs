@@ -10,7 +10,7 @@ import { readJson, HttpError, need, isDir, isWindows, run } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listGrants as listDriveGrants, setGrant as setDriveGrant, removeGrant as removeDriveGrant } from './drives.mjs';
-import { listOffices, getOffice, mutable, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice, relocateOffice, moveCandidates, autoRelink } from './offices.mjs';
+import { listOffices, getOffice, mutable, controllable, isReadonly, removeOffice, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice, relocateOffice, moveCandidates, autoRelink } from './offices.mjs';
 import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
 import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
@@ -51,9 +51,9 @@ const skillsDirOf = (o) => (o.kind === 'hermes' ? join(o.folder, 'skills') : joi
 function summary(o, d) {
   const rt = runtime(o, { legitPollers: legitCount(d) });
   const base = {
-    id: o.id, name: o.name, kind: o.kind, readonly: o.kind === 'hermes' || Boolean(o.readonly), managed: Boolean(o.managed),
+    id: o.id, name: o.name, kind: o.kind, readonly: isReadonly(o), mode: o.kind === 'hermes' ? (isReadonly(o) ? 'readonly' : 'office') : 'office', managed: Boolean(o.managed),
     folder: o.folder, autoStart: Boolean(o.autoStart), running: rt.running, detail: rt.detail, exists: isDir(o.folder),
-    closable: isClosable(o), legacyLaunch: Boolean(o.launch), moveCandidates: moveCandidates(o), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
+    closable: isClosable(o), removeKind: isClosable(o) ? 'close' : 'unregister', legacyLaunch: Boolean(o.launch), moveCandidates: moveCandidates(o), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
   };
   if (!base.exists) return { ...base, running: false, detail: '폴더를 찾을 수 없음', teamsCount: 0, skillsCount: 0, workingTeams: 0, doneToday: 0, telegram: { set: false } };
   const skills = scanSkills(skillsDirOf(o));
@@ -172,10 +172,23 @@ route('POST', '/api/offices/:id/close', async ({ p, body }) => {
   forgetRuntime(o.id);
   return r;
 });
-route('PATCH', '/api/offices/:id', async ({ p, body }) => { mutable(p.id); return updateOffice(p.id, body); });
+// 이름·항상 켜두기·사용 모드(Hermes). 읽기 전용 봇은 모드만 바꿀 수 있다(그 밖의 변경은 updateOffice 가 막는다).
+route('PATCH', '/api/offices/:id', async ({ p, body }) => { getOffice(p.id); return updateOffice(p.id, body); });
+// 봇 삭제: 이름을 똑같이 입력해야 한다. 켜져 있으면 먼저 끄고, 이 프로그램이 만든 사무실만 폴더를 보관 위치로 옮긴다(불러온 폴더·Hermes 는 파일을 그대로 두고 목록에서만 뺀다).
+route('POST', '/api/offices/:id/remove', async ({ p, body }) => {
+  const o = getOffice(p.id);
+  need(String(body.confirmName || '').trim() === o.name, '확인을 위해 이름을 똑같이 입력해 주세요.');
+  if (!isReadonly(o) && runtime(o, { legitPollers: legitCount(await diagnostics()) }).running) {
+    await stopOffice(o.id);
+    if (isClosable(o)) await new Promise((r) => setTimeout(r, 1500));   // 창이 닫히며 폴더 잠금이 풀릴 시간을 준다
+  }
+  const r = removeOffice(o.id, { confirmName: body.confirmName });
+  forgetRuntime(o.id);
+  return r;
+});
 route('POST', '/api/offices/:id/start', async ({ p }) => startOffice(p.id, { legitPollers: legitCount(await diagnostics()) }));
 route('POST', '/api/offices/:id/stop', async ({ p }) => stopOffice(p.id));
-route('POST', '/api/offices/:id/restart', async ({ p }) => { mutable(p.id); return requestRestart(p.id, 5); });
+route('POST', '/api/offices/:id/restart', async ({ p }) => { controllable(p.id); return requestRestart(p.id, 5); });
 route('POST', '/api/offices/:id/open', async ({ p }) => { openInExplorer(getOffice(p.id).folder); return { ok: true }; });
 route('POST', '/api/offices/:id/migrate', async ({ p }) => migrateOffice(p.id));
 route('POST', '/api/offices/:id/relocate', async ({ p, body }) => {

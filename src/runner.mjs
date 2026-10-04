@@ -1,12 +1,12 @@
 // 사무실 켜기·끄기·재시작과 자동 복구(감시).
 // 사무실 = 그 폴더에서 `claude --channels plugin:telegram…` 를 실행하는 최소화된 콘솔 창 하나.
-// Hermes 같은 외부 봇은 여기서 절대 켜거나 끄지 않는다(읽기 전용).
-import { join } from 'node:path';
+// Hermes 같은 외부 봇은 읽기 전용(기본)일 때 절대 켜거나 끄지 않는다. 「사무실용」 모드로 바꾼 Hermes 만 게이트웨이를 켜고 끈다.
+import { join, resolve, dirname, basename, delimiter } from 'node:path';
 import { mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { RUN_DIR, TG_PLUGIN } from './paths.mjs';
 import { isFile, readJson, writeJson, need, run, psQuote, isWindows, nowIso } from './util.mjs';
-import { getOffice, listOffices } from './offices.mjs';
+import { getOffice, listOffices, isReadonly } from './offices.mjs';
 import { findClaude, claudeInfo } from './claude.mjs';
 import { tokenStatus } from './telegram.mjs';
 import { toolDirs } from './toolpath.mjs';
@@ -35,6 +35,51 @@ export function hermesRuntime(o) {
   const running = g.gateway_state === 'running' && Number.isInteger(g.pid) && alive(g.pid);
   const tg = g.platforms && g.platforms.telegram;
   return { running, detail: running ? `게이트웨이 가동 중${tg ? ` · 텔레그램 ${tg.state === 'connected' ? '연결됨' : tg.state}` : ''}` : '게이트웨이 꺼짐' };
+}
+
+// ── Hermes(사무실용 모드) 게이트웨이 켜기·끄기 ──
+// 실행 방법은 Hermes 가 설치할 때 만드는 gateway-service 스크립트와 같다: 설치 폴더의 venv 파이썬으로 `-m hermes_cli.main [--profile 이름] gateway run`.
+// 프로필 폴더(<hermes>\profiles\<이름>)면 --profile 을 붙이고, 아니면 그 폴더 자체를 HERMES_HOME 으로 쓴다.
+export function hermesLaunch(o, baseEnv = process.env) {
+  const dir = resolve(o.folder);
+  const parent = dirname(dir);
+  const profile = basename(parent).toLowerCase() === 'profiles' ? basename(dir) : '';
+  const agent = join(profile ? dirname(parent) : dir, 'hermes-agent');
+  const venv = join(agent, 'venv');
+  const py = join(venv, 'Scripts', 'python.exe');
+  need(isFile(py), 'Hermes 실행 파일을 찾지 못했습니다. Hermes 가 설치되어 있는지 확인해 주세요.', 409);
+  return {
+    cmd: py, cwd: dir,
+    args: ['-m', 'hermes_cli.main', ...(profile ? ['--profile', profile] : []), 'gateway', 'run'],
+    env: { ...baseEnv, HERMES_HOME: dir, PYTHONIOENCODING: 'utf-8', HERMES_GATEWAY_DETACHED: '1', VIRTUAL_ENV: venv, PYTHONPATH: agent + (baseEnv.PYTHONPATH ? delimiter + baseEnv.PYTHONPATH : '') },
+  };
+}
+
+let spawnImpl = spawn;
+
+function startHermes(o, ctx) {
+  need(!runtime(o, ctx).running, '이미 근무 중입니다.', 409);
+  need(!recentlyStarted(o.id), '방금 출근시켰습니다. 잠시 기다려 주세요.', 409);
+  const spec = hermesLaunch(o);
+  rmSync(stoppedFile(o.id), { force: true });
+  startedAt.set(o.id, Date.now());
+  const child = spawnImpl(spec.cmd, spec.args, { cwd: spec.cwd, env: spec.env, detached: true, stdio: 'ignore', windowsHide: true });
+  child.on?.('error', () => startedAt.delete(o.id));   // 실행 파일이 없거나 막히면 '켜는 중' 표시를 풀어 다시 시도할 수 있게
+  child.unref?.();
+  return { started: true, via: 'hermes' };
+}
+
+// 상태 파일이 가리키는 게이트웨이 pid 중, 진짜 이 Hermes 의 것으로 확인된 것만 돌려준다(pid 가 다른 프로그램에 재사용됐을 때 엉뚱한 프로그램을 끄지 않도록).
+let verifyImpl = async (pid) => {
+  const r = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { timeout: 10000 });
+  const line = (r.stdout || '').trim();
+  return !line || /hermes/i.test(line);   // 확인할 수 없으면(빈 값) 상태 파일을 믿고, 확인됐는데 Hermes 가 아니면 건드리지 않는다
+};
+async function hermesPid(o) {
+  const g = readJson(join(o.folder, 'gateway_state.json'), null);
+  if (!g || g.kind !== 'hermes-gateway' || g.gateway_state !== 'running' || !Number.isInteger(g.pid) || !alive(g.pid)) return 0;
+  if (g.hermes_home && resolve(g.hermes_home).toLowerCase() !== resolve(o.folder).toLowerCase()) return 0;
+  return (await verifyImpl(g.pid)) ? g.pid : 0;
 }
 
 // legitPollers: 사무실 세션이 띄운 텔레그램 수신 프로세스 수(진단에서 받아 온다). 직접 만든 사무실이 아닌 곳의 가동 판단에 쓴다.
@@ -73,7 +118,8 @@ export async function checkReady(o) {
 export async function startOffice(id, ctx = {}) {
   need(isWindows, '사무실 켜기는 Windows에서만 지원합니다.', 501);
   const o = getOffice(id);
-  need(o.kind !== 'hermes' && !o.readonly, `"${o.name}"은(는) 별개의 봇이라 이 프로그램에서 켜거나 끄지 않습니다.`, 403);
+  need(!isReadonly(o), `"${o.name}"은(는) 읽기 전용이라 이 프로그램에서 켜거나 끄지 않습니다. 「사무실용」 모드로 바꾸면 켤 수 있어요.`, 403);
+  if (o.kind === 'hermes') return startHermes(o, ctx);
   need(!runtime(o, ctx).running, '이미 근무 중입니다.', 409);
   need(!recentlyStarted(id), '방금 출근시켰습니다. 창이 뜰 때까지 잠시 기다려 주세요.', 409);
   const bin = await checkReady(o);
@@ -96,8 +142,15 @@ export async function startOffice(id, ctx = {}) {
 
 export async function stopOffice(id) {
   const o = getOffice(id);
-  need(o.kind !== 'hermes' && !o.readonly, `"${o.name}"은(는) 별개의 봇이라 이 프로그램에서 켜거나 끄지 않습니다.`, 403);
+  need(!isReadonly(o), `"${o.name}"은(는) 읽기 전용이라 이 프로그램에서 켜거나 끄지 않습니다. 「사무실용」 모드로 바꾸면 끌 수 있어요.`, 403);
   startedAt.delete(id);
+  if (o.kind === 'hermes') {
+    const hp = await hermesPid(o);
+    const done = hp ? (await run('taskkill.exe', ['/PID', String(hp), '/T', '/F'], { timeout: 15000 })).code === 0 : false;
+    mkdirSync(RUN_DIR, { recursive: true });
+    writeFileSync(stoppedFile(id), nowIso(), 'utf8');   // 직접 끈 봇은 자동으로 다시 켜지 않는다
+    return { stopped: done };
+  }
   const pid = readPid(id);
   let stopped = false;
   if (pid && alive(pid)) {
@@ -122,7 +175,7 @@ export function forgetRuntime(id) {
 // 사무실 안에서 봇이 "N초 뒤 다시 출근해서 적용"을 요청할 때 쓴다. 요청만 적어 두면 대시보드 서버가 처리한다.
 export function requestRestart(id, delaySec = 60) {
   const o = getOffice(id);
-  need(o.kind !== 'hermes' && !o.readonly, `"${o.name}"은(는) 읽기 전용입니다.`, 403);
+  need(!isReadonly(o), `"${o.name}"은(는) 읽기 전용입니다.`, 403);
   const d = Math.min(Math.max(Number(delaySec) || 60, 5), 3600);
   mkdirSync(RUN_DIR, { recursive: true });
   writeJson(restartFile(id), { at: Date.now() + d * 1000, requestedAt: nowIso() });
@@ -150,7 +203,7 @@ export async function watchdogTick({ autoRestart = true, legitPollers = 0 } = {}
   }
   if (autoRestart) {
     for (const o of listOffices()) {
-      if (!o.autoStart || o.kind === 'hermes' || o.readonly || isFile(stoppedFile(o.id)) || recentlyStarted(o.id)) continue;
+      if (!o.autoStart || isReadonly(o) || isFile(stoppedFile(o.id)) || recentlyStarted(o.id)) continue;
       if (runtime(o, { legitPollers }).running) { budget.delete(o.id); continue; }
       const now = Date.now();
       const tries = (budget.get(o.id) || []).filter((t) => now - t < 10 * 60 * 1000);
@@ -161,4 +214,4 @@ export async function watchdogTick({ autoRestart = true, legitPollers = 0 } = {}
   return acts;
 }
 
-export const _test = { launcherScript, isFile };
+export const _test = { launcherScript, isFile, hermesLaunch, setSpawn: (fn) => { spawnImpl = fn || spawn; }, setVerify: (fn) => { verifyImpl = fn; } };

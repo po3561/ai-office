@@ -52,7 +52,7 @@ function setView(view) {
   paint(true); tick();
 }
 const contentEl = () => $(S.view === 'home' ? '#home-office' : '#office-content');
-window.__office = { setView, refresh: () => tick() };
+window.__office = { setView, refresh: () => tick(), select: (id) => { S.officeId = id; localStorage.setItem('office', id); paint(true); tick(); } };
 `);
 swap('menu',"$('#menuBtn').addEventListener('click', () => document.body.classList.toggle('menu-open'));\n","");
 swap('scrim',"$('#scrim').addEventListener('click', () => document.body.classList.remove('menu-open'));\n","");
@@ -68,7 +68,7 @@ swap('view list',"  settings: { title: '설정',","  drive: { title: '드라이�
 
 swap('paint signature',"S.market, S.marketTab]);","S.market, S.marketTab, S.driveUsage, S.tried]);");
 // ── 드라이브: 설정 안의 한 줄이던 것을 독립 화면으로 ──
-swap('settings drives',"      ${vDrives()}\n","");
+swap('settings drives',"      ${hermes ? '' : vDrives()}\n","");
 swap('drive dlg signature',"function dlgDriveAdd() {","function dlgDriveAdd(prefill = 'D:\\\\') {");
 swap('drive dlg value','placeholder="D:\\\\" value="D:\\\\" autofocus','placeholder="D:\\\\" value="${esc(prefill)}" autofocus');
 swap('drive act',"'drive-add': () => dlgDriveAdd(),","'drive-add': (b) => dlgDriveAdd(b && b.dataset && b.dataset.path || undefined),");
@@ -77,6 +77,7 @@ function vDrive() {
   const o = cur(), d = S.detail;
   if (!o) return noOffice();
   if (o.readonly) return '<div class="card"><div class="empty"><div class="big">🔒</div><b>읽기 전용 봇입니다</b><p>별개의 봇이라 드라이브 접근을 바꾸지 않습니다.</p></div></div>';
+  if (o.kind === 'hermes') return '<div class="card"><div class="empty"><div class="big">🤖</div><b>Hermes 봇에는 드라이브 접근 설정이 없어요</b><p>Hermes 는 자체 설정으로 관리해요. 이 프로그램은 켜고 끄기와 항상 켜두기만 도와요.</p></div></div>';
   const grants = (d && d.drives) || [];
   const usage = S.driveUsage || [];
   const granted = (letter) => grants.filter((g) => g.path.slice(0, 2).toUpperCase() === letter + ':');

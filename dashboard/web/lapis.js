@@ -2,9 +2,8 @@
 // 사무실(Claude Office) 화면은 office.js 가 같은 페이지 안에서 직접 그린다.
 import {createWorkspaceStore,validateLink,progress,TEMPLATES,SERVICES,STORAGE_KEY} from './workspace-model.js';
 import {pages} from './ui.js';
-import './setup.js';import './hub.js';import './studio.js';import './rooms.js';import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
+import './hub.js';import './studio.js';import './rooms.js';import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
 import {applyNavPrefs,startView} from './prefs.js';
-import {needsSetup} from './setup.js';
 
 const q=s=>document.querySelector(s);
 const node=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text);return n;};
@@ -44,10 +43,10 @@ const ICONS={
   settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
 };
 const GROUPS=[
-  {title:'시작하기',items:[['setup','시작 마법사'],['hub','연결 허브']]},
+  {title:'시작하기',items:[['hub','연결 허브']]},
   {title:'업무',items:[['home','오늘'],['calendar','캘린더'],['flows','업무 흐름'],['library','자료 모음']]},
   {title:'사무실',items:[['studio','봇 스튜디오'],['rooms','방 현황'],['board','현황판'],['teams','부서 관리'],['skills','봇 · 스킬트리'],['market','스킬 마켓']]},
-  {title:'라피스',items:[['chat','라피스 대화'],['learning','라피스 학습'],['account','계정 · Google']]},
+  {title:'라피스',items:[['chat','라피스 대화'],['learning','라피스 학습'],['account','내 계정 · 프로필']]},
   {title:'연결',items:[['storage','저장소'],['drive','드라이브'],['inbox','텔레그램 수신함'],['rental','물품 대여']]},
   {title:'관리',items:[['connect','Claude · 텔레그램'],['settings','설정'],['appearance','화면 설정']]},
 ];
@@ -256,7 +255,7 @@ q('#workspace-search').addEventListener('submit',event=>{event.preventDefault();
 q('#global-query').addEventListener('input',()=>{if(location.hash==='#search')renderSearch();});
 q('#undo-close').addEventListener('click',()=>{q('#undo-toast').hidden=true;undo=null;});
 q('#undo-run').addEventListener('click',()=>{const restore=undo;undo=null;q('#undo-toast').hidden=true;if(restore)restore();});
-window.addEventListener('storage',event=>{if(event.key===STORAGE_KEY){store=createWorkspaceStore(localStorage);showStorageWarning();render();}});
+window.addEventListener('storage',event=>{if(event.key&&event.key.endsWith(STORAGE_KEY)){store=createWorkspaceStore(localStorage);showStorageWarning();render();}});
 
 // ── 통합 서버 조회: 물품 재고 · 텔레그램 기록 ──
 const state={telegram:null,stock:null,filter:'all',search:'',refreshing:false};
@@ -364,5 +363,5 @@ document.addEventListener('cloud:state',e=>{
 });
 fetch('/api/features').then(r=>r.json()).then(f=>{if(!f.rental){window.__noRental=true;applyNavPrefs();document.querySelector('#quick-tools a[href="#rental"]')?.remove();}}).catch(()=>{});
 applyNavPrefs();
-if(!location.hash)location.replace('#'+(needsSetup()?'setup':startView()));
+if(!location.hash)location.replace('#'+startView());
 showStorageWarning();render();route();refresh();setInterval(refresh,10000);

@@ -105,14 +105,19 @@ const pill = (cls, t) => `<span class="pill ${cls}">${t}</span>`;
 const runPill = (o) => (o.readonly
   ? (o.running ? pill('ok', '<i class="dot on"></i>가동 중') : pill('', '꺼짐'))
   : (o.running ? pill('ok', '<i class="dot on pulse"></i>근무 중') : pill('', '퇴근 상태')));
-const kindPill = (o) => (o.kind === 'hermes' ? pill('warn', 'Hermes · 읽기 전용') : pill('accent', o.managed ? 'Claude 사무실' : 'Claude 사무실 · 불러옴'));
+const kindPill = (o) => (o.kind === 'hermes' ? (o.readonly ? pill('warn', 'Hermes · 읽기 전용') : pill('accent', 'Hermes · 사무실용')) : pill('accent', o.managed ? 'Claude 사무실' : 'Claude 사무실 · 불러옴'));
+// 부서·텔레그램·드라이브처럼 Claude 사무실에만 있는 기능을 쓸 수 있는 봇(Hermes 는 사무실용이어도 켜고 끄기만 이 프로그램이 맡는다)
+const claudeOnly = (o) => o.kind !== 'hermes' && !o.readonly;
+const hermesNote = (o, what) => (o.readonly
+  ? `<div class="empty"><div class="big">🔒</div><b>읽기 전용 봇입니다</b><p>별개의 봇이라 ${what}을(를) 바꾸지 않습니다.</p></div>`
+  : `<div class="empty"><div class="big">🤖</div><b>Hermes 봇에는 ${what}이(가) 없어요</b><p>Hermes 는 자체 설정으로 관리해요. 이 프로그램은 「설정」에서 켜고 끄기와 항상 켜두기만 도와요.</p></div>`);
 
 function renderChrome() {
   const o = cur();
   const needs = { connect: S.ov && (!S.ov.claude.installed || !S.ov.claude.auth.loggedIn || S.ov.diag.rogue || S.ov.diag.globalPlugin) };
   $('#title').textContent = (VIEWS[S.view] || VIEWS.home).title;
   $('#nav').innerHTML = Object.keys(VIEWS).map((k) => {
-    const extra = k === 'teams' && o && !o.readonly ? `<span class="count">${o.teamsCount}</span>`
+    const extra = k === 'teams' && o && claudeOnly(o) ? `<span class="count">${o.teamsCount}</span>`
       : k === 'skills' ? `<span class="count">${offices().length}</span>`
       : k === 'market' ? (marketUpdates() + marketRequests() ? `<span class="count" title="업데이트 있는 스킬 · 봇의 게시 요청">${marketUpdates() + marketRequests()}</span>` : '')
       : needs[k] ? '<i class="flag"></i>' : '';
@@ -151,8 +156,8 @@ function renderBanners(o) {
     if (ov.diag.rogue) b.push(`<div class="banner bad"><span class="ic">📡</span><div class="txt"><b>텔레그램 메시지를 가로채는 프로세스가 ${ov.diag.rogue}개 있습니다</b><span class="muted">일반 Claude 창이 봇의 수신권을 빼앗으면 지시가 사무실에 도착하지 않습니다.</span></div><button class="btn sm primary" data-act="diag-clean">정리하기</button></div>`);
     if (ov.diag.globalPlugin) b.push(`<div class="banner warn"><span class="ic">⚠️</span><div class="txt"><b>텔레그램 플러그인이 모든 Claude 창에서 켜져 있습니다</b><span class="muted">새 Claude 창을 열 때마다 봇 수신권을 가로챕니다. 사무실 폴더에서는 따로 켜지므로 전역 설정은 꺼도 됩니다.</span></div><button class="btn sm" data-act="diag-global-off">전역에서 끄기</button></div>`);
   }
-  if (o && !o.readonly && !o.exists && !(o.moveCandidates || []).length) b.push(`<div class="banner bad"><span class="ic">📂</span><div class="txt"><b>사무실 폴더를 찾을 수 없습니다</b><span class="muted">${esc(o.folder)} — 폴더를 옮기셨다면 새 위치를 알려 주세요.</span></div><button class="btn sm primary" data-act="office-relocate">위치 바꾸기</button></div>`);
-  if (o && !o.readonly && !o.exists) for (const c of (o.moveCandidates || []).slice(0, 2)) b.push(`<div class="banner info"><span class="ic">🔀</span><div class="txt"><b>같은 이름의 사무실이 다른 위치에서 발견됐습니다</b><span class="muted">${esc(c)} — 드라이브를 바꾸셨다면 이 위치로 바꿔 주세요. 폴더 안 파일은 건드리지 않습니다.</span></div><button class="btn sm primary" data-act="office-relocate-to" data-folder="${esc(c)}">이 위치로 바꾸기</button></div>`);
+  if (o && claudeOnly(o) && !o.exists && !(o.moveCandidates || []).length) b.push(`<div class="banner bad"><span class="ic">📂</span><div class="txt"><b>사무실 폴더를 찾을 수 없습니다</b><span class="muted">${esc(o.folder)} — 폴더를 옮기셨다면 새 위치를 알려 주세요.</span></div><button class="btn sm primary" data-act="office-relocate">위치 바꾸기</button></div>`);
+  if (o && claudeOnly(o) && !o.exists) for (const c of (o.moveCandidates || []).slice(0, 2)) b.push(`<div class="banner info"><span class="ic">🔀</span><div class="txt"><b>같은 이름의 사무실이 다른 위치에서 발견됐습니다</b><span class="muted">${esc(c)} — 드라이브를 바꾸셨다면 이 위치로 바꿔 주세요. 폴더 안 파일은 건드리지 않습니다.</span></div><button class="btn sm primary" data-act="office-relocate-to" data-folder="${esc(c)}">이 위치로 바꾸기</button></div>`);
   if (o && S.restartNeeded[o.id] && o.running) b.push(`<div class="banner info"><span class="ic">🔄</span><div class="txt"><b>부서·스킬·드라이브 변경을 적용하려면 다시 출근해야 합니다</b><span class="muted">잠시 꺼졌다가 자동으로 다시 켜집니다. 진행 중인 업무가 없을 때 눌러 주세요.</span></div><button class="btn sm primary" data-act="office-restart">지금 다시 출근</button></div>`);
   $('#banners').innerHTML = b.join('');
 }
@@ -184,7 +189,10 @@ function vHome() {
   const list = offices();
   let html = '';
   if (o.readonly) {
-    html += `<div class="card"><h2>${esc(o.name)}</h2><p class="sub">별개의 봇입니다. 이 대시보드는 인식해서 보여 주기만 하고, 켜거나 끄거나 바꾸지 않습니다. 「봇 · 스킬트리」에서 스킬을 볼 수 있습니다.</p></div>`;
+    html += `<div class="card"><h2>${esc(o.name)}</h2><p class="sub">별개의 봇입니다. 이 대시보드는 인식해서 보여 주기만 하고, 켜거나 끄거나 바꾸지 않습니다. 「봇 · 스킬트리」에서 스킬을 볼 수 있습니다. 켜고 끄는 것까지 맡기려면 「설정」에서 <b>사무실용</b>으로 바꾸세요.</p></div>`;
+  } else if (o.kind === 'hermes') {
+    html += `<div class="card"><div class="card-head"><div><h2>${esc(o.name)}</h2><p class="sub">사무실용으로 쓰는 Hermes 봇입니다. 켜고 끄기·항상 켜두기는 「설정」에서, 대화와 텔레그램 연결은 Hermes 자체 설정에서 합니다.</p></div>${runPill(o)}</div>
+      <div class="row">${o.running ? '<button class="btn danger" data-act="office-stop">퇴근시키기</button>' : '<button class="btn primary" data-act="office-start">출근시키기</button>'}<button class="btn" data-go="settings">설정 열기</button></div></div>`;
   } else if (d) {
     const tg = d.telegram || {};
     const paired = tg.access && tg.access.allowFrom.length > 0;
@@ -212,7 +220,7 @@ function officeCard(o) {
   return `<div class="card office-card${o.id === S.officeId ? ' selected-mark' : ''}" style="margin:0">
     <div class="top-row"><div><h3>${esc(o.name)}</h3><div class="badges">${kindPill(o)}${runPill(o)}</div></div>
       ${o.id === S.officeId ? pill('accent', '선택됨') : `<button class="btn sm" data-act="select-office" data-id="${esc(o.id)}">선택</button>`}</div>
-    <div class="kv">${o.readonly ? '' : `<span class="pill">부서 <b>${o.teamsCount}</b></span>`}<span class="pill">스킬 <b>${o.skillsCount}</b></span>${o.readonly ? '' : `<span class="pill">오늘 <b>${o.doneToday}</b>건</span>`}</div>
+    <div class="kv">${claudeOnly(o) ? `<span class="pill">부서 <b>${o.teamsCount}</b></span>` : ''}<span class="pill">스킬 <b>${o.skillsCount}</b></span>${claudeOnly(o) ? `<span class="pill">오늘 <b>${o.doneToday}</b>건</span>` : ''}</div>
     <div class="path">📂 ${esc(o.folder)}</div><div class="small muted">${esc(o.detail || '')}</div></div>`;
 }
 
@@ -221,6 +229,7 @@ function vBoard() {
   const o = cur(), d = S.detail;
   if (!o) return noOffice();
   if (o.readonly) return `<div class="card"><div class="empty"><div class="big">👀</div><b>${esc(o.name)}은(는) 별개의 봇입니다</b><p>이 봇은 자기 환경에서 따로 일합니다. 여기서는 인식만 하고 현황을 바꾸지 않습니다.</p></div></div>`;
+  if (o.kind === 'hermes') return `<div class="card">${hermesNote(o, '현황판')}</div>`;
   if (!d) return '<div class="empty"><div class="big">⏳</div><b>불러오는 중…</b></div>';
   const ch = d.chief || {};
   const working = ch.state === 'working';
@@ -248,7 +257,7 @@ function vBoard() {
 function vTeams() {
   const o = cur(), d = S.detail;
   if (!o) return noOffice();
-  if (o.readonly) return `<div class="card"><div class="empty"><div class="big">🔒</div><b>읽기 전용 봇입니다</b><p>별개의 봇이라 부서를 바꾸지 않습니다.</p></div></div>`;
+  if (!claudeOnly(o)) return `<div class="card">${hermesNote(o, '부서')}</div>`;
   if (!d) return '<div class="empty"><b>불러오는 중…</b></div>';
   return `<div class="card"><div class="card-head"><div><h2>${esc(o.name)}의 부서 ${d.teams.length}개</h2>
     <p class="sub">부서는 봇이 업무를 나눠 맡기는 전문 에이전트입니다. 여기서 늘리거나 줄여도, 일은 계속 텔레그램 봇을 통해 지시합니다. 텔레그램에서 "인사팀 추가해줘"라고 말해도 됩니다.</p></div>
@@ -279,14 +288,14 @@ function vSkills() {
     const d = S.details[o.id];
     const teams = d && d.teams && d.teams.length ? `<li><span class="lv">👥 부서</span> <small style="display:inline">${d.teams.length}</small><ul>${d.teams.map((t) => `<li><div class="sk-name">${esc(t.emoji)} <b>${esc(t.name)}</b></div><small>${esc(clip(t.role, 90))}</small></li>`).join('')}</ul></li>` : '';
     const changes = d && d.changes && d.changes.length ? `<details class="dtl"><summary>최근 설정 변경 <small>${d.changes.length}건</small></summary><ul class="changes">${d.changes.slice(0, 8).map((c) => `<li><time>${esc(c.date)}</time><div><b>${esc(c.type)}</b> ${esc(c.name)} — ${esc(c.summary)}${c.request ? `<br><span class="muted">요청: ${esc(clip(c.request, 80))}</span>` : ''}</div></li>`).join('')}</ul></details>` : '';
-    const emptyMsg = o.readonly ? '등록된 스킬이 없습니다.' : '아직 만든 스킬이 없습니다. 텔레그램에서 "앞으로 ○○할 때는 이렇게 해"라고 하면 이 봇이 스스로 만들어 여기에 나타납니다.';
+    const emptyMsg = !claudeOnly(o) ? '등록된 스킬이 없습니다.' : '아직 만든 스킬이 없습니다. 텔레그램에서 "앞으로 ○○할 때는 이렇게 해"라고 하면 이 봇이 스스로 만들어 여기에 나타납니다.';
     return `<div class="card office-card" style="margin:0"><div class="top-row"><div><h3>${esc(o.name)}</h3><div class="badges">${kindPill(o)}${runPill(o)}</div></div>${o.id === S.officeId ? pill('accent', '선택됨') : `<button class="btn sm" data-act="select-office" data-id="${esc(o.id)}">선택</button>`}</div>
       <div class="path">📂 ${esc(o.folder)}</div>
-      <details class="dtl" open><summary>스킬트리 <small>${o.readonly ? '' : `부서 ${o.teamsCount} · `}스킬 ${o.skillsCount}</small></summary>
+      <details class="dtl" open><summary>스킬트리 <small>${!claudeOnly(o) ? '' : `부서 ${o.teamsCount} · `}스킬 ${o.skillsCount}</small></summary>
         <ul class="tree">${teams}<li><span class="lv">🧩 스킬</span> <small style="display:inline">${o.skillsCount}</small>${d ? skillTree(d.skills || [], emptyMsg) : '<small>불러오는 중…</small>'}</li></ul></details>${changes}</div>`;
   }).join('');
   return `${stats}<div class="grid cols-2" style="align-items:start">${cards}</div>
-    <div class="card"><h2>읽기 전용에 대해</h2><p class="sub">Hermes(라피스 등) 같은 별개의 봇은 자기 환경에서 따로 일합니다. 이 프로그램은 그 봇의 폴더를 읽어 스킬을 보여 주기만 하고, 켜거나 끄거나 파일을 바꾸지 않습니다.</p></div>`;
+    <div class="card"><h2>읽기 전용과 사무실용</h2><p class="sub">Hermes(라피스 등) 같은 별개의 봇은 자기 환경에서 따로 일합니다. <b>읽기 전용</b>이면 이 프로그램은 봇의 폴더를 읽어 스킬을 보여 주기만 하고 켜거나 끄거나 파일을 바꾸지 않습니다. 「설정」에서 <b>사무실용</b>으로 바꾸면 켜고 끄기와 항상 켜두기까지 맡습니다.</p></div>`;
 }
 
 // ── 스킬 마켓 ──
@@ -688,6 +697,16 @@ function dlgDriveAdd() {
     <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn primary" type="submit">맡기기</button></div></form>`);
 }
 
+// Hermes 사용 모드: 읽기 전용(보기만) / 사무실용·단일 사용(켜고 끄기까지 이 프로그램이 맡음)
+function vHermesMode(o) {
+  const card = (mode, title, tag, lines) => {
+    const on = (o.mode || 'readonly') === mode;
+    return `<div class="mode-card${on ? ' on' : ''}"><div class="top-row"><b>${title}</b>${on ? pill('ok', '사용 중') : `<button class="btn sm primary" data-act="hermes-mode" data-mode="${mode}">이 모드로 바꾸기</button>`}</div><div class="small muted">${tag}</div><ul class="mode-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul></div>`;
+  };
+  return `<div class="setting block"><div><b>사용 모드</b><span class="sub">이 프로그램이 이 Hermes 봇을 어디까지 맡을지 고릅니다. 언제든 바꿀 수 있고, 어느 쪽이든 폴더와 파일은 지워지지 않아요.</span></div>
+    <div class="grid cols-2" style="margin-top:10px">${card('readonly', '🔒 읽기 전용', '가장 안전해요 — 보기만 합니다', ['스킬 목록을 보여 주고, 스킬 마켓에서 스킬 설치만 도와요.', '켜기·끄기, 항상 켜두기, 설정 변경은 하지 않아요.', 'Hermes 는 지금처럼 자체 방식으로 계속 일해요.'])}${card('office', '🏢 사무실용 · 단일 사용', '이 프로그램이 이 봇 하나를 사무실처럼 맡아요', ['출근시키기·퇴근시키기로 Hermes 를 켜고 꺼요.', '「항상 켜두기」를 켜면 꺼졌을 때 이 프로그램이 다시 켜 줘요.', '이 봇 하나만 단독으로 운영하는 방식이에요. 같은 텔레그램 봇 토큰을 다른 곳(Claude 사무실·LAPIS 봇)에서 동시에 쓰지 마세요.', '대화·텔레그램·스킬 내용은 Hermes 자체 설정으로 바꿔요(부서·드라이브는 없어요).'])}</div></div>`;
+}
+
 function vSettings() {
   const cfg = S.ov.config, o = cur(), a = S.ov.app;
   let html = `<div class="card"><h2>일반</h2><p class="sub" style="margin-bottom:6px">새 사무실을 만들 때 쓰는 기본값과 화면 설정입니다.</p>
@@ -699,17 +718,21 @@ function vSettings() {
     </div><div class="row end" style="margin-top:14px"><button class="btn primary" type="submit">저장</button></div></form></div>`;
   if (o) {
     html += `<div class="card"><div class="card-head"><div><h2>${esc(o.name)}</h2><div class="badges">${kindPill(o)}${runPill(o)}</div></div></div>`;
-    if (o.readonly) html += '<p class="sub">별개의 봇이라 이 프로그램에서 설정을 바꾸지 않습니다(읽기 전용).</p>';
-    else {
-      html += `<div class="setting"><div><b>사무실 켜기 / 끄기</b><span class="sub">${o.running ? '지금 근무 중입니다.' : '지금 퇴근 상태입니다.'}</span></div><div class="row">${o.running ? '<button class="btn" data-act="office-restart">다시 출근</button><button class="btn danger" data-act="office-stop">퇴근시키기</button>' : '<button class="btn primary" data-act="office-start">출근시키기</button>'}</div></div>
-      <div class="setting"><div><b>항상 켜두기</b><span class="sub">이 프로그램이 켜져 있는 동안, 사무실이 꺼져 있으면 다시 출근시킵니다. 직접 퇴근시킨 경우에는 다시 켜지 않습니다.</span></div><label class="switch"><input type="checkbox" data-change="autostart"${o.autoStart ? ' checked' : ''}><i></i></label></div>
-      <div class="setting"><div><b>사무실 폴더</b><span class="sub path">${esc(o.folder)}</span></div><div class="row"><button class="btn sm" data-act="office-relocate">위치 바꾸기</button><button class="btn sm" data-act="office-open">폴더 열기</button></div></div>
-      ${!o.managed && String(o.folder).slice(0, 2).toLowerCase() === String(a.officesDir).slice(0, 2).toLowerCase() && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
-      ${vDrives()}
-      <div class="setting"><div><b>목록에서 빼기</b><span class="sub">등록만 해제하고 폴더와 파일은 그대로 둡니다.</span></div><button class="btn sm danger" data-act="office-unregister">등록 해제</button></div>
-      ${o.closable ? `<div class="setting"><div><b>사무실 폐쇄 (삭제)</b><span class="sub">사무실을 끄고 목록에서 없앱니다. 폴더(봇 토큰·업무 기록 포함)는 완전히 지우지 않고 <span class="code">${esc(a.dataHome)}\\closed</span> 로 옮겨 둡니다.</span></div><button class="btn sm danger" data-act="office-close">폐쇄하기</button></div>` : ''}`;
+    if (o.kind === 'hermes') html += vHermesMode(o);
+    if (o.readonly) {
+      html += `<div class="setting"><div><b>봇 폴더</b><span class="sub">봇의 설정과 스킬이 들어 있는 곳이에요. 이 프로그램은 열어서 보기만 해요.</span><br><span class="sub path">${esc(o.folder)}</span></div><button class="btn sm" data-act="office-open">폴더 열기</button></div>`;
+    } else {
+      const hermes = o.kind === 'hermes';
+      html += `<div class="setting"><div><b>${hermes ? '봇 켜기 / 끄기' : '사무실 켜기 / 끄기'}</b><span class="sub">${o.running ? '지금 근무 중입니다.' : '지금 퇴근 상태입니다.'} ${hermes ? '출근시키면 Hermes 가 켜져 텔레그램 등의 메시지를 받기 시작합니다.' : '출근시키면 봇이 텔레그램 지시를 받기 시작합니다.'}</span></div><div class="row">${o.running ? '<button class="btn" data-act="office-restart">다시 출근</button><button class="btn danger" data-act="office-stop">퇴근시키기</button>' : '<button class="btn primary" data-act="office-start">출근시키기</button>'}</div></div>
+      <div class="setting"><div><b>항상 켜두기</b><span class="sub">이 프로그램이 켜져 있는 동안, 봇이 꺼져 있으면 다시 출근시킵니다. 직접 퇴근시킨 경우에는 다시 켜지 않습니다.</span></div><label class="switch"><input type="checkbox" data-change="autostart"${o.autoStart ? ' checked' : ''}><i></i></label></div>
+      <div class="setting"><div><b>${hermes ? '봇 폴더' : '사무실 폴더'}</b><span class="sub">${hermes ? 'Hermes 의 설정·스킬·기록이 들어 있는 곳이에요.' : '봇의 지침·부서·기록이 들어 있는 곳이에요. 폴더를 옮기셨다면 「위치 바꾸기」로 알려 주세요.'}</span><br><span class="sub path">${esc(o.folder)}</span></div><div class="row">${hermes ? '' : '<button class="btn sm" data-act="office-relocate">위치 바꾸기</button>'}<button class="btn sm" data-act="office-open">폴더 열기</button></div></div>
+      ${!hermes && !o.managed && String(o.folder).slice(0, 2).toLowerCase() === String(a.officesDir).slice(0, 2).toLowerCase() && !String(o.folder).toLowerCase().startsWith(String(a.officesDir).toLowerCase()) ? `<div class="setting"><div><b>고정 위치로 옮기기</b><span class="sub">바탕화면 등 바뀔 수 있는 위치의 사무실을 <span class="code">${esc(a.officesDir)}</span> 로 복사해 옮깁니다. 원본은 지우지 않습니다. 퇴근 상태에서만 할 수 있고, 처음 출근할 때 폴더 신뢰 확인이 다시 나옵니다.</span></div><button class="btn sm" data-act="office-migrate"${o.running ? ' disabled' : ''}>옮기기</button></div>` : ''}
+      ${hermes ? '' : vDrives()}
+      `;
     }
-    html += '</div>';
+    html += `<div class="setting"><div><b>봇 삭제</b><span class="sub">${o.removeKind === 'close'
+      ? `봇을 끄고 목록에서 없앱니다. 폴더(봇 토큰·업무 기록 포함)는 완전히 지우지 않고 <span class="code">${esc(a.dataHome)}\\closed</span> 로 옮겨 둡니다.`
+      : '켜져 있으면 끄고, 이 프로그램의 목록에서 없앱니다. 폴더와 파일은 지우지 않고 그대로 두며, 나중에 「불러오기」로 다시 등록할 수 있어요.'}</span></div><button class="btn sm danger" data-act="office-remove">삭제하기</button></div></div>`;
   }
   html += vUpdateCard(S.ov.update, cfg);
   html += `<div class="card"><h2>프로그램 정보</h2><div class="setting" style="border:0"><div><b>AI-Office ${esc(a.version)}</b><span class="sub">프로그램: <span class="path">${esc(a.appHome)}</span><br>데이터: <span class="path">${esc(a.dataHome)}</span></span></div><button class="btn sm" data-act="open-data">데이터 폴더 열기</button></div>
@@ -808,16 +831,20 @@ function dlgConfirm({ title, body, ok = '확인', danger = false, onOk }) {
   $('#confirmOk').onclick = async (e) => { e.target.disabled = true; await onOk(); closeDlg(); };
 }
 
-// 사무실 폐쇄: 이름을 똑같이 입력해야 버튼이 눌린다(실수 방지).
-function dlgCloseOffice() {
+// 봇 삭제: 이름을 똑같이 입력해야 버튼이 눌린다(실수 방지). 이 프로그램이 만든 사무실은 폴더를 보관 위치로 옮기고, 불러온 폴더·Hermes 는 파일을 그대로 둔다.
+function dlgRemoveOffice() {
   const o = cur();
   if (!o) return;
-  openDlg(`<form data-form="office-close"><div class="dlg-head"><h2>「${esc(o.name)}」 사무실을 폐쇄할까요?</h2>
-    <p>${o.running ? '지금 근무 중이라 먼저 퇴근시킵니다(진행 중인 업무는 중단됩니다). ' : ''}사무실이 목록에서 사라지고 텔레그램 봇 연결도 끊어집니다. 폴더는 지우지 않고 <code>${esc(S.ov.app.dataHome)}\\closed</code> 로 옮겨 두므로, 필요하면 「기존 폴더 불러오기」로 되살릴 수 있습니다.</p></div>
-    <div class="dlg-body"><div class="field"><label>확인을 위해 사무실 이름을 입력하세요</label><input type="text" name="confirm" autocomplete="off" placeholder="${esc(o.name)}" data-want="${esc(o.name)}"></div></div>
-    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn danger" type="submit" id="closeOk" disabled>폐쇄하기</button></div></form>`);
+  const closing = o.removeKind === 'close';
+  const stops = !o.readonly && o.running ? '지금 근무 중이라 먼저 퇴근시킵니다(진행 중인 업무는 중단됩니다). ' : '';
+  openDlg(`<form data-form="office-remove"><div class="dlg-head"><h2>「${esc(o.name)}」 봇을 삭제할까요?</h2>
+    <p>${stops}${closing
+      ? `목록에서 사라지고 텔레그램 봇 연결도 끊어집니다. 폴더는 지우지 않고 <code>${esc(S.ov.app.dataHome)}\\closed</code> 로 옮겨 두므로, 필요하면 「기존 폴더 불러오기」로 되살릴 수 있습니다.`
+      : `이 프로그램의 목록에서만 없어집니다. <b>폴더와 파일은 그대로</b> 두므로(${esc(o.folder)}), 필요하면 「기존 폴더 불러오기」로 다시 등록할 수 있습니다.`}</p></div>
+    <div class="dlg-body"><div class="field"><label>확인을 위해 이름을 입력하세요</label><input type="text" name="confirm" autocomplete="off" placeholder="${esc(o.name)}" data-want="${esc(o.name)}"></div></div>
+    <div class="dlg-foot"><button class="btn" type="button" data-act="dlg-close">취소</button><button class="btn danger" type="submit" id="removeOk" disabled>삭제하기</button></div></form>`);
   const input = $('#dlg input[name=confirm]');
-  input.addEventListener('input', () => { $('#closeOk').disabled = input.value.trim() !== o.name; });
+  input.addEventListener('input', () => { $('#removeOk').disabled = input.value.trim() !== o.name; });
 }
 
 // 업데이트: 설치를 시키고, 서버가 새 버전으로 다시 뜰 때까지 기다렸다가 화면을 새로 고친다.
@@ -859,8 +886,8 @@ const ACT = {
   'office-restart': (b) => doing(b, async () => { await api('POST', `/api/offices/${oid()}/restart`); S.restartNeeded[S.officeId] = false; toast('잠시 뒤 다시 출근합니다.'); setTimeout(refresh, 3000); }),
   'office-open': (b) => doing(b, () => api('POST', `/api/offices/${oid()}/open`)),
   'open-data': (b) => doing(b, () => api('POST', '/api/open-data')),
-  'office-unregister': () => dlgConfirm({ title: '목록에서 뺄까요?', body: '등록만 해제됩니다. 폴더와 파일은 지워지지 않고, 나중에 다시 불러올 수 있습니다.', ok: '등록 해제', danger: true, onOk: async () => { try { await api('DELETE', `/api/offices/${oid()}`); toast('등록을 해제했습니다.'); } catch (e) { toast(e.message, true); } S.officeId = ''; refresh(); } }),
-  'office-close': () => dlgCloseOffice(),
+  'office-remove': () => dlgRemoveOffice(),
+  'hermes-mode': (b) => doing(b, async () => { const mode = b.dataset.mode; await api('PATCH', `/api/offices/${oid()}`, { mode }); toast(mode === 'office' ? '사무실용으로 바꿨어요. 이제 켜고 끌 수 있어요.' : '읽기 전용으로 바꿨어요. 이제 보기만 해요.'); await refresh(); }),
   'update-check': (b) => doing(b, async () => { const u = await api('POST', '/api/update/check'); await refresh(); toast(u.error || (u.available ? `새 버전 v${u.latest.version} 이(가) 있습니다.` : '지금이 최신 버전입니다.'), Boolean(u.error)); }),
   'update-apply': () => dlgUpdate(),
   'office-relocate': () => dlgRelocate(),
@@ -954,9 +981,9 @@ document.addEventListener('submit', async (e) => {
     else if (kind === 'config') {
       await api('PATCH', '/api/config', { honorific: fd.get('honorific'), theme: fd.get('theme'), port: Number(fd.get('port')), autoRestart: fd.get('autoRestart') === 'on' });
       S.themePref = fd.get('theme'); localStorage.setItem('theme', S.themePref); applyTheme(); toast('저장했습니다.');
-    } else if (kind === 'office-close') {
-      const r = await api('POST', `/api/offices/${oid()}/close`, { confirmName: fd.get('confirm') });
-      S.officeId = ''; localStorage.removeItem('office'); closeDlg(); toast(`「${r.name}」 사무실을 폐쇄했습니다.`);
+    } else if (kind === 'office-remove') {
+      const r = await api('POST', `/api/offices/${oid()}/remove`, { confirmName: fd.get('confirm') });
+      S.officeId = ''; localStorage.removeItem('office'); closeDlg(); toast(r.kind === 'closed' ? `「${r.name}」 봇을 삭제했습니다. 폴더는 보관 위치로 옮겨 뒀어요.` : `「${r.name}」 봇을 목록에서 삭제했습니다. 폴더와 파일은 그대로예요.`);
     } else if (kind === 'drive-add') {
       const r = await api('POST', `/api/offices/${oid()}/drives`, { path: fd.get('path'), level: fd.get('level'), confirmDelete: fd.get('confirmDelete') === 'on' });
       if (r.needsRestart) S.restartNeeded[S.officeId] = true;

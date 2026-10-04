@@ -90,6 +90,19 @@ export function createCalendarStore(file){
       if(event.googleId)db.pendingDeletes.push({calendarId:event.googleCalendarId||'primary',id:event.googleId});
       await save();return {ok:true};
     }),
+    // 계정 동기화: 이 PC 에서 직접 만든 일정만 내보내고 가져온다(Google 일정은 Google 에서 다시 받는다). 잘못된 일정은 건너뛴다.
+    async exportLocal(){const db=await load();return db.events.filter(e=>e.source==='local').map(publicEvent);},
+    importLocal:list=>exclusive(async()=>{
+      const db=await load();
+      if(!Array.isArray(list)||list.length>5000)bad('일정 자료가 올바르지 않습니다.');
+      const now=new Date().toISOString(),stamp=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))?v:now;
+      const cleaned=[];
+      for(const e of list){
+        try{cleaned.push({id:/^[0-9a-f-]{36}$/i.test(String(e?.id))?e.id:randomUUID(),...cleanEvent(e),source:'local',googleId:null,createdAt:stamp(e?.createdAt),updatedAt:now});}catch{ /* 형식이 틀린 일정은 건너뛴다 */ }
+      }
+      db.events=[...db.events.filter(e=>e.source!=='local'),...cleaned];
+      await save();return {count:cleaned.length};
+    }),
     // 동기화가 쓰는 내부 접근. 변경은 반드시 transaction 안에서 한다.
     transaction:fn=>exclusive(async()=>{const db=await load();const result=await fn(db);await save();return result;}),
     async state(){const db=await load();return {lastSync:db.lastSync,count:db.events.length,pendingDeletes:db.pendingDeletes.length};},

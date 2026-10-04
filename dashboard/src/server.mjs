@@ -6,11 +6,12 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {homedir} from 'node:os';
 import {statfs} from 'node:fs/promises';
 import {RequestError,readLimited,upstream,RentalSessions} from './proxy.mjs';
-import {createVault} from './vault.mjs';
+import {createVault,dpapi} from './vault.mjs';
 import {createCloud} from './lapis-cloud.mjs';
 import {createCalendarStore,createGoogleCalendar} from './calendar.mjs';
 import {createExtraRoutes} from './extra-routes.mjs';
 import {createTaskStore} from './tasks.mjs';
+import {createAccounts} from './accounts.mjs';
 import {rentalUrl as configuredRentalUrl} from './config.mjs';
 
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
@@ -63,6 +64,10 @@ async function localDrives(){
   }));
   return found.filter(Boolean);
 }
+// 로그인 없이 부를 수 있는 기능: 로그인·가입에 필요한 것과 상태 확인뿐이다.
+const PUBLIC=new Set(['GET /api/health','GET /api/features','GET /api/cloud/state','GET /api/cloud/consents','POST /api/cloud/login','POST /api/cloud/register','POST /api/cloud/login/start','POST /api/cloud/login/poll','GET /oauth/google/callback']);
+const needsLogin=(method,path)=>/^\/(api|office|rental|oauth)\//.test(path)&&!PUBLIC.has(method+' '+path);
+async function signedIn(cloud){try{return (await cloud.state()).signedIn===true;}catch{return false;}}
 export function createDashboardServer(options={}){
   const officeUrl=options.officeUrl||'http://127.0.0.1:5000';
   const rentalUrl=options.rentalUrl||configuredRentalUrl();
@@ -70,15 +75,19 @@ export function createDashboardServer(options={}){
   const hermesHome=options.hermesHome||join(homedir(),'AppData/Local/hermes/profiles/lapis-pilot');
   const getDrives=options.drives||localDrives;
   const dataDir=options.dataDir||join(ROOT,'.runtime/data');
-  const vault=options.vault||createVault(join(dataDir,'vault.bin'));
-  const calendarStore=options.calendarStore||createCalendarStore(join(dataDir,'calendar.json'));
-  const taskStore=options.taskStore||createTaskStore(join(dataDir,'tasks.json'));
+  const vault=options.vault||createVault(join(dataDir,'vault.bin'));   // PC 전체에 하나: 누가 로그인했는지(클라우드 세션)만 담는다
   const cloud=options.cloud||createCloud({vault,baseUrl:options.cloudBase||undefined,fetchImpl:options.cloudFetch});
-  const gcal=options.googleCalendar||createGoogleCalendar({vault,store:calendarStore,cloud,fetchImpl:options.googleFetch});
+  // 회원제: 로그인이 있어야 앱을 쓸 수 있고, 할 일·일정·Google 연결 정보는 계정마다 따로 보관한다.
+  // requireLogin:false 는 자동 시험·개발 전용(예전처럼 한 곳에 저장).
+  const requireLogin=options.requireLogin!==false;
+  const accounts=requireLogin&&!options.calendarStore&&!options.taskStore?createAccounts({dataDir,cloud,pcVault:vault,createVault:file=>createVault(file,options.vaultCrypto||dpapi),createTaskStore,createCalendarStore}):null;
+  const calendarStore=options.calendarStore||accounts?.calendar||createCalendarStore(join(dataDir,'calendar.json'));
+  const taskStore=options.taskStore||accounts?.tasks||createTaskStore(join(dataDir,'tasks.json'));
+  const gcal=options.googleCalendar||createGoogleCalendar({vault:accounts?.vault||vault,store:calendarStore,cloud,fetchImpl:options.googleFetch});
   // 사무실에 맡긴 드라이브 위치(드라이브 접근)를 Office 에서 읽어 저장소 화면의 허용 범위로 쓴다.
   const getGrants=options.grants||(async()=>{
     const overview=await fetchJson(officeUrl+'/api/overview');
-    const office=(overview.offices||[]).find(o=>!o.readonly&&o.exists!==false)||(overview.offices||[])[0];
+    const office=(overview.offices||[]).find(o=>o.kind!=='hermes'&&!o.readonly&&o.exists!==false);
     if(!office)return [];
     const detail=await fetchJson(officeUrl+'/api/offices/'+encodeURIComponent(office.id));
     return (detail.drives||[]).map(g=>g.path);
@@ -103,7 +112,9 @@ export function createDashboardServer(options={}){
       if(/%2f|%5c|%00/i.test(url.pathname))throw new RequestError(400,'잘못된 경로입니다.');
       const write=!['GET','HEAD'].includes(req.method);
       if(write&&req.headers['x-lapis-request']!=='1')throw new RequestError(403,'대시보드 화면에서만 조작할 수 있습니다.');
-      if(await extra(req,res,url,{json,readJson,port}))return;
+      // 회원제 게이트: 화면 파일을 뺀 모든 기능은 로그인한 뒤에만 쓸 수 있다.
+      if(requireLogin&&needsLogin(req.method,url.pathname)&&!(await signedIn(cloud)))throw new RequestError(401,'로그인이 필요해요.');
+      if(await extra(req,res,url,{json,readJson,readRaw:(request,limit)=>readLimited(request,limit),port}))return;
       if(url.pathname==='/api/overview'&&req.method==='GET'){
         if(!overviewCache||Date.now()-overviewCache.at>5000){
           overviewPending??=Promise.all([safeJson(officeUrl+'/api/overview'),safeJson(rentalUrl+'/list/data')])
@@ -168,7 +179,7 @@ export function createDashboardServer(options={}){
       if(!file.startsWith(publicRoot+sep)||!TYPES[extname(file)])throw new RequestError(404,'파일을 찾을 수 없습니다.');
       let contents;try{contents=await readFile(file);}catch{throw new RequestError(404,'파일을 찾을 수 없습니다.');}
       res.writeHead(200,{'content-type':TYPES[extname(file)],'cache-control':'no-store'});res.end(contents);
-    }catch(e){
+    }catch(e){if(process.env.LAPIS_DEBUG)console.error(e);
       if(!res.headersSent)json(res,e instanceof RequestError?e.status:500,{error:e instanceof RequestError?e.message:'처리 중 오류가 발생했습니다.'});
       else res.end();
     }

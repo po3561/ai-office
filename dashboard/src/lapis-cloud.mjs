@@ -7,6 +7,15 @@ import {cloudBase} from './config.mjs';
 export class CloudError extends Error{constructor(status,message){super(message);this.status=status;}}
 
 const okStatus=s=>s>=200&&s<300;
+export const MAX_AVATAR=5*1024*1024;
+// 올린 사진이 정말 그림 파일인지 앞부분(매직 넘버)으로 확인한다. 확장자·헤더의 말은 믿지 않는다.
+export function sniffImage(b){
+  if(!Buffer.isBuffer(b)||b.length<16)return null;
+  if(b.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])))return 'image/png';
+  if(b[0]===0xff&&b[1]===0xd8&&b[2]===0xff)return 'image/jpeg';
+  if(b.subarray(0,4).toString('latin1')==='RIFF'&&b.subarray(8,12).toString('latin1')==='WEBP')return 'image/webp';
+  return null;
+}
 const GOOGLE_SERVICES=['drive','calendar','youtube','sheets','docs','slides','gmail'];
 const ID='[A-Za-z0-9_.:-]{1,128}';
 // 화면이 부를 수 있는 서버 경로. 이 밖의 경로(관리자·텔레그램 연결 등)는 대신 호출하지 않는다.
@@ -29,16 +38,37 @@ export const cloudRouteAllowed=(method,path)=>CLOUD_ROUTES.some(([m,re])=>m===me
 
 export function createCloud({baseUrl=cloudBase(),vault,fetchImpl=fetch,appVersion='dashboard-0.3'}){
   const attempts=new Map();
+  // 비밀번호 대입을 이 PC 에서도 막는다(서버 제한과 별개): 같은 아이디로 10분에 8번 틀리면 잠시 멈춘다.
+  const fails=new Map();
+  const throttle={
+    check(key){const k=key.toLowerCase();const list=(fails.get(k)||[]).filter(t=>Date.now()-t<600000);fails.set(k,list);if(list.length>=8)throw new CloudError(429,'시도가 너무 많아요. 10분 뒤에 다시 해 주세요.');},
+    fail(key){const k=key.toLowerCase();fails.set(k,[...(fails.get(k)||[]),Date.now()]);if(fails.size>500)fails.clear();},
+    clear(key){fails.delete(key.toLowerCase());},
+  };
+  async function saveSession(data){
+    const accessToken=typeof data.access_token==='string'?data.access_token:data.token;
+    const user=data.user&&typeof data.user==='object'?data.user:null;
+    if(!accessToken||typeof data.refresh_token!=='string'||typeof user?.id!=='string'||typeof user?.email!=='string')
+      throw new CloudError(502,'서버가 올바른 로그인 결과를 돌려주지 않았습니다.');
+    const name=user.name||user.display_name||user.email;
+    await vault.update({cloud:{accessToken,refreshToken:data.refresh_token,user:{id:user.id,email:user.email,name,username:typeof user.username==='string'?user.username:''}}});
+    return {signedIn:true,user:{id:user.id,email:user.email,name,username:typeof user.username==='string'?user.username:''}};
+  }
   let refreshing=null;
 
-  async function raw(route,{method='GET',body,token,timeout=25000}={}){
+  async function raw(route,{method='GET',body,bytes,contentType,binary=false,token,timeout=25000}={}){
     if(!baseUrl)throw new CloudError(503,'라피스 클라우드 주소가 설정되지 않았습니다. config.local.json 의 cloudBase 를 채워 주세요.');
     const headers={Accept:'application/json'};
     if(body!==undefined)headers['Content-Type']='application/json';
+    if(bytes!==undefined)headers['Content-Type']=contentType||'application/octet-stream';
     if(token)headers.Authorization='Bearer '+token;
     let response;
-    try{response=await fetchImpl(baseUrl+route,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});}
+    try{response=await fetchImpl(baseUrl+route,{method,headers,body:bytes!==undefined?bytes:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});}
     catch{throw new CloudError(503,'라피스 서버에 연결할 수 없습니다. 네트워크 상태를 확인하세요.');}
+    if(binary){
+      const buffer=Buffer.from(await response.arrayBuffer());
+      return {status:response.status,contentType:response.headers.get('content-type')||'application/octet-stream',text:'',buffer};
+    }
     const text=await response.text();
     return {status:response.status,contentType:response.headers.get('content-type')||'application/json; charset=utf-8',text};
   }
@@ -90,7 +120,103 @@ export function createCloud({baseUrl=cloudBase(),vault,fetchImpl=fetch,appVersio
   return {
     async state(){
       const saved=await session();
-      return saved?{signedIn:true,user:{id:saved.user.id,email:saved.user.email,name:saved.user.name}}:{signedIn:false};
+      return saved?{signedIn:true,user:{id:saved.user.id,email:saved.user.email,name:saved.user.name,username:saved.user.username||''}}:{signedIn:false};
+    },
+    // ── 회원가입·로그인(이메일/아이디 + 비밀번호). Google 로그인은 아래 startGoogleLogin 을 쓴다. ──
+    async consents(){
+      const result=await raw('/legal/consents/current');
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'가입 동의문을 불러오지 못했습니다'));
+      const docs=Array.isArray(parse(result.text).documents)?parse(result.text).documents:[];
+      const out=docs.filter(d=>d&&typeof d.consent_type==='string'&&typeof d.version==='string'&&typeof d.title==='string'&&typeof d.body_markdown==='string'&&typeof d.document_hash==='string')
+        .map(d=>({consentType:d.consent_type,version:d.version,title:d.title,bodyMarkdown:d.body_markdown,documentHash:d.document_hash,required:d.required===true}));
+      if(!out.length)throw new CloudError(502,'가입 동의문을 불러오지 못했습니다.');
+      return out;
+    },
+    async login({identifier,password}={}){
+      identifier=String(identifier||'').trim();password=String(password||'');
+      if(!identifier||identifier.length>254||!password||password.length>128)throw new CloudError(400,'아이디(또는 이메일)와 비밀번호를 입력해 주세요.');
+      throttle.check(identifier);
+      const result=await raw('/auth/login',{method:'POST',body:{identifier,password}});
+      if(!okStatus(result.status)){
+        if([400,401,403].includes(result.status))throttle.fail(identifier);
+        throw new CloudError(result.status,result.status===401?'아이디(이메일) 또는 비밀번호가 올바르지 않아요.':errorOf(result,'로그인하지 못했습니다'));
+      }
+      throttle.clear(identifier);
+      return saveSession(parse(result.text));
+    },
+    async register(input={}){
+      const body={
+        username:String(input.username||'').trim().toLowerCase(),email:String(input.email||'').trim().toLowerCase(),
+        display_name:String(input.displayName||'').trim(),phone:String(input.phone||'').trim()||null,password:String(input.password||''),
+        consents:(Array.isArray(input.consents)?input.consents:[]).slice(0,10).map(c=>({consent_type:String(c.consentType||''),version:String(c.version||''),document_hash:String(c.documentHash||''),granted:c.granted===true})),
+        locale:'ko-KR',app_version:appVersion,
+      };
+      if(!/^[a-z0-9][a-z0-9._-]{3,29}$/.test(body.username))throw new CloudError(400,'아이디는 영문 소문자·숫자 4~30자로 적어 주세요.');
+      if(!/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(body.email))throw new CloudError(400,'이메일 형식을 확인해 주세요.');
+      if(!body.display_name||body.display_name.length>80)throw new CloudError(400,'표시 이름(닉네임)을 1~80자로 적어 주세요.');
+      if(body.password.length<12||body.password.length>128)throw new CloudError(400,'비밀번호는 12자 이상으로 정해 주세요.');
+      throttle.check('register');
+      const result=await raw('/auth/register',{method:'POST',body});
+      if(!okStatus(result.status)){
+        throttle.fail('register');
+        throw new CloudError(result.status,result.status===409?'이미 가입된 아이디 또는 이메일이에요.':errorOf(result,'회원가입하지 못했습니다'));
+      }
+      return saveSession(parse(result.text));
+    },
+    // ── 프로필: 닉네임(표시 이름)·전화번호·사진 ──
+    async profile(){
+      const [me,identity]=await Promise.all([authed('/auth/me'),authed('/me/identity-profile')]);
+      if(!okStatus(me.status))throw new CloudError(me.status,errorOf(me,'내 정보를 불러오지 못했습니다'));
+      const user=parse(me.text).user||{},profile=parse(identity.text);
+      return {
+        user:{id:user.id,username:user.username||'',email:user.email||'',name:user.name||user.display_name||'',createdAt:user.created_at||''},
+        profile:{name:profile.profile?.name||user.name||'',phone:profile.profile?.phone||'',phoneNeedsReview:profile.profile?.phone_needs_review===true},
+        revision:Number.isInteger(profile.revision)?profile.revision:0,
+      };
+    },
+    async saveProfile({name,phone,revision}={}){
+      name=String(name??'').trim();phone=String(phone??'').trim();
+      if(!name||name.length>80)throw new CloudError(400,'닉네임을 1~80자로 적어 주세요.');
+      if(phone&&!/^[0-9+\-() ]{7,24}$/.test(phone))throw new CloudError(400,'전화번호 형식을 확인해 주세요. (예: 010-1234-5678)');
+      const result=await authed('/me/identity-profile',{method:'PUT',body:{expected_revision:Number.isInteger(revision)?revision:0,name,phone:phone||null}});
+      if(!okStatus(result.status))throw new CloudError(result.status,result.status===409?'다른 곳에서 먼저 바뀌었어요. 새로 불러온 뒤 다시 저장해 주세요.':errorOf(result,'프로필을 저장하지 못했습니다'));
+      const saved=await session();
+      if(saved)await vault.update({cloud:{...saved,user:{...saved.user,name}}});
+      return {ok:true,revision:parse(result.text).revision,profile:{name,phone:parse(result.text).profile?.phone||''}};
+    },
+    async getAvatar(){
+      const result=await authed('/me/avatar',{binary:true});
+      if(result.status===404)return null;
+      if(!okStatus(result.status))throw new CloudError(result.status,'프로필 사진을 불러오지 못했습니다.');
+      const kind=sniffImage(result.buffer);
+      if(!kind)return null;
+      return {type:kind,buffer:result.buffer};
+    },
+    async putAvatar(bytes){
+      const kind=sniffImage(bytes);
+      if(!kind)throw new CloudError(415,'PNG · JPG · WEBP 사진만 올릴 수 있어요.');
+      if(bytes.length>MAX_AVATAR)throw new CloudError(413,'사진은 5MB 이하로 올려 주세요.');
+      const result=await authed('/me/avatar',{method:'PUT',bytes,contentType:kind,timeout:60000});
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'프로필 사진을 올리지 못했습니다'));
+      return {ok:true};
+    },
+    async deleteAvatar(){
+      const result=await authed('/me/avatar',{method:'DELETE'});
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'프로필 사진을 지우지 못했습니다'));
+      return {ok:true};
+    },
+    // ── 계정별 설정·기록 동기화(서버: /dashboard-sync). 비밀(토큰·키)은 보내지 않는다. ──
+    async syncGet(){
+      const result=await authed('/dashboard-sync');
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'클라우드 설정을 불러오지 못했습니다'));
+      const d=parse(result.text);
+      return {revision:Number.isInteger(d.revision)?d.revision:0,updatedAt:d.updatedAt||null,snapshot:d.snapshot&&typeof d.snapshot==='object'?d.snapshot:null};
+    },
+    async syncPut(snapshot,expectedRevision){
+      const result=await authed('/dashboard-sync',{method:'PUT',body:{snapshot,expectedRevision},timeout:60000});
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'클라우드에 저장하지 못했습니다'));
+      const d=parse(result.text);
+      return {revision:d.revision,updatedAt:d.updatedAt};
     },
     async startGoogleLogin(){
       const result=await raw('/auth/google/start',{method:'POST',body:{app_version:appVersion,mode:'login',locale:'ko-KR'}});
@@ -103,14 +229,10 @@ export function createCloud({baseUrl=cloudBase(),vault,fetchImpl=fetch,appVersio
       const data=parse(result.text);
       if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'Google 로그인을 마치지 못했습니다'));
       if(data.status==='pending')return {status:'pending'};
-      const accessToken=typeof data.access_token==='string'?data.access_token:data.token;
-      const user=data.user&&typeof data.user==='object'?data.user:null;
-      if(data.status!=='completed'||!accessToken||typeof data.refresh_token!=='string'||!user?.id||!user?.email)
-        throw new CloudError(502,'서버가 올바른 로그인 결과를 돌려주지 않았습니다.');
-      const name=user.name||user.display_name||user.email;
-      await vault.update({cloud:{accessToken,refreshToken:data.refresh_token,user:{id:user.id,email:user.email,name}}});
+      if(data.status!=='completed')throw new CloudError(502,'서버가 올바른 로그인 결과를 돌려주지 않았습니다.');
+      const saved=await saveSession(data);
       attempts.delete(attemptId);
-      return {status:'completed',user:{id:user.id,email:user.email,name}};
+      return {status:'completed',user:saved.user};
     },
     async logout(){
       const saved=await session();

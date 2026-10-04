@@ -59,6 +59,3 @@ export function componentRow(c,{onInstall,selectable=false,checked=false}={}){
   return {row,box,prog};
 }
 
-export const SETUP_KEY='lapis.setup.done.v1';
-export const setupDone=()=>{try{return localStorage.getItem(SETUP_KEY)==='1';}catch{return true;}};
-export const markSetupDone=()=>{try{localStorage.setItem(SETUP_KEY,'1');}catch{}};

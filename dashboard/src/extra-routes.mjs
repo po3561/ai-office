@@ -9,9 +9,9 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 const page=(title,body)=>`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><body style="font-family:'Malgun Gothic',system-ui,sans-serif;max-width:460px;margin:15vh auto;padding:0 20px;line-height:1.7"><h2>${esc(title)}</h2><p>${esc(body)}</p><p><a href="/#calendar">대시보드로 돌아가기</a></p><script>setTimeout(()=>{try{window.close()}catch(e){}},2500)</script></body></html>`;
 
 export function createExtraRoutes({cloud,calendar,gcal,tasks,getGrants,listLocal=listLocalDefault,reveal=revealDefault}){
-  return async function handle(req,res,url,{json,readJson,port}){
+  return async function handle(req,res,url,{json,readJson,readRaw,port}){
     const path=url.pathname,method=req.method;
-    const known=path.startsWith('/api/cloud/')||path.startsWith('/api/calendar/')||path.startsWith('/api/storage/')||path==='/api/tasks'||path.startsWith('/api/tasks/')||path==='/oauth/google/callback';
+    const known=path.startsWith('/api/cloud/')||path.startsWith('/api/account/')||path.startsWith('/api/calendar/')||path.startsWith('/api/storage/')||path==='/api/tasks'||path.startsWith('/api/tasks/')||path==='/oauth/google/callback';
     if(!known)return false;
     try{
       // ── 할 일 ──
@@ -30,9 +30,35 @@ export function createExtraRoutes({cloud,calendar,gcal,tasks,getGrants,listLocal
         if(method==='POST'&&rest==='/logout')return json(res,200,await cloud.logout()),true;
         if(method==='POST'&&rest==='/google/connect'){const b=await readJson(req);return json(res,200,await cloud.startGoogleConnect(b.services,b.tier)),true;}
         if(method==='POST'&&rest==='/google/connect/poll'){const b=await readJson(req);return json(res,200,await cloud.pollGoogleConnect(String(b.attemptId||''))),true;}
+        // 회원가입·로그인(이메일/아이디 + 비밀번호)
+        if(method==='GET'&&rest==='/consents')return json(res,200,{documents:await cloud.consents()}),true;
+        if(method==='POST'&&rest==='/login'){const b=await readJson(req);return json(res,200,await cloud.login({identifier:b.identifier,password:b.password})),true;}
+        if(method==='POST'&&rest==='/register')return json(res,201,await cloud.register(await readJson(req))),true;
+        // 프로필: 닉네임·전화번호·사진
+        if(method==='GET'&&rest==='/profile')return json(res,200,await cloud.profile()),true;
+        if(method==='PUT'&&rest==='/profile'){const b=await readJson(req);return json(res,200,await cloud.saveProfile({name:b.name,phone:b.phone,revision:b.revision})),true;}
+        if(rest==='/avatar'){
+          if(method==='GET'){
+            const photo=await cloud.getAvatar();
+            if(!photo){res.writeHead(404,{'cache-control':'no-store'});res.end();return true;}
+            res.writeHead(200,{'content-type':photo.type,'cache-control':'private, no-cache','content-security-policy':"default-src 'none'; sandbox",'content-length':photo.buffer.length});res.end(photo.buffer);return true;
+          }
+          if(method==='PUT')return json(res,200,await cloud.putAvatar(await readRaw(req,5*1024*1024+1024))),true;
+          if(method==='DELETE')return json(res,200,await cloud.deleteAvatar()),true;
+        }
+        // 계정별 설정·기록 클라우드 동기화
+        if(method==='GET'&&rest==='/sync')return json(res,200,await cloud.syncGet()),true;
+        if(method==='PUT'&&rest==='/sync'){const b=await readJson(req);return json(res,200,await cloud.syncPut(b.snapshot,b.expectedRevision)),true;}
         const body=['GET','HEAD'].includes(method)?undefined:await readJson(req);
         const result=await cloud.call(method,rest,{query:url.search,body});
         res.writeHead(result.status,{'content-type':result.contentType,'cache-control':'no-store'});res.end(result.text);return true;
+      }
+      // ── 계정별 자료 내보내기·가져오기(동기화가 쓴다): 이 계정의 할 일과 직접 만든 일정 ──
+      if(path==='/api/account/export'&&method==='GET')return json(res,200,{tasks:await tasks.list(),events:await calendar.exportLocal()}),true;
+      if(path==='/api/account/import'&&method==='POST'){
+        const b=await readJson(req);
+        const t=await tasks.replaceAll(Array.isArray(b.tasks)?b.tasks:[]),e=await calendar.importLocal(Array.isArray(b.events)?b.events:[]);
+        return json(res,200,{tasks:t.count,events:e.count}),true;
       }
       // ── 캘린더 ──
       if(path==='/oauth/google/callback'&&method==='GET'){

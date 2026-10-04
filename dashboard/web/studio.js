@@ -1,6 +1,6 @@
 // 봇 스튜디오: 봇을 하나든 여러 개든 만들고, 엔진·역할(에이전트)·텔레그램 방과 주제·스킬을 설정한다.
 // LAPIS 봇(런타임)과 기존 Claude 사무실·Hermes 를 한 목록에서 본다.
-import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,input,textarea,field,select} from './ui.js';
+import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,openDialog,input,textarea,field,select} from './ui.js';
 import {eng,watchJob,progressBox} from './platform.js';
 
 const ENGINE_ORDER=['claude','codex','ollama','openai','anthropic','hermes'];
@@ -48,6 +48,69 @@ function readinessNote(type){
 }
 
 // ── 목록 ──
+const MODE_HELP={
+  readonly:'보기만 해요. 스킬 목록을 보여 주고 스킬 설치만 도와요. 켜기·끄기나 설정 변경은 하지 않아요.',
+  office:'이 프로그램이 이 봇 하나를 사무실처럼 맡아요(단일 사용). 켜고 끄기와 항상 켜두기를 도와요.',
+};
+const refreshAll=async()=>{await renderList();window.__office?.refresh?.();};
+// 선택한 사무실을 사무실 화면(부서·설정 등)에서 열기
+const openOffice=(id,hash)=>{window.__office?.select?.(id);go(hash);};
+
+// 이름을 똑같이 입력해야 지워지는 삭제 창(실수 방지)
+function removeDialog({title,body,name,run,done}){
+  openDialog((box,close)=>{
+    const typed=input({placeholder:name,autocomplete:'off',maxLength:80});typed.setAttribute('aria-label','확인용 이름');
+    const ok=button('삭제하기',async function(){await doing(this,async()=>{const r=await run(typed.value.trim());close();toast(done(r));await refreshAll();});},'btn danger');
+    ok.disabled=true;
+    typed.addEventListener('input',()=>{ok.disabled=typed.value.trim()!==name;});
+    put(box,put(node('div','dlg-head'),node('h2','',title),node('p','',body)),put(node('div','dlg-body'),field('확인을 위해 이름을 입력하세요',typed)),put(node('div','dlg-foot'),button('취소',close),ok));
+    setTimeout(()=>typed.focus(),0);
+  });
+}
+const removeBot=(b)=>removeDialog({title:`「${b.name}」 봇을 삭제할까요?`,name:b.name,
+  body:'봇을 끄고 목록에서 없애요. 폴더는 지우지 않고 보관 위치로 옮기고, 텔레그램 토큰은 지워져요.',
+  run:t=>eng(`/api/bots/${b.id}/close`,{method:'POST',body:{confirmName:t}}),done:()=>'봇을 삭제했어요. 폴더는 보관 위치에 있어요.'});
+const removeOfficeBot=(o)=>removeDialog({title:`「${o.name}」 봇을 삭제할까요?`,name:o.name,
+  body:(!o.readonly&&o.running?'지금 근무 중이라 먼저 퇴근시켜요. ':'')+(o.removeKind==='close'
+    ?'목록에서 없애고 텔레그램 연결도 끊어요. 폴더는 지우지 않고 보관 위치로 옮겨 둬요.'
+    :`이 프로그램의 목록에서만 없애요. 폴더와 파일은 그대로 두니(${o.folder}) 나중에 다시 불러올 수 있어요.`),
+  run:t=>eng(`/api/offices/${o.id}/remove`,{method:'POST',body:{confirmName:t}}),
+  done:r=>r.kind==='closed'?'봇을 삭제했어요. 폴더는 보관 위치로 옮겨 뒀어요.':'봇을 목록에서 삭제했어요. 폴더와 파일은 그대로예요.'});
+
+// 불러온 사무실·Hermes 카드: 모드 · 켜기/끄기 · 항상 켜두기 · 설정 · 삭제를 카드 안에서 바로 한다.
+function officeCard(o){
+  const hermes=o.kind==='hermes',ro=Boolean(o.readonly);
+  const c=node('article','card bot-card');
+  const kind=hermes?(ro?'Hermes · 읽기 전용':'Hermes · 사무실용'):'Claude 사무실';
+  const sub=hermes?(ro?'Hermes 봇 (읽기 전용으로 인식)':'Hermes 봇 (사무실용 · 단일 사용)'):'Claude 사무실 · 부서 '+o.teamsCount+'개';
+  const run=(btn,fn)=>doing(btn,async()=>{await fn();await refreshAll();});
+  put(c,put(node('div','card-head'),put(node('div'),node('h2','',o.name),node('p','sub',sub)),pill(kind,hermes&&ro?'warn':o.running?'ok':'accent')),
+    put(node('div','row wrap'),pill(o.running?(ro?'가동 중':'근무 중'):'꺼짐',o.running?'ok':''),!hermes&&o.telegram?.set?pill('텔레그램 연결됨','ok'):null));
+  if(hermes){
+    const set=(mode)=>function(){if(mode===(o.mode||'readonly'))return;run(this,async()=>{await eng(`/api/offices/${o.id}`,{method:'PATCH',body:{mode}});toast(mode==='office'?'사무실용으로 바꿨어요. 이제 켜고 끌 수 있어요.':'읽기 전용으로 바꿨어요. 이제 보기만 해요.');});};
+    const seg=put(node('div','row'),
+      button('🔒 읽기 전용',set('readonly'),'btn sm'+(ro?' primary':'')),
+      button('🏢 사무실용 · 단일 사용',set('office'),'btn sm'+(ro?'':' primary')));
+    seg.setAttribute('role','group');seg.setAttribute('aria-label','사용 모드');
+    put(c,node('div','group-title','사용 모드'),seg,node('p','small muted',MODE_HELP[ro?'readonly':'office']));
+  }else put(c,node('p','small muted','이 프로그램이 직접 켜고 끄는 Claude 사무실이에요. 부서와 텔레그램 연결을 설정할 수 있어요.'));
+  if(!ro){
+    const auto=node('input');auto.type='checkbox';auto.checked=Boolean(o.autoStart);
+    auto.addEventListener('change',()=>run(auto,async()=>{try{await eng(`/api/offices/${o.id}`,{method:'PATCH',body:{autoStart:auto.checked}});toast(auto.checked?'꺼져 있으면 다시 켜 드릴게요.':'자동으로 다시 켜지 않아요.');}catch(e){auto.checked=!auto.checked;throw e;}}));
+    const lab=put(node('label','row nowrap small'),auto,node('span','','항상 켜두기'));lab.title='이 프로그램이 켜져 있는 동안 봇이 꺼져 있으면 다시 출근시켜요. 직접 퇴근시키면 다시 켜지 않아요.';
+    put(c,put(node('div','row wrap'),
+      o.running
+        ?button('퇴근시키기',async function(){if(!await confirmDialog({title:'퇴근시킬까요?',body:'봇을 꺼요. 진행 중인 업무가 있으면 중단돼요.',ok:'퇴근시키기',danger:true}))return;run(this,async()=>{await eng(`/api/offices/${o.id}/stop`,{method:'POST',body:{}});toast('퇴근시켰어요.');});},'btn sm danger')
+        :button('출근시키기',function(){run(this,async()=>{await eng(`/api/offices/${o.id}/start`,{method:'POST',body:{}});toast('출근시켰어요. 잠시 뒤 켜져요.');});},'btn sm primary'),
+      lab),node('p','small muted',hermes?'「출근」은 Hermes 를 켜고, 「항상 켜두기」는 꺼졌을 때 이 프로그램이 다시 켜 줘요.':'「출근」은 텔레그램 지시를 받기 시작해요. 「항상 켜두기」는 꺼졌을 때 이 프로그램이 다시 켜 줘요.'));
+  }
+  const links=put(node('div','row wrap'));
+  if(!hermes)links.append(button('부서 관리 →',()=>openOffice(o.id,'#teams'),'btn sm'),button('텔레그램 설정 →',()=>openOffice(o.id,'#connect'),'btn sm'));
+  links.append(button('설정 →',()=>openOffice(o.id,'#settings'),'btn sm'),button('스킬 보기 →',()=>openOffice(o.id,'#skills'),'btn sm'));
+  put(c,links,put(node('div','row'),button('삭제',()=>removeOfficeBot(o),'btn sm danger')));
+  return c;
+}
+
 async function renderList(){
   const [d,ov]=await Promise.all([loadMeta(),eng('/api/overview').catch(()=>({offices:[]}))]);
   const head=put(node('div','row between wrap'),node('p','view-intro','봇은 하나만 써도, 여러 개를 만들어 역할별로 나눠도 돼요. 봇마다 두뇌(AI)와 역할, 텔레그램 방을 따로 정해요.'),put(node('div','row'),button('Claude 사무실(고급) 만들기',()=>document.querySelector('#newOffice')?.click(),'btn'),link('＋ 새 봇 만들기','#studio/new','btn primary')));
@@ -57,18 +120,20 @@ async function renderList(){
     const st=b.telegram.set?pill('텔레그램 @'+(b.telegram.username||'연결됨'),'ok'):pill('텔레그램 연결 필요','warn');
     put(c,put(node('div','card-head'),put(node('div'),node('h2','',b.name),node('p','sub',engineLabel(b.engine))),pill('LAPIS 봇','accent')),
       put(node('div','row wrap'),pill(`역할 ${b.agents}개`),pill(`방 ${b.rooms}개`),st),
-      put(node('div','row'),link('설정 열기','#studio/'+b.id,'btn primary sm')));
+      node('p','small muted','LAPIS 앱이 직접 돌리는 봇이에요. 두뇌(AI)·역할·텔레그램 방을 자유롭게 정해요.'),
+      put(node('div','row'),link('설정 열기','#studio/'+b.id,'btn primary sm'),button('삭제',()=>removeBot(b),'btn sm danger')));
     grid.append(c);
   }
-  for(const o of ov.offices||[]){
-    const c=node('article','card bot-card');
-    put(c,put(node('div','card-head'),put(node('div'),node('h2','',o.name),node('p','sub',o.kind==='hermes'?'Hermes 봇 (읽기 전용으로 인식)':'Claude 사무실 · 부서 '+o.teamsCount+'개')),pill(o.kind==='hermes'?'Hermes':'Claude 사무실',o.running?'ok':'')),
-      put(node('div','row wrap'),pill(o.running?'근무 중':'꺼짐',o.running?'ok':''),o.telegram?.set?pill('텔레그램 연결됨','ok'):null),
-      o.kind==='hermes'?node('p','small muted','Hermes 는 자체 설정으로 관리해요. 스킬 마켓에서 스킬 설치만 도와드려요.'):put(node('div','row'),link('부서 관리 →','#teams','btn sm'),link('텔레그램 설정 →','#connect','btn sm')));
-    grid.append(c);
-  }
+  for(const o of ov.offices||[])grid.append(officeCard(o));
   if(!d.bots.length&&!(ov.offices||[]).length)grid.append(put(node('div','friendly-empty'),node('h3','','아직 봇이 없어요'),node('p','','「새 봇 만들기」로 1분 만에 첫 봇을 만들어 보세요.')));
-  root().replaceChildren(head,grid);
+  const legend=put(node('section','card'),put(node('div','card-head'),put(node('div'),node('h2','','봇 종류와 사용 모드'),node('p','sub','카드의 배지가 무엇을 뜻하는지 한눈에 볼 수 있어요.'))),
+    put(node('ul','guide'),
+      node('li','','LAPIS 봇 — 이 앱이 직접 돌려요. 두뇌(AI)·역할·텔레그램 방과 주제를 모두 여기서 정해요.'),
+      node('li','','Claude 사무실 — Claude Code 로 돌아가는 사무실이에요. 부서와 텔레그램을 설정하고, 켜고 끌 수 있어요.'),
+      node('li','','Hermes · 읽기 전용 — 스스로 일하는 별개의 봇이에요. 이 앱은 보기만 하고 스킬 설치만 도와요(가장 안전해요).'),
+      node('li','','Hermes · 사무실용(단일 사용) — 이 앱이 그 봇 하나를 사무실처럼 맡아 켜고 끄고 항상 켜두기까지 해요. 같은 텔레그램 봇 토큰을 다른 곳에서 동시에 쓰지 마세요.'),
+      node('li','','삭제 — 이 앱이 만든 봇은 폴더를 보관 위치로 옮기고, 불러온 봇은 파일을 그대로 두고 목록에서만 없애요. 이름을 입력해야 지워져요.')));
+  root().replaceChildren(head,grid,legend);
 }
 
 // ── 새 봇 ──
@@ -150,12 +215,9 @@ async function detailOverview(b,body,refresh){
     field('성격과 지침',persona,'모든 역할에 공통으로 적용돼요.'),
     put(node('label','row nowrap'),auto,node('span','','앱을 켤 때 이 봇도 자동으로 켜기')),
     put(node('div','row'),save)));
-  const danger=put(node('section','card'),put(node('div','card-head'),put(node('div'),node('h2','','봇 폐쇄'),node('p','sub','폴더는 지우지 않고 보관 위치로 옮겨요. 텔레그램 토큰은 지워져요.'))),
-    button('이 봇 폐쇄…',async function(){
-      const typed=prompt(`폐쇄하려면 봇 이름 "${b.name}" 을 똑같이 입력하세요.`);
-      if(typed===null)return;
-      await doing(this,async()=>{await eng(`/api/bots/${b.id}/close`,{method:'POST',body:{confirmName:typed}});toast('폐쇄했어요.');go('#studio');});
-    },'btn danger'));
+  const danger=put(node('section','card'),put(node('div','card-head'),put(node('div'),node('h2','','봇 삭제'),node('p','sub','폴더는 지우지 않고 보관 위치로 옮겨요. 텔레그램 토큰은 지워져요. 이름을 입력해야 지워져요.'))),
+    button('이 봇 삭제…',()=>removeDialog({title:`「${b.name}」 봇을 삭제할까요?`,name:b.name,body:'봇을 끄고 목록에서 없애요. 폴더는 지우지 않고 보관 위치로 옮기고, 텔레그램 토큰은 지워져요.',
+      run:t=>eng(`/api/bots/${b.id}/close`,{method:'POST',body:{confirmName:t}}),done:()=>{go('#studio');return '봇을 삭제했어요. 폴더는 보관 위치에 있어요.';}}),'btn danger'));
   body.append(danger);
 }
 
