@@ -6,7 +6,7 @@ import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
-import { readJson, HttpError, need, isDir, isWindows } from './util.mjs';
+import { readJson, HttpError, need, isDir, isWindows, run } from './util.mjs';
 import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listGrants as listDriveGrants, setGrant as setDriveGrant, removeGrant as removeDriveGrant } from './drives.mjs';
@@ -22,6 +22,8 @@ import * as lr from './rooms-legacy.mjs';
 import { createJobs } from './jobs.mjs';
 import { createComponents } from './components.mjs';
 import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
+import { createSecrets } from './secrets.mjs';
+import { createConnections } from './connections.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -283,6 +285,15 @@ route('GET', '/api/jobs', async () => ({ jobs: jobs.list() }));
 route('GET', '/api/jobs/:id', async ({ p }) => jobs.get(p.id));
 route('GET', '/api/ollama', async () => { const d = await components.detect('ollama'); cachedOllamaBin = d.path; return { installed: d.installed, version: d.version, recommended: OLLAMA_RECOMMENDED, ...(d.installed ? await ollama.models() : { running: false, models: [] }) }; });
 route('POST', '/api/ollama/pull', async ({ body }) => { const name = String(body.name || '').trim(); return jobs.start('ollama-pull:' + name, '모델 받기: ' + name, (ctx) => ollama.pull(name, ctx)); });
+
+// ── 연결 허브: GPT(ChatGPT 로그인·API 키)·Anthropic·Cloudflare 키. 키 값은 응답에 담지 않는다. ──
+export const secrets = createSecrets();
+export const connections = createConnections({ components, secrets, runImpl: run });
+route('GET', '/api/connections', async () => connections.status());
+route('POST', '/api/connections/codex/login', async () => connections.startCodexLogin());
+route('PUT', '/api/connections/keys/:name', async ({ p, body }) => connections.setKey(p.name, body.key));
+route('DELETE', '/api/connections/keys/:name', async ({ p }) => connections.clearKey(p.name));
+route('GET', '/api/connections/models/:provider', async ({ p }) => connections.models(p.provider));
 
 // ── 프로그램 업데이트 ── 감지는 자동(6시간마다), 설치는 사용자가 누를 때만(설정에서 「자동 설치」를 켠 경우 제외).
 route('POST', '/api/update/check', async () => updater.check());

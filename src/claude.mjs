@@ -107,7 +107,7 @@ export async function claudeDiagnose() {
 }
 
 // 보이는 PowerShell 창에서 스크립트를 실행한다. 한글·공백 경로가 깨지지 않도록 인코딩된 명령으로 넘긴다.
-function launchConsole(title, lines) {
+export function launchConsole(title, lines) {
   const script = [`$Host.UI.RawUI.WindowTitle = ${psQuote(title)}`, ...lines].join('\n');
   const b64 = Buffer.from(script, 'utf16le').toString('base64');
   const cmd = `Start-Process powershell.exe -ArgumentList '-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${b64}'`;
