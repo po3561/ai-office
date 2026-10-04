@@ -149,8 +149,8 @@ export function createPublisher({ bots, secrets, tg, fetchImpl = fetch, cfBase =
     let telegram = false;
     if (token_tg && opts.telegram !== false) {
       ctx.step('텔레그램을 웹으로 연결');
-      await stopLocal(botId);   // 같은 봇 토큰은 한 곳에서만 받을 수 있어서 PC 쪽 수신을 먼저 멈춘다
       await tg.call(token_tg, 'setWebhook', { url: `${url}/telegram/${webhookPath}`, secret_token: webhookSecret, allowed_updates: ['message'], drop_pending_updates: false });
+      await stopLocal(botId);   // 같은 봇 토큰은 한 곳에서만 받을 수 있다. 웹훅이 성공한 뒤에만 PC 쪽 수신을 멈춘다(실패하면 PC 봇이 그대로 일한다)
       telegram = true;
       bots.update(botId, { autoStart: false });   // 이제 웹이 텔레그램을 받으므로 PC 에서는 자동으로 켜지 않는다
     }
