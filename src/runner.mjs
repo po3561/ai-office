@@ -80,7 +80,8 @@ export async function startOffice(id, ctx = {}) {
   startedAt.set(id, Date.now());
   if (o.launch && o.launch.start) {
     // 예전 방식으로 만들어진 사무실은 그 사무실의 출근 스크립트를 그대로 쓴다.
-    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.start], { cwd: o.folder, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    // detached 금지: 콘솔 없이 뜬 Windows PowerShell 5.1 은 스크립트를 실행하지 않고 끝난다.
+    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.start], { cwd: o.folder, stdio: 'ignore', windowsHide: true }).unref();
     return { started: true, via: 'script' };
   }
   mkdirSync(RUN_DIR, { recursive: true });
@@ -101,7 +102,7 @@ export async function stopOffice(id) {
     const r = await run('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { timeout: 15000 });
     stopped = r.code === 0;
   } else if (o.launch && o.launch.stop) {
-    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.stop], { cwd: o.folder, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.stop], { cwd: o.folder, stdio: 'ignore', windowsHide: true }).unref();
     stopped = true;
   }
   rmSync(pidFile(id), { force: true });

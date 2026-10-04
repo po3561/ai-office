@@ -111,7 +111,8 @@ function launchConsole(title, lines) {
   const script = [`$Host.UI.RawUI.WindowTitle = ${psQuote(title)}`, ...lines].join('\n');
   const b64 = Buffer.from(script, 'utf16le').toString('base64');
   const cmd = `Start-Process powershell.exe -ArgumentList '-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${b64}'`;
-  spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  // detached 를 쓰면 안 된다: 콘솔 없이(DETACHED_PROCESS) 뜬 Windows PowerShell 5.1 은 명령을 실행하지 않고 그냥 끝난다.
+  spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'ignore', windowsHide: true }).unref();
 }
 
 // 새 콘솔 창에서 공식 로그인 절차를 시작한다(브라우저가 열리고, 끝나면 창을 닫으면 된다).
