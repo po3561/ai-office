@@ -61,3 +61,19 @@ test('스킬 마켓의 설치 대상에 LAPIS 봇이 들어간다', async () => 
   assert.equal(r.status, 200);
   assert.ok(r.json.some((o) => o.office === `bot-${c.json.id}`));
 });
+
+test('봇 스킬: 직접 만들고 목록에서 보고, 지우면 보관함으로 옮기고 역할에서도 뗀다', async () => {
+  const c = await call('/api/bots', { name: '스킬 봇', engine: { type: 'ollama', model: 'm' }, presets: ['planner'] });
+  const id = c.json.id;
+  const made = await call(`/api/bots/${id}/skills`, { name: '보고서 문체', description: '개조식', body: '□ ○ - 순서로 쓴다.' });
+  assert.equal(made.status, 200, JSON.stringify(made.json));
+  assert.equal((await call(`/api/bots/${id}/skills`, { name: '', body: 'x' })).status, 400);
+  assert.equal((await call(`/api/bots/${id}/skills`, { name: '빈 내용', body: '' })).status, 400);
+  const list = await get(`/api/bots/${id}/skills`);
+  assert.deepEqual(list.json.skills.map((s) => s.name), ['보고서 문체']);
+  await call(`/api/bots/${id}/agents/planner`, { skills: [made.json.id] }, 'PATCH');
+  assert.equal((await call(`/api/bots/${id}/skills/${made.json.id}`, {}, 'DELETE')).status, 200);
+  assert.equal((await get(`/api/bots/${id}/skills`)).json.skills.length, 0);
+  assert.deepEqual((await get(`/api/bots/${id}`)).json.agents[0].skills, []);
+  assert.equal((await call(`/api/bots/${id}/skills/..%2F..`, {}, 'DELETE')).status, 404);
+});

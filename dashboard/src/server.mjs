@@ -136,7 +136,9 @@ export function createDashboardServer(options={}){
         const path=url.pathname.slice('/office'.length);
         if(!OFFICE_ROUTES.some(r=>r.method===req.method&&r.re.test(path)))throw new RequestError(404,'연결되지 않은 Office 기능입니다.');
         const body=write?await readLimited(req,200000):undefined;
-        const result=await upstream(officeUrl+path+url.search,{method:req.method,body,headers:write?{'content-type':'application/json','x-ai-office':'1'}:{},timeout:60000});
+        // 로컬 AI 시험 대화처럼 오래 걸리는 요청은 더 기다린다.
+        const slow=/^\/api\/bots\/[^/]+\/test$/.test(path);
+        const result=await upstream(officeUrl+path+url.search,{method:req.method,body,headers:write?{'content-type':'application/json','x-ai-office':'1'}:{},timeout:slow?190000:60000});
         overviewCache=null;return respond(res,result);
       }
       if(url.pathname.startsWith('/rental/')){

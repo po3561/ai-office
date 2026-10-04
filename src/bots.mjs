@@ -3,6 +3,8 @@
 // 텔레그램 토큰은 폴더가 아니라 DPAPI 비밀 저장소에 둔다.
 import { join } from 'node:path';
 import { mkdirSync, renameSync, readdirSync, existsSync } from 'node:fs';
+import { scanSkills } from './skills.mjs';
+import { writeAtomic } from './util.mjs';
 import { randomInt } from 'node:crypto';
 import { BOTS_DIR, CLOSED_DIR } from './paths.mjs';
 import { readJson, writeJson, isDir, need, slug, nowIso, stamp, HttpError } from './util.mjs';
@@ -159,6 +161,32 @@ export function createBots({ dir = BOTS_DIR, secrets, tg, nowMs = () => Date.now
       for (const r of Object.values(b.telegram.rooms)) { if (r.agent === key) r.agent = ''; for (const t of Object.values(r.topics || {})) if (t.agent === key) t.agent = ''; }
       save(b);
       return gone;
+    },
+
+    // ── 스킬(SKILL.md): 스킬 마켓에서 받은 것과 직접 만든 것 ──
+    listSkills: (id) => { load(id); return scanSkills(join(botDir(id), 'skills')); },
+    saveSkill(id, { name, description, body } = {}) {
+      load(id);
+      name = oneLine(name, 60);
+      need(name, '스킬 이름을 적어 주세요.');
+      body = clean(body, 12000);
+      need(body, '스킬 내용을 적어 주세요.');
+      const sid = slug(name) || 'skill';
+      let key = sid, n = 2;
+      while (existsSync(join(botDir(id), 'skills', key))) key = `${sid}-${n++}`;
+      const meta = ['---', `name: ${name}`, `description: ${oneLine(description, 200)}`, 'metadata:', `  created: ${nowIso().slice(0, 10)}`, '  created-by: LAPIS 앱', '---', '', body, ''];
+      writeAtomic(join(botDir(id), 'skills', key, 'SKILL.md'), meta.join('\n'));
+      return { id: key, name };
+    },
+    removeSkill(id, skillId) {
+      load(id);
+      need(/^[A-Za-z0-9._-]{1,64}$/.test(String(skillId)), '스킬을 찾을 수 없습니다.', 404);
+      const from = join(botDir(id), 'skills', skillId);
+      need(existsSync(from), '스킬을 찾을 수 없습니다.', 404);
+      mkdirSync(join(botDir(id), '보관함', '스킬'), { recursive: true });
+      renameSync(from, join(botDir(id), '보관함', '스킬', `${skillId}_${stamp()}`));
+      for (const a of load(id).agents) if (a.skills.includes(skillId)) this.updateAgent(id, a.key, { skills: a.skills.filter((x) => x !== skillId) });
+      return { id: skillId };
     },
 
     // ── 텔레그램 ──

@@ -242,5 +242,141 @@
   {
     "method": "POST",
     "path": "/api/diagnostics/disable-global-plugin"
+  },
+  {
+    "method": "GET",
+    "path": "/api/components"
+  },
+  {
+    "method": "POST",
+    "path": "/api/components/:id/install"
+  },
+  {
+    "method": "GET",
+    "path": "/api/jobs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/jobs/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ollama"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ollama/pull"
+  },
+  {
+    "method": "GET",
+    "path": "/api/connections"
+  },
+  {
+    "method": "POST",
+    "path": "/api/connections/codex/login"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/connections/keys/:name"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/connections/keys/:name"
+  },
+  {
+    "method": "GET",
+    "path": "/api/connections/models/:provider"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bots"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bots/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/bots/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/close"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/start"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/stop"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/agents"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/bots/:id/agents/:key"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bots/:id/agents/:key"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/token"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bots/:id/telegram/token"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/pair"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/deny"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/remove"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/policy"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/rooms/:chat"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bots/:id/telegram/rooms/:chat"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/telegram/rooms/:chat/topics/:thread"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bots/:id/skills"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/skills"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bots/:id/skills/:skill"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bots/:id/test"
   }
 ]

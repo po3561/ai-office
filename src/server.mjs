@@ -329,6 +329,9 @@ route('POST', '/api/bots/:id/telegram/policy', async ({ p, body }) => { bots.set
 route('POST', '/api/bots/:id/telegram/rooms/:chat', async ({ p, body }) => bots.setRoom(p.id, p.chat, body));
 route('DELETE', '/api/bots/:id/telegram/rooms/:chat', async ({ p }) => { bots.forgetRoom(p.id, p.chat); return { ok: true }; });
 route('POST', '/api/bots/:id/telegram/rooms/:chat/topics/:thread', async ({ p, body }) => bots.setTopic(p.id, p.chat, p.thread, body));
+route('GET', '/api/bots/:id/skills', async ({ p }) => ({ skills: bots.listSkills(p.id) }));
+route('POST', '/api/bots/:id/skills', async ({ p, body }) => bots.saveSkill(p.id, body));
+route('DELETE', '/api/bots/:id/skills/:skill', async ({ p }) => bots.removeSkill(p.id, p.skill));
 // 텔레그램 없이 엔진 설정을 바로 시험한다(역할을 고르면 그 역할로 답한다).
 route('POST', '/api/bots/:id/test', async ({ p, body }) => {
   const b = bots.load(p.id);
@@ -427,6 +430,7 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
     setInterval(updateTick, 6 * 60 * 60 * 1000).unref?.();
   }
 
+  components.list().catch(() => {});   // 도구 감지를 미리 데워 두면 첫 화면이 빨리 열린다
   runtimeBots.startAll().catch((e) => console.error('[ai-office] 봇 자동 시작 실패', e.message));
   return new Promise((ok, fail) => {
     server.once('error', fail);

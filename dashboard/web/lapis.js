@@ -2,8 +2,9 @@
 // 사무실(Claude Office) 화면은 office.js 가 같은 페이지 안에서 직접 그린다.
 import {createWorkspaceStore,validateLink,progress,TEMPLATES,SERVICES,STORAGE_KEY} from './workspace-model.js';
 import {pages} from './ui.js';
-import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
+import './setup.js';import './hub.js';import './studio.js';import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
 import {applyNavPrefs,startView} from './prefs.js';
+import {needsSetup} from './setup.js';
 
 const q=s=>document.querySelector(s);
 const node=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text);return n;};
@@ -30,6 +31,9 @@ const ICONS={
   chat:'<path d="M4 5h16v11H9l-5 4z"/><path d="M9 10h6"/>',
   rental:'<path d="M3 8l9-5 9 5-9 5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/>',
   drive:'<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  setup:'<path d="M12 3l2.4 5.6L20 9.5l-4.3 3.9 1.3 5.8L12 16.2 7 19.2l1.3-5.8L4 9.5l5.6-.9z"/>',
+  hub:'<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7l3 9M16 7l-3 9M8.5 6h7"/>',
+  studio:'<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9 16.2c1.8 1 4.2 1 6 0"/><circle cx="12" cy="3.5" r="1"/>',
   connect:'<path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/>',
   calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   learning:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M7 11v5c0 1.5 2.2 3 5 3s5-1.5 5-3v-5"/>',
@@ -39,8 +43,9 @@ const ICONS={
   settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
 };
 const GROUPS=[
+  {title:'시작하기',items:[['setup','시작 마법사'],['hub','연결 허브']]},
   {title:'업무',items:[['home','오늘'],['calendar','캘린더'],['flows','업무 흐름'],['library','자료 모음']]},
-  {title:'사무실',items:[['board','현황판'],['teams','부서 관리'],['skills','봇 · 스킬트리'],['market','스킬 마켓']]},
+  {title:'사무실',items:[['studio','봇 스튜디오'],['board','현황판'],['teams','부서 관리'],['skills','봇 · 스킬트리'],['market','스킬 마켓']]},
   {title:'라피스',items:[['chat','라피스 대화'],['learning','라피스 학습'],['account','계정 · Google']]},
   {title:'연결',items:[['storage','저장소'],['drive','드라이브'],['inbox','텔레그램 수신함'],['rental','물품 대여']]},
   {title:'관리',items:[['connect','Claude · 텔레그램'],['settings','설정'],['appearance','화면 설정']]},
@@ -357,5 +362,5 @@ document.addEventListener('cloud:state',e=>{
   if(!e.detail.signedIn){const card=node('div','banner info');put(card,node('span','ic','✨'),put(node('div','txt'),node('b','','라피스 계정을 연결해 보세요'),node('span','muted','Google 드라이브·시트, 라피스의 기억과 학습을 함께 쓸 수 있어요.')),link('로그인 →','#account','btn sm primary'));box.append(card);}
 });
 applyNavPrefs();
-if(!location.hash)location.replace('#'+startView());
+if(!location.hash)location.replace('#'+(needsSetup()?'setup':startView()));
 showStorageWarning();render();route();refresh();setInterval(refresh,10000);
