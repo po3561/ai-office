@@ -14,7 +14,7 @@ const LABEL = { openai: 'OpenAI API 키', anthropic: 'Anthropic API 키', cloudf
 const CHAT_OK = /^(gpt-|o\d|chatgpt-)/;
 const CHAT_NO = /(embed|tts|whisper|dall|image|audio|realtime|transcribe|moderation|search|instruct|codex|vision-preview)/;
 
-export function createConnections({ components, secrets, fetchImpl = fetch, runImpl, launch = launchConsole }) {
+export function createConnections({ components, secrets, ollama, fetchImpl = fetch, runImpl, launch = launchConsole }) {
   async function codexStatus() {
     const d = await components.detect('codex');
     if (!d.installed) return { installed: false, loggedIn: false };
@@ -102,5 +102,20 @@ export function createConnections({ components, secrets, fetchImpl = fetch, runI
     return { models: [...new Set(list)].sort() };
   }
 
-  return { status, codexStatus, startCodexLogin, setKey, clearKey, models };
+  // 엔진 종류별로 지금 바로 쓸 수 있는지(없으면 이유와 해야 할 일)
+  async function readiness() {
+    const s = await status();
+    const om = s.ollama.installed && ollama ? await ollama.models().catch(() => ({ models: [] })) : { models: [] };
+    const fix = (ready, reason, action) => ({ ready, reason: ready ? '' : reason, action: ready ? '' : action });
+    return {
+      ollama: { ...fix(s.ollama.installed && om.models.length > 0, s.ollama.installed ? '내려받은 모델이 없습니다.' : 'Ollama 가 설치되어 있지 않습니다.', s.ollama.installed ? 'models' : 'install:ollama'), models: om.models.map((m) => m.name) },
+      openai: fix(s.gpt.apiKey.set, 'OpenAI API 키가 없습니다.', 'key:openai'),
+      anthropic: fix(s.anthropic.apiKey.set, 'Anthropic API 키가 없습니다.', 'key:anthropic'),
+      claude: fix(s.claude.installed && s.claude.loggedIn, s.claude.installed ? 'Claude 에 로그인되어 있지 않습니다.' : 'Claude Code 가 설치되어 있지 않습니다.', s.claude.installed ? 'login:claude' : 'install:claude'),
+      codex: fix(s.gpt.codex.installed && s.gpt.codex.loggedIn, s.gpt.codex.installed ? 'ChatGPT 에 로그인되어 있지 않습니다.' : 'Codex 가 설치되어 있지 않습니다.', s.gpt.codex.installed ? 'login:codex' : 'install:codex'),
+      hermes: fix(s.hermes.installed, 'Hermes 가 설치되어 있지 않습니다.', 'install:hermes'),
+    };
+  }
+
+  return { status, codexStatus, startCodexLogin, setKey, clearKey, models, readiness };
 }

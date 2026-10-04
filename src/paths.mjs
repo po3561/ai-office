@@ -23,6 +23,7 @@ export const LOG_DIR = join(DATA_HOME, 'logs');
 export const CLOSED_DIR = join(DATA_HOME, 'closed');   // 폐쇄한 사무실 폴더를 지우지 않고 옮겨 두는 곳
 export const UPDATE_DIR = join(DATA_HOME, 'update');   // 업데이트 내려받기·백업
 export const TOOLS_DIR = join(DATA_HOME, 'tools');     // 앱이 내려받아 둔 도구(Bun·Codex 등)
+export const BOTS_DIR = join(DATA_HOME, 'bots');       // LAPIS 런타임 봇(bot.json 한 폴더씩)
 export const MARKET_DIR = join(DATA_HOME, 'market');   // 스킬 마켓: 저장소 복제본(cache)과 설치 기록
 export const FILES = {
   config: join(DATA_HOME, 'config.json'),

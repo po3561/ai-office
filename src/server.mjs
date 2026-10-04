@@ -24,6 +24,10 @@ import { createComponents } from './components.mjs';
 import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
 import { createSecrets } from './secrets.mjs';
 import { createConnections } from './connections.mjs';
+import { createTgApi } from './tgapi.mjs';
+import { createEngines, ENGINE_TYPES } from './engines.mjs';
+import { createBots, AGENT_PRESETS } from './bots.mjs';
+import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -223,8 +227,13 @@ const builtinSkills = () => findSkillDirs(join(TEMPLATES, 'office', '.claude', '
 const market = createMarket({ home: DATA_HOME, settings: () => getConfig().market, log: logChange, builtin: builtinSkills });
 const honorificOf = (o) => { try { return loadOffice(o.folder).honorific; } catch { return ''; } };
 // 마켓에서 다루는 사무실: 읽기 전용(Hermes)은 제외한다.
-const marketOffices = () => listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
-  .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) }));
+// LAPIS 봇(런타임)은 스킬을 메시지마다 다시 읽으므로 설치해도 재출근이 필요 없다(hot).
+const lapisBotTargets = () => bots.list().map((b) => ({ id: `bot-${b.id}`, name: `${b.name} (LAPIS 봇)`, folder: bots.folder(b.id), skillsDir: bots.skillsDir(b.id), honorifics: [b.honorific].filter(Boolean), hot: true }));
+const marketOffices = () => [
+  ...listOffices().filter((o) => o.kind !== 'hermes' && !o.readonly && isDir(o.folder))
+    .map((o) => ({ id: o.id, name: o.name, folder: o.folder, skillsDir: skillsDirOf(o), honorifics: [honorificOf(o), getConfig().honorific].filter(Boolean) })),
+  ...lapisBotTargets(),
+];
 // 마켓에서 스킬을 받을 수 있는 곳 = 내 사무실 + 읽기 전용 외부 봇(Hermes: 라피스 등).
 // 외부 봇은 설치·업데이트·제거할 때만 예외로, 그 봇의 `skills/<스킬 이름>/` 폴더 안에서만 파일을 쓴다. 게시(내보내기)·부서·설정·실행은 여전히 못 한다.
 const hermesTargets = () => listOffices().filter((o) => o.kind === 'hermes' && isDir(join(o.folder, 'skills')))
@@ -233,7 +242,7 @@ const marketTargets = () => [...marketOffices(), ...hermesTargets()];
 const marketTarget = (id) => { const o = marketTargets().find((x) => x.id === id); need(o, '설치할 곳을 찾을 수 없습니다.', 404); return o; };
 const marketOffice = (id) => { const o = marketOffices().find((x) => x.id === id); need(o, '사무실을 찾을 수 없습니다.', 404); return o; };
 const localSkill = (o, skillId) => { const k = findSkillDirs(o.skillsDir).find((x) => x.id === skillId); need(k, '이 사무실에 없는 스킬입니다.', 404); return k; };   // 화면이 보낸 이름으로 경로를 만들지 않고 목록에서 찾는다
-const marketRestart = (o, r) => ({ ...r, external: Boolean(o.external), needsRestart: !o.external && runtime(getOffice(o.id)).running });
+const marketRestart = (o, r) => ({ ...r, external: Boolean(o.external), needsRestart: !o.external && !o.hot && runtime(getOffice(o.id)).running });
 
 route('GET', '/api/market/status', async () => market.status());
 route('POST', '/api/market/connect', async ({ body }) => {
@@ -288,12 +297,49 @@ route('POST', '/api/ollama/pull', async ({ body }) => { const name = String(body
 
 // ── 연결 허브: GPT(ChatGPT 로그인·API 키)·Anthropic·Cloudflare 키. 키 값은 응답에 담지 않는다. ──
 export const secrets = createSecrets();
-export const connections = createConnections({ components, secrets, runImpl: run });
+export const connections = createConnections({ components, secrets, ollama, runImpl: run });
 route('GET', '/api/connections', async () => connections.status());
 route('POST', '/api/connections/codex/login', async () => connections.startCodexLogin());
 route('PUT', '/api/connections/keys/:name', async ({ p, body }) => connections.setKey(p.name, body.key));
 route('DELETE', '/api/connections/keys/:name', async ({ p }) => connections.clearKey(p.name));
 route('GET', '/api/connections/models/:provider', async ({ p }) => connections.models(p.provider));
+
+// ── 봇 스튜디오(LAPIS 런타임 봇): 봇·에이전트·방·주제 설정과 텔레그램 수신 ──
+// 엔진은 봇·에이전트마다 고른다(로컬 AI·GPT·Claude·Hermes). 텔레그램 허용(페어링)은 이 화면에서만 바뀐다.
+export const tgApi = createTgApi();
+export const engines = createEngines({ ollama, secrets, components, runImpl: run });
+export const bots = createBots({ secrets, tg: tgApi });
+export const runtimeBots = createRuntime({ bots, engines, tg: tgApi, log: (m) => console.log(m) });
+route('GET', '/api/bots', async () => ({ bots: await bots.listSummaries(), engineTypes: ENGINE_TYPES, agentPresets: AGENT_PRESETS, readiness: await connections.readiness() }));
+route('POST', '/api/bots', async ({ body }) => { const b = bots.create(body); return bots.detail(b.id); });
+route('GET', '/api/bots/:id', async ({ p }) => ({ ...(await bots.detail(p.id)), runtime: runtimeBots.view(p.id) }));
+route('PATCH', '/api/bots/:id', async ({ p, body }) => { bots.update(p.id, body); return bots.detail(p.id); });
+route('POST', '/api/bots/:id/close', async ({ p, body }) => { await runtimeBots.stop(p.id); return bots.close(p.id, body.confirmName); });
+route('POST', '/api/bots/:id/start', async ({ p }) => runtimeBots.start(p.id));
+route('POST', '/api/bots/:id/stop', async ({ p }) => runtimeBots.stop(p.id));
+route('POST', '/api/bots/:id/agents', async ({ p, body }) => bots.addAgent(p.id, body));
+route('PATCH', '/api/bots/:id/agents/:key', async ({ p, body }) => bots.updateAgent(p.id, p.key, body));
+route('DELETE', '/api/bots/:id/agents/:key', async ({ p }) => bots.removeAgent(p.id, p.key));
+route('POST', '/api/bots/:id/telegram/token', async ({ p, body }) => bots.saveToken(p.id, body.token));
+route('DELETE', '/api/bots/:id/telegram/token', async ({ p }) => { await runtimeBots.stop(p.id); await bots.clearToken(p.id); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/pair', async ({ p, body }) => bots.pair(p.id, body.code));
+route('POST', '/api/bots/:id/telegram/deny', async ({ p, body }) => { bots.deny(p.id, body.code); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/remove', async ({ p, body }) => { bots.removeSender(p.id, body.senderId); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/policy', async ({ p, body }) => { bots.setPolicy(p.id, body.mode); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/rooms/:chat', async ({ p, body }) => bots.setRoom(p.id, p.chat, body));
+route('DELETE', '/api/bots/:id/telegram/rooms/:chat', async ({ p }) => { bots.forgetRoom(p.id, p.chat); return { ok: true }; });
+route('POST', '/api/bots/:id/telegram/rooms/:chat/topics/:thread', async ({ p, body }) => bots.setTopic(p.id, p.chat, p.thread, body));
+// 텔레그램 없이 엔진 설정을 바로 시험한다(역할을 고르면 그 역할로 답한다).
+route('POST', '/api/bots/:id/test', async ({ p, body }) => {
+  const b = bots.load(p.id);
+  const text = String(body.message || '').trim();
+  need(text && text.length <= 4000, '시험 문장을 1~4,000자로 적어 주세요.');
+  const picked = body.agent ? { agent: b.agents.find((a) => a.key === body.agent) || null, text } : pickAgent(b, { text });
+  const engine = picked.agent?.engine?.type ? picked.agent.engine : b.engine;
+  const system = buildSystem(b, { agent: picked.agent, skillsDir: bots.skillsDir(p.id) });
+  const answer = await engines.complete({ engine, system, messages: [{ role: 'user', content: picked.text }], cwd: join(bots.folder(p.id), 'work'), access: picked.agent?.access || b.access });
+  return { answer, agent: picked.agent?.key || '', engine };
+});
 
 // ── 프로그램 업데이트 ── 감지는 자동(6시간마다), 설치는 사용자가 누를 때만(설정에서 「자동 설치」를 켠 경우 제외).
 route('POST', '/api/update/check', async () => updater.check());
@@ -381,6 +427,7 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
     setInterval(updateTick, 6 * 60 * 60 * 1000).unref?.();
   }
 
+  runtimeBots.startAll().catch((e) => console.error('[ai-office] 봇 자동 시작 실패', e.message));
   return new Promise((ok, fail) => {
     server.once('error', fail);
     server.listen(port, '127.0.0.1', () => ok({ server, port }));
