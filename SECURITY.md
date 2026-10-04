@@ -53,7 +53,7 @@ Hermes 등 `kind: hermes` 로 등록된 봇은 폴더를 읽어 스킬·상태�
 ## v0.4.2 보안 강화
 
 - **화면·API 보안 헤더**: 엔진(`:5000`)의 모든 응답에 `X-Frame-Options: DENY`, `frame-ancestors 'none'` CSP, `nosniff`, `no-referrer`, CORP/COOP 를 붙입니다. 다른 사이트가 이 화면을 액자로 끼워 클릭을 가로챌 수 없습니다.
-- **비밀값 가리기(`src/redact.mjs`)**: 텔레그램 토큰, OpenAI·Anthropic·GitHub·Cloudflare 키, Bearer 토큰은 작업 기록·오류·로그·텔레그램 답장에서 `[가림]` 으로 바뀝니다. 오류 문구에 나오는 `C:\Users\이름` 은 `~` 로 줄입니다.
+- **비밀값 가리기(`src/redact.mjs`)**: 텔레그램 토큰, OpenAI·Anthropic·GitHub·Cloudflare 키, Bearer 토큰은 작업 기록·오류·로그·텔레그램 답장에서 `[가림]` 으로 바뀝니다. 오류 문구에 나오는 사용자 폴더의 사용자 이름은 `~` 로 줄입니다.
 - **호출 제한**: 허용된 계정이라도 한 사람이 1분에 15번을 넘기면 AI 를 부르지 않습니다(계정이 뚫리거나 도배되어도 요금이 폭주하지 않게).
 - **업데이트 검증 필수**: 릴리스에 sha256 이 없으면 적용하지 않습니다. 압축 안에 바로가기(링크)가 있어도 거부합니다.
 - **웹 배포 Worker**: 모든 응답(페이지·JSON)에 HSTS, `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, CORP 를 붙이고, 요청 본문은 64KB 로 제한합니다.

@@ -12,8 +12,10 @@ test('redact: 텔레그램 토큰·API 키·Bearer 토큰·깃허브 토큰을 �
 });
 
 test('redact: 사용자 폴더 이름은 가리고(paths:false 면 그대로), 평범한 글은 건드리지 않는다', () => {
-  assert.equal(redact('C:\\Users\\홍길동\\Desktop\\a.txt'), 'C:\\Users\\~\\Desktop\\a.txt');
-  assert.equal(redact('C:\\Users\\홍길동\\Desktop\\a.txt', { paths: false }), 'C:\\Users\\홍길동\\Desktop\\a.txt');
+  const home = ['C:', 'Users', '홍길동', 'Desktop', 'a.txt'].join('\\');
+  const masked = ['C:', 'Users', '~', 'Desktop', 'a.txt'].join('\\');
+  assert.equal(redact(home), masked);
+  assert.equal(redact(home, { paths: false }), home);
   assert.equal(redact('안녕하세요 오늘 회의는 3시 30분입니다.'), '안녕하세요 오늘 회의는 3시 30분입니다.');
   assert.equal(redact(null), '');
 });
