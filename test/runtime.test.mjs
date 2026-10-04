@@ -289,3 +289,27 @@ test('읽어 온 위치는 처리가 끝난 메시지까지만 저장한다', as
   await waitFor(() => tgState.sent.length === 1);
   await waitFor(() => JSON.parse(readFileSync(file, 'utf8')).offset === 42);
 });
+
+test('보안: 한 사람이 1분에 15번을 넘기면 AI 를 더 부르지 않고 한 번만 알려 준다', async (t) => {
+  const { tgState, bots, rt, bot, calls } = await setup(t);
+  bots.requestPairing(bot.id, { senderId: 5001, chatId: 5001 });
+  bots.pair(bot.id, Object.keys(bots.load(bot.id).telegram.pending)[0]);
+  for (let i = 1; i <= 20; i++) tgState.queue.push({ update_id: i, message: msg({ text: `질문 ${i}` }) });
+  await rt.start(bot.id);
+  await waitFor(() => tgState.sent.length >= 16);
+  await rt.idle();
+  assert.equal(calls.length, 15);
+  assert.equal(tgState.sent.filter((s) => /잠시 쉬어요/.test(s.text)).length, 1);
+});
+
+test('보안: 텔레그램 답장과 오류에서 봇 토큰·API 키를 가린다', async (t) => {
+  const secret = '987654321:' + 'B'.repeat(35);
+  const { tgState, bots, rt, bot } = await setup(t, { engineReply: () => `토큰은 ${secret} 이고 키는 sk-${'a'.repeat(30)} 입니다` });
+  bots.requestPairing(bot.id, { senderId: 5001, chatId: 5001 });
+  bots.pair(bot.id, Object.keys(bots.load(bot.id).telegram.pending)[0]);
+  tgState.queue.push({ update_id: 1, message: msg({ text: '비밀 알려줘' }) });
+  await rt.start(bot.id);
+  await waitFor(() => tgState.sent.length === 1);
+  assert.doesNotMatch(tgState.sent[0].text, /BBBBB|aaaaa/);
+  assert.match(tgState.sent[0].text, /가림/);
+});

@@ -19,6 +19,7 @@ import { runtime, startOffice, stopOffice, requestRestart, watchdogTick, forgetR
 import { createUpdater } from './updater.mjs';
 import * as tg from './telegram.mjs';
 import * as lr from './rooms-legacy.mjs';
+import * as RV from './roomsview.mjs';
 import { createJobs } from './jobs.mjs';
 import { createComponents } from './components.mjs';
 import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
@@ -129,6 +130,23 @@ const route = (method, pattern, handler) => {
 
 route('GET', '/api/ping', async () => ({ app: 'ai-office', version: pkg.version }));
 route('GET', '/api/overview', async () => overview());
+// 사무실 방 현황: 모든 봇(LAPIS 봇·Claude 사무실)이 초대되어 있는 방과 주제를 한곳에 모은다(읽기 전용).
+async function roomsOverview() {
+  const groups = [];
+  for (const b of bots.list()) {
+    const rooms = RV.lapisRooms(b);
+    groups.push({ source: 'lapis', id: b.id, name: b.name, username: b.telegram.username || '', running: runtimeBots.view(b.id).running, ...RV.tally(rooms), rooms });
+  }
+  const d = await diagnostics();
+  for (const o of listOffices()) {
+    if (o.kind === 'hermes' || o.readonly || !o.stateDir || !isDir(o.folder)) continue;
+    let rooms = [];
+    try { rooms = lr.isLegacy(o.stateDir) ? RV.legacyOfficeRooms(lr.listRooms(o.stateDir, teamList(listTeams(o.folder)))) : RV.officeRooms(tg.roomsInfo(o.stateDir)); } catch (e) { console.error('[ai-office] 방 목록을 읽지 못했습니다:', o.id, e.message); }
+    groups.push({ source: 'office', id: o.id, name: o.name, username: '', running: Boolean(summary(o, d).running), ...RV.tally(rooms), rooms });
+  }
+  return { groups, ...RV.tally(groups.flatMap((g) => g.rooms)) };
+}
+route('GET', '/api/rooms', async () => roomsOverview());
 route('GET', '/api/presets', async () => PRESETS.map(({ key, name, emoji, role, group, description }) => ({ key, name, emoji, role, group, description })));
 route('GET', '/api/discover', async () => discover());
 route('GET', '/api/offices/:id', async ({ p }) => detail(getOffice(p.id), await diagnostics()));
@@ -362,6 +380,16 @@ route('POST', '/api/diagnostics/clean-pollers', async () => { const r = await tg
 route('POST', '/api/diagnostics/disable-global-plugin', async () => tg.disableGlobalPlugin());
 
 // ── 서버 ──
+// 모든 응답에 붙이는 보안 헤더: 다른 사이트가 이 화면을 액자(iframe)로 끼워 클릭을 가로채거나, 파일 형식을 속이거나, 주소를 흘리지 못하게 한다.
+export const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'cross-origin-resource-policy': 'same-origin',
+  'cross-origin-opener-policy': 'same-origin',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+};
 function serveStatic(url, res) {
   const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
   const file = resolve(WEB, rel);
@@ -379,6 +407,7 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
   const send = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
 
   const server = http.createServer(async (req, res) => {
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     const host = req.headers.host || '';
     if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) { res.writeHead(421); return res.end(); }   // DNS 리바인딩 방지
     const url = new URL(req.url, `http://127.0.0.1:${port}`);

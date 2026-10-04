@@ -2,7 +2,7 @@
 // 사무실(Claude Office) 화면은 office.js 가 같은 페이지 안에서 직접 그린다.
 import {createWorkspaceStore,validateLink,progress,TEMPLATES,SERVICES,STORAGE_KEY} from './workspace-model.js';
 import {pages} from './ui.js';
-import './setup.js';import './hub.js';import './studio.js';import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
+import './setup.js';import './hub.js';import './studio.js';import './rooms.js';import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
 import {applyNavPrefs,startView} from './prefs.js';
 import {needsSetup} from './setup.js';
 
@@ -34,6 +34,7 @@ const ICONS={
   setup:'<path d="M12 3l2.4 5.6L20 9.5l-4.3 3.9 1.3 5.8L12 16.2 7 19.2l1.3-5.8L4 9.5l5.6-.9z"/>',
   hub:'<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7l3 9M16 7l-3 9M8.5 6h7"/>',
   studio:'<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9 16.2c1.8 1 4.2 1 6 0"/><circle cx="12" cy="3.5" r="1"/>',
+  rooms:'<path d="M4 5h16v10H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
   connect:'<path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/>',
   calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   learning:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M7 11v5c0 1.5 2.2 3 5 3s5-1.5 5-3v-5"/>',
@@ -45,7 +46,7 @@ const ICONS={
 const GROUPS=[
   {title:'시작하기',items:[['setup','시작 마법사'],['hub','연결 허브']]},
   {title:'업무',items:[['home','오늘'],['calendar','캘린더'],['flows','업무 흐름'],['library','자료 모음']]},
-  {title:'사무실',items:[['studio','봇 스튜디오'],['board','현황판'],['teams','부서 관리'],['skills','봇 · 스킬트리'],['market','스킬 마켓']]},
+  {title:'사무실',items:[['studio','봇 스튜디오'],['rooms','방 현황'],['board','현황판'],['teams','부서 관리'],['skills','봇 · 스킬트리'],['market','스킬 마켓']]},
   {title:'라피스',items:[['chat','라피스 대화'],['learning','라피스 학습'],['account','계정 · Google']]},
   {title:'연결',items:[['storage','저장소'],['drive','드라이브'],['inbox','텔레그램 수신함'],['rental','물품 대여']]},
   {title:'관리',items:[['connect','Claude · 텔레그램'],['settings','설정'],['appearance','화면 설정']]},

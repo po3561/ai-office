@@ -143,9 +143,13 @@ $('reset').onclick=function(){sid=Math.random().toString(36).slice(2);localStora
 if(pw)call({ping:true}).then(function(r){if(r.ok)open()});
 </script></body></html>`;
 
-export default {
-  async fetch(req, env, ctx) {
+// 모든 응답에 붙는 보안 헤더(페이지·JSON 모두): 항상 https, 액자(iframe) 금지, 형식 추측 금지, 주소 노출 금지.
+const HARDEN = { 'strict-transport-security': 'max-age=31536000; includeSubDomains', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'cross-origin-resource-policy': 'same-origin', 'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()' };
+const MAX_BODY = 64_000;   // 채팅·웹훅 요청 크기 상한(바이트)
+
+async function handle(req, env, ctx) {
     const url = new URL(req.url);
+    if (req.method === 'POST' && Number(req.headers.get('content-length') || 0) > MAX_BODY) return json({ error: '요청이 너무 커요.' }, 413);
     let cfg;
     try { cfg = JSON.parse(env.BOT_CONFIG); } catch { return json({ error: '설정을 읽지 못했어요.' }, 500); }
     if (req.method === 'GET' && url.pathname === '/') {
@@ -178,5 +182,13 @@ export default {
       return json({ ok: true });
     }
     return json({ error: 'not found' }, 404);
+}
+
+export default {
+  async fetch(req, env, ctx) {
+    const res = await handle(req, env, ctx);
+    const out = new Response(res.body, res);
+    for (const [k, v] of Object.entries(HARDEN)) out.headers.set(k, v);
+    return out;
   },
 };
