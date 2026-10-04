@@ -74,7 +74,7 @@ export function createDashboardServer(options={}){
   const calendarStore=options.calendarStore||createCalendarStore(join(dataDir,'calendar.json'));
   const taskStore=options.taskStore||createTaskStore(join(dataDir,'tasks.json'));
   const cloud=options.cloud||createCloud({vault,baseUrl:options.cloudBase||undefined,fetchImpl:options.cloudFetch});
-  const gcal=options.googleCalendar||createGoogleCalendar({vault,store:calendarStore,fetchImpl:options.googleFetch});
+  const gcal=options.googleCalendar||createGoogleCalendar({vault,store:calendarStore,cloud,fetchImpl:options.googleFetch});
   // 사무실에 맡긴 드라이브 위치(드라이브 접근)를 Office 에서 읽어 저장소 화면의 허용 범위로 쓴다.
   const getGrants=options.grants||(async()=>{
     const overview=await fetchJson(officeUrl+'/api/overview');

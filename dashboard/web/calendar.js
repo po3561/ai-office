@@ -1,6 +1,6 @@
-// 라피스 캘린더: 월·주·목록 보기, 일정 만들기·고치기·지우기, Google 캘린더와 양방향 동기화(내 OAuth 클라이언트로 직접 연결).
+// 라피스 캘린더: 월·주·목록 보기, 일정 만들기·고치기·지우기, Google 캘린더와 양방향 동기화(라피스 계정으로 연결, 고급: 내 OAuth 클라이언트).
 import {q,qa,node,put,button,pill,link,emptyLine,friendly,api,cloud,toast,doing,errorText,fmtDate,dayKey,openDialog,closeDialog,confirmDialog,field,input,textarea,registerPage,safeHttps} from './ui.js';
-import {session,refreshSession} from './account.js';
+import {session,refreshSession,waitForAuth} from './account.js';
 
 const COLORS=[['sky','하늘'],['blue','파랑'],['violet','보라'],['green','초록'],['amber','노랑'],['rose','분홍'],['gray','회색']];
 const DOW=['일','월','화','수','목','금','토'];
@@ -99,14 +99,33 @@ function paintSide(){
 }
 function paintGoogleBadge(){
   const badge=q('#cal-google-state');
-  badge.textContent=google.connected?'Google 연결됨'+(google.lastSync?' · '+fmtDate(google.lastSync,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false})+' 동기화':''):'Google 미연결';
+  badge.textContent=google.connected?'Google 연결됨'+(google.writable?'':' (읽기 전용)')+(google.lastSync?' · '+fmtDate(google.lastSync,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false})+' 동기화':''):'Google 미연결';
   badge.className='pill '+(google.connected?'ok':'');
   q('#cal-sync').hidden=!google.connected;
 }
 
 // ── 일정 대화상자 ──
 function toLocalParts(iso){const d=new Date(iso);return {date:dayKey(d),time:String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};}
+// 읽기 전용 캘린더(공유받은 캘린더·구독·휴일)의 일정: 고칠 수 없으니 입력칸 없이 내용만 보여 준다.
+function whenText(e){
+  const day=d=>(d.getMonth()+1)+'월 '+d.getDate()+'일 ('+DOW[d.getDay()]+')';
+  if(e.allDay)return day(fromKey(e.start))+(e.end!==e.start?' – '+day(fromKey(e.end)):'')+' · 종일';
+  const a=new Date(e.start),b=new Date(e.end);
+  return day(a)+' '+timeText(e.start)+' – '+(dayKey(a)===dayKey(b)?'':day(b)+' ')+timeText(e.end);
+}
+function eventView(event){
+  openDialog((box,close)=>{
+    const facts=node('dl','ev-view');
+    const row=(label,value,cls='')=>{if(value)put(facts,node('dt','',label),node('dd',cls,value));};
+    row('언제',whenText(event));row('장소',event.location);row('메모',event.notes,'notes');
+    row('캘린더',(event.calendarName?'Google 「'+event.calendarName+'」':'Google')+' · 읽기 전용');
+    put(box,put(node('div','dlg-head'),put(node('h2','ev-view-title'),node('i','dot-c c-'+event.color),node('span','',event.title))),
+      put(node('div','dlg-body'),facts),
+      put(node('div','dlg-foot'),node('span','small muted','공유받은 캘린더라 여기서는 고칠 수 없어요. 바꾸려면 Google 캘린더에서 고쳐 주세요.'),node('span','spacer'),button('닫기',close,'btn primary')));
+  });
+}
 function eventDialog(event,day){
+  if(event?.readOnly)return eventView(event);
   const isNew=!event;
   const base=event||{title:'',allDay:false,start:'',end:'',notes:'',location:'',color:'sky'};
   openDialog((box,close)=>{
@@ -136,7 +155,7 @@ function eventDialog(event,day){
       if(!await confirmDialog({title:'일정을 지울까요?',body:'「'+event.title+'」을(를) 지웁니다.'+(event.googleId?' Google 캘린더에서도 다음 동기화 때 지워져요.':''),ok:'지우기',danger:true}))return;
       await doing(null,async()=>{await api('/api/calendar/events/'+event.id,{method:'DELETE'});toast('일정을 지웠어요.');await load();});
     },'btn danger');
-    put(box,put(node('div','dlg-head'),node('h2','',isNew?'새 일정':'일정 고치기'),!isNew&&event.source==='google'?node('p','','Google 캘린더에서 가져온 일정이에요. 고치면 다음 동기화 때 Google에도 반영돼요.'):null),
+    put(box,put(node('div','dlg-head'),node('h2','',isNew?'새 일정':'일정 고치기'),!isNew&&event.source==='google'?node('p','',(event.calendarName?'Google 「'+event.calendarName+'」 캘린더':'Google 캘린더')+'에서 가져온 일정이에요. 고치면 다음 동기화 때 Google에도 반영돼요.'):null),
       put(node('div','dlg-body'),put(node('div','stack'),field('제목',title),(()=>{const l=node('label','row small');put(l,all,'종일');return l;})(),
         put(node('div','formgrid'),field('시작',put(node('div','row nowrap'),startDate,startTime)),field('끝',put(node('div','row nowrap'),endDate,endTime))),
         field('장소',location),field('메모',notes),field('색상',swatches))),
@@ -158,24 +177,54 @@ async function syncNow(btn){
 }
 function googleDialog(){
   openDialog((box,close)=>{
+    const status=node('p','small muted');
+    const reopen=()=>{close();googleDialog();};
+    // ── 추천: 라피스 계정으로 연결 ──
+    const lapis=node('div','stack');
+    const connectLapis=label=>{const b=button(label,()=>doing(b,async()=>{
+      await waitForAuth({start:()=>api('/api/calendar/google/lapis/connect',{method:'POST',body:{}}),poll:id=>api('/api/calendar/google/lapis/poll',{method:'POST',body:{attemptId:id}}),status,
+        onDone:async()=>{await loadGoogle();close();toast('Google 캘린더가 연결되었어요. 일정을 가져올게요.');syncNow(null);}});
+    }),'btn primary');return b;};
+    if(google.mode==='own'&&google.connected){
+      put(lapis,node('p','small','지금은 「내 Google Cloud 클라이언트」로 연결되어 있어요. 아래 고급 설정에서 연결을 해제하면 라피스 계정으로 연결할 수 있어요.'));
+    }else if(!google.signedIn){
+      const go=link('라피스 로그인하러 가기 →','#account','btn primary');go.addEventListener('click',close);
+      put(lapis,node('p','small','라피스 계정(Google 로그인)으로 로그인하면, 버튼 한 번으로 Google 캘린더를 연결할 수 있어요.'),put(node('div','row'),go));
+    }else if(google.connected){
+      put(lapis,put(node('div','row'),pill('연결됨','ok'),node('span','small',google.account||'라피스 계정의 Google'),google.writable?null:pill('읽기 전용','warn')),
+        google.writable?node('p','small muted','Google 화면에서 켜 둔 캘린더(공유·구독 포함)를 가져오고, 여기서 만든 일정은 내 기본 캘린더에 올라가요.')
+          :node('p','banner warn','지금은 읽기 권한만 있어요. 「권한 다시 받기」를 누르면 여기서 만든 일정도 Google 캘린더에 올라가요.'),
+        put(node('div','row'),button('지금 동기화',()=>{close();syncNow(null);},'btn'),google.writable?null:connectLapis('권한 다시 받기'),
+          button('이 PC에서 동기화 끄기',async()=>{if(await confirmDialog({title:'이 PC에서 Google 캘린더 동기화를 끌까요?',body:'이미 가져온 일정은 그대로 남아요. 라피스 계정의 Google 연결(드라이브 등)은 바뀌지 않아요.',ok:'끄기',danger:true})){await doing(null,async()=>{google=await api('/api/calendar/google/disconnect',{method:'POST',body:{}});paintGoogleBadge();toast('동기화를 껐어요.');close();});}},'btn ghost')));
+    }else{
+      if(google.reauthRequired)lapis.append(node('p','banner warn','Google 연결이 만료되었어요. 다시 연결해 주세요.'));
+      if(google.error)lapis.append(node('p','banner warn','연결 상태를 확인하지 못했어요: '+google.error));
+      const row=put(node('div','row'),connectLapis('Google 캘린더 연결'));
+      if(google.linked&&google.writable)row.prepend(button('이 PC에서 동기화 켜기',function(){doing(this,async()=>{google=await api('/api/calendar/google/lapis/use',{method:'POST',body:{}});close();toast('동기화를 켰어요. 일정을 가져올게요.');syncNow(null);});},'btn primary'));
+      put(lapis,node('p','small','「Google 캘린더 연결」을 누르고, 열린 Google 화면에서 「허용」만 누르면 끝나요. 따로 준비할 것은 없어요.'),row,status);
+    }
+    // ── 고급: 내 Google Cloud 클라이언트로 직접 연결 ──
+    const advanced=node('details','stack');advanced.open=google.mode==='own'&&(google.configured||google.connected);
     const id=input({placeholder:'1234567890-abc….apps.googleusercontent.com',value:google.clientId||'',autocomplete:'off'});
     const secret=node('input');secret.type='password';secret.placeholder=google.configured?'저장되어 있음 (바꿀 때만 입력)':'GOCSPX-…';secret.autocomplete='off';
     const save=button('저장',null,'btn');
-    save.addEventListener('click',()=>doing(save,async()=>{google=await api('/api/calendar/google/config',{method:'POST',body:{clientId:id.value,clientSecret:secret.value}});secret.value='';toast('저장했습니다. 이제 Google 계정을 연결하세요.');close();googleDialog();}));
-    const connect=button(google.connected?'다시 연결':'Google 계정 연결',null,'btn primary');connect.disabled=!google.configured;
+    save.addEventListener('click',()=>doing(save,async()=>{google=await api('/api/calendar/google/config',{method:'POST',body:{clientId:id.value,clientSecret:secret.value}});secret.value='';toast('저장했습니다. 이제 Google 계정을 연결하세요.');reopen();}));
+    const connect=button(google.mode==='own'&&google.connected?'다시 연결':'Google 계정 연결',null,'btn');connect.disabled=!google.configured;
     connect.addEventListener('click',()=>doing(connect,async()=>{
       const {url}=await api('/api/calendar/google/connect',{method:'POST',body:{}});
       const safe=safeHttps(url);if(!safe)throw new Error('인증 주소가 올바르지 않습니다.');
       window.open(safe,'_blank','noopener');toast('새 탭에서 Google 인증을 마치면 이 화면이 연결됨으로 바뀝니다.');
-      for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,2500));await loadGoogle();if(google.connected){close();toast('Google 캘린더가 연결되었어요. 「지금 동기화」를 눌러 주세요.');return;}}
+      for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,2500));await loadGoogle();if(google.mode==='own'&&google.connected){close();toast('Google 캘린더가 연결되었어요. 「지금 동기화」를 눌러 주세요.');return;}}
     }));
     const steps=node('ol','guide');
     for(const t of ['Google Cloud 콘솔(console.cloud.google.com)에서 프로젝트를 만들고, 「API 및 서비스」에서 Google Calendar API를 사용 설정합니다.','「OAuth 동의 화면」을 만들고(외부, 테스트 모드) 내 Google 계정을 테스트 사용자로 추가합니다.','「사용자 인증 정보 → OAuth 클라이언트 ID 만들기」에서 애플리케이션 유형을 데스크톱 앱으로 고릅니다.','만들어진 클라이언트 ID와 보안 비밀을 아래에 붙여 넣고 저장한 뒤, 「Google 계정 연결」을 누릅니다.'])steps.append(node('li','',t));
-    const disconnect=google.connected?button('연결 해제',async()=>{if(await confirmDialog({title:'Google 캘린더 연결을 해제할까요?',body:'이 PC에 저장된 접근 키를 지우고 Google의 접근 권한도 거둡니다. 이미 가져온 일정은 그대로 남아요.',ok:'해제',danger:true})){await doing(null,async()=>{google=await api('/api/calendar/google/disconnect',{method:'POST',body:{}});toast('연결을 해제했습니다.');paintGoogleBadge();close();});}},'btn danger'):null;
-    put(box,put(node('div','dlg-head'),node('h2','','Google 캘린더 연동'),node('p','','내 Google Cloud 프로젝트의 키로 이 PC에서 직접 연결합니다. 키와 접근 토큰은 이 PC의 Windows 계정으로 암호화되어 저장돼요.')),
-      put(node('div','dlg-body'),put(node('div','stack'),put(node('div','row'),pill(google.configured?'키 저장됨':'키 필요',google.configured?'ok':'warn'),pill(google.connected?'계정 연결됨':'계정 미연결',google.connected?'ok':'')),
-        node('div','group-title','처음 한 번만 준비해요'),steps,field('클라이언트 ID',id),field('클라이언트 보안 비밀',secret,'GOCSPX- 로 시작하는 값'),put(node('div','row'),save,connect,disconnect),
-        node('p','small muted','같은 일정이 양쪽에서 바뀌면 나중에 바뀐 쪽을 따라요. 반복 일정은 개별 일정으로 가져옵니다.'))),
+    const disconnect=google.mode==='own'&&google.connected?button('연결 해제',async()=>{if(await confirmDialog({title:'Google 캘린더 연결을 해제할까요?',body:'이 PC에 저장된 접근 키를 지우고 Google의 접근 권한도 거둡니다. 이미 가져온 일정은 그대로 남아요.',ok:'해제',danger:true})){await doing(null,async()=>{google=await api('/api/calendar/google/disconnect',{method:'POST',body:{}});toast('연결을 해제했습니다.');paintGoogleBadge();reopen();});}},'btn danger'):null;
+    put(advanced,node('summary','small','고급: 내 Google Cloud 클라이언트로 직접 연결 (개발자용)'),
+      node('p','small muted','라피스 계정 없이 이 PC에서만 연결하고 싶을 때 써요. 키와 접근 토큰은 이 PC의 Windows 계정으로 암호화되어 저장돼요.'),
+      steps,field('클라이언트 ID',id),field('클라이언트 보안 비밀',secret,'GOCSPX- 로 시작하는 값'),put(node('div','row'),save,connect,disconnect));
+    put(box,put(node('div','dlg-head'),node('h2','','Google 캘린더 연동'),node('p','','라피스 계정으로 로그인한 Google 계정의 캘린더와 양방향으로 맞춰요.')),
+      put(node('div','dlg-body'),put(node('div','stack'),node('div','group-title','라피스 계정으로 연결 (추천)'),lapis,
+        node('p','small muted','같은 일정이 양쪽에서 바뀌면 나중에 바뀐 쪽을 따라요. 반복 일정은 개별 일정으로 가져오고, 구독·휴일처럼 읽기 전용인 캘린더는 가져오기만 해요.'),advanced)),
       put(node('div','dlg-foot'),button('닫기',close,'btn primary')));
   },{wide:true});
 }
