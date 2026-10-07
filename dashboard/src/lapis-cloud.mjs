@@ -35,6 +35,8 @@ export const CLOUD_ROUTES=[
   ['GET',/^\/training\/(readiness|fine-tune\/jobs|dataset\.jsonl)$/],['POST',/^\/training\/fine-tune$/],
 ];
 export const cloudRouteAllowed=(method,path)=>CLOUD_ROUTES.some(([m,re])=>m===method&&re.test(path));
+const FILE_SERVER_PATH=/^\/(?:file-servers(?:\/[^?#]*)?|file-server-invitations\/redeem)(?:\?[^#]*)?$/;
+const FILE_SERVER_STREAM_PATH=/^\/file-servers\/[0-9a-f-]{36}\/(?:files|download)\?[^#]*$/;
 
 export function createCloud({baseUrl=cloudBase(),vault,fetchImpl=fetch,appVersion='dashboard-0.3'}){
   const attempts=new Map();
@@ -268,6 +270,33 @@ export function createCloud({baseUrl=cloudBase(),vault,fetchImpl=fetch,appVersio
       const result=await authed('/integrations/google-calendar'+path+search,{method,body});
       if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'Google 캘린더 요청에 실패했습니다'));
       return parse(result.text);
+    },
+    // ── 파일 서버(초대·멤버·기록·중계). 경로는 /file-servers…, /file-server-invitations/redeem 만 허용한다. ──
+    async fileServers(method,path,body){
+      if(!FILE_SERVER_PATH.test(path)||path.includes('..'))throw new CloudError(400,'지원하지 않는 파일 서버 요청입니다.');
+      const result=await authed(path,{method,body});
+      const data=parse(result.text);
+      if(!okStatus(result.status))throw new CloudError(result.status,errorOf(result,'파일 서버 요청을 처리하지 못했습니다'));
+      return data;
+    },
+    // 다운로드처럼 큰 응답은 메모리에 모으지 않고 그대로 흘려보낸다. 응답 머리를 받으면 시간 제한을 푼다.
+    async fileServerStream(path,{range,signal}={}){
+      if(!FILE_SERVER_STREAM_PATH.test(path)||path.includes('..'))throw new CloudError(400,'지원하지 않는 파일 서버 요청입니다.');
+      if(!baseUrl)throw new CloudError(503,'라피스 클라우드 주소가 설정되지 않았습니다.');
+      const once=async token=>{
+        const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+        const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});
+        try{
+          const response=await fetchImpl(baseUrl+path,{headers:{Accept:'*/*',Authorization:'Bearer '+token,...(range?{Range:range}:{})},signal:controller.signal,redirect:'error'});
+          return response;
+        }catch{signal?.removeEventListener('abort',cancel);throw new CloudError(503,'라피스 서버에 연결할 수 없습니다. 네트워크 상태를 확인하세요.');}
+        finally{clearTimeout(timer);}
+      };
+      const saved=await session();if(!saved)throw new CloudError(401,'라피스 계정에 로그인해 주세요.');
+      let response=await once(saved.accessToken);
+      if(response.status===401&&await refresh()){await response.body?.cancel().catch(()=>{});response=await once((await session()).accessToken);}
+      if(response.status===401)throw new CloudError(401,'로그인이 만료되었습니다. 다시 로그인해 주세요.');
+      return response;
     },
     // 허용 목록 안의 서버 경로를 로그인 정보로 대신 호출한다.
     async call(method,path,{query='',body}={}){
