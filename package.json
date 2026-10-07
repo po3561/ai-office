@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node bin/ai-office.mjs serve",
     "open": "node bin/ai-office.mjs open",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=1",
     "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
     "privacy-check": "node scripts/privacy-check.mjs",
     "dev:lapis": "node scripts/dev-lapis.mjs"
