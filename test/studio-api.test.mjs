@@ -1,5 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { sandbox } from './helpers.mjs';
 
 sandbox();
@@ -10,6 +11,28 @@ const base = `http://127.0.0.1:${port}`;
 const h = { 'content-type': 'application/json', 'x-ai-office': '1' };
 const call = (p, b, method = 'POST') => fetch(`${base}${p}`, { method, headers: h, body: method === 'GET' ? undefined : JSON.stringify(b ?? {}) }).then(async (r) => ({ status: r.status, json: await r.json() }));
 const get = (p) => fetch(`${base}${p}`).then(async (r) => ({ status: r.status, json: await r.json() }));
+
+test('office API exposes damaged organization recovery status while retaining recovered departments', async () => {
+  const created = await call('/api/offices', { name: 'Recovery', presets: ['planner'] });
+  const O = await import('../src/offices.mjs');
+  const T = await import('../src/teams.mjs');
+  const folder = O.getOffice(created.json.id).folder;
+  T.saveOffice(folder, T.loadOffice(folder));
+  writeFileSync(T.officeJsonPath(folder), '{broken');
+  const detail = await get(`/api/offices/${created.json.id}`);
+  assert.equal(detail.json.recovery.status, 'previous-valid');
+  assert.equal(detail.json.teams.length, 1);
+});
+
+test('usage API returns five-part contract and accepts explicit nullable pricing', async () => {
+  const result = await get('/api/usage');
+  assert.equal(result.status, 200);
+  assert.deepEqual(Object.keys(result.json).sort(), ['bots', 'events', 'models', 'pricing', 'totals']);
+  const price = await call('/api/usage/pricing', { currency: 'USD', asOf: '2026-10-07', models: [{ provider: 'openai', model: 'test', inputPerMillion: 2, outputPerMillion: 8 }] }, 'PUT');
+  assert.equal(price.status, 200);
+  assert.equal(price.json.models[0].cacheReadPerMillion, null);
+  assert.equal((await get('/api/usage?from=invalid')).status, 400);
+});
 
 test('컴포넌트 목록: 다섯 가지 도구의 설치 여부와 설명을 돌려준다', async () => {
   const r = await get('/api/components');

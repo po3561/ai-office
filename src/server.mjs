@@ -32,6 +32,7 @@ import { createBots, AGENT_PRESETS } from './bots.mjs';
 import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
 import { createPublisher } from './publish.mjs';
 import { createStaleWatcher } from './engine-guard.mjs';
+import { createUsage } from './usage.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -65,8 +66,8 @@ function summary(o, d) {
   const skills = scanSkills(skillsDirOf(o));
   if (o.kind === 'hermes') return { ...base, teamsCount: 0, skillsCount: skills.length, workingTeams: 0, doneToday: 0, telegram: { set: false } };
   const st = summarize(readStatus(o.folder));
-  const teams = loadOffice(o.folder).teams;
-  return { ...base, teamsCount: teams.length, skillsCount: skills.length, workingTeams: st.workingTeams, doneToday: st.doneToday, chiefState: st.chiefState, updatedAt: st.updatedAt, telegram: tg.tokenStatus(o.stateDir) };
+  const office = loadOffice(o.folder);
+  return { ...base, recovery: office.recovery, teamsCount: office.teams.length, skillsCount: skills.length, workingTeams: st.workingTeams, doneToday: st.doneToday, chiefState: st.chiefState, updatedAt: st.updatedAt, telegram: tg.tokenStatus(o.stateDir) };
 }
 
 async function detail(o, d) {
@@ -314,6 +315,20 @@ route('GET', '/api/market/shareable', async () => market.shareable({ offices: ma
 // 이 PC 의 설치 현황: 사무실뿐 아니라 외부 봇(라피스 등)이 마켓에서 받은 스킬도 함께 본다.
 route('GET', '/api/market/installed', async () => market.shareable({ offices: marketTargets() }).then((r) => r.map((o) => ({ ...o, external: Boolean(marketTargets().find((t) => t.id === o.office)?.external), requests: [] }))));
 route('POST', '/api/market/inspect', async ({ body }) => { const o = marketOffice(body.office); const k = localSkill(o, body.skillId); return market.inspect({ skillDir: k.dir, id: k.id, honorifics: o.honorifics }); });
+route('POST', '/api/market/inspect-batch', async ({ body }) => {
+  need(Array.isArray(body.items) && body.items.length && body.items.length <= 200, '검사할 항목을 1~200개 선택해 주세요.');
+  const results = [];
+  for (const item of body.items) {
+    try { const o = marketOffice(item.office), k = localSkill(o, item.skillId); results.push({ office: o.id, skillId: k.id, ...(await market.inspect({ skillDir: k.dir, id: k.id, honorifics: o.honorifics })) }); }
+    catch (e) { results.push({ office: item?.office, skillId: item?.skillId, error: e.message, status: e.status || 500 }); }
+  }
+  return { results };
+});
+route('POST', '/api/market/publish-batch', async ({ body }) => {
+  const result = await market.publishBatch({ items: body.items, offices: marketOffices() });
+  for (const item of result.published) { try { const o = marketOffice(item.office); resolveRequest(o.folder, item.skillId, '게시'); } catch { /* Publication succeeded; request cleanup is secondary. */ } }
+  return result;
+});
 route('POST', '/api/market/publish', async ({ body }) => {
   const o = marketOffice(body.office), k = localSkill(o, body.skillId);
   const r = await market.publish({ skillDir: k.dir, id: k.id, version: body.version, notes: body.notes, honorifics: o.honorifics, confirmWarnings: body.confirmWarnings === true, confirmRisks: body.confirmRisks === true });
@@ -358,7 +373,10 @@ route('GET', '/api/connections/models/:provider', async ({ p }) => connections.m
 // ── 봇 스튜디오(LAPIS 런타임 봇): 봇·에이전트·방·주제 설정과 텔레그램 수신 ──
 // 엔진은 봇·에이전트마다 고른다(로컬 AI·GPT·Claude·Hermes). 텔레그램 허용(페어링)은 이 화면에서만 바뀐다.
 export const tgApi = createTgApi();
-export const engines = createEngines({ ollama, secrets, components, runImpl: run });
+export const usage = createUsage({ home: DATA_HOME });
+route('GET', '/api/usage', async ({ url }) => usage.query(Object.fromEntries(url.searchParams)));
+route('PUT', '/api/usage/pricing', async ({ body }) => usage.setPricing(body));
+export const engines = createEngines({ ollama, secrets, components, usage, runImpl: run });
 export const bots = createBots({ secrets, tg: tgApi });
 export const runtimeBots = createRuntime({ bots, engines, tg: tgApi, log: (m) => console.log(m) });
 route('GET', '/api/bots', async () => ({ bots: await bots.listSummaries(), engineTypes: ENGINE_TYPES, agentPresets: AGENT_PRESETS, readiness: await connections.readiness() }));
@@ -399,7 +417,8 @@ route('POST', '/api/bots/:id/test', async ({ p, body }) => {
   const picked = body.agent ? { agent: b.agents.find((a) => a.key === body.agent) || null, text } : pickAgent(b, { text });
   const engine = picked.agent?.engine?.type ? picked.agent.engine : b.engine;
   const system = buildSystem(b, { agent: picked.agent, skillsDir: bots.skillsDir(p.id) });
-  const answer = await engines.complete({ engine, system, messages: [{ role: 'user', content: picked.text }], cwd: join(bots.folder(p.id), 'work'), access: picked.agent?.access || b.access });
+  const answer = await engines.complete({ engine, system, messages: [{ role: 'user', content: picked.text }], cwd: join(bots.folder(p.id), 'work'), access: picked.agent?.access || b.access,
+    context: { botId: p.id, botName: b.name, agentKey: picked.agent?.key || '' } });
   return { answer, agent: picked.agent?.key || '', engine };
 });
 

@@ -132,7 +132,8 @@ export function createRuntime({ bots, engines, tg, log: rawLog = () => {}, nowMs
     const typing = setInterval(() => tg.sendChatAction(token, { chat_id: msg.chat.id, action: 'typing', ...(thread ? { message_thread_id: thread } : {}) }), 4500);
     let answer;
     try {
-      answer = redact(stripThinking(await engines.complete({ engine, system, messages, cwd: join(bots.folder(botId), 'work'), access })), { paths: false });
+      answer = redact(stripThinking(await engines.complete({ engine, system, messages, cwd: join(bots.folder(botId), 'work'), access,
+        context: { botId, botName: bot.name, agentKey: picked.agent?.key || '', requestId: `telegram:${botId}:${msg.chat.id}:${thread}:${msg.message_id}` } })), { paths: false });
       if (!answer) throw new Error('빈 답');
     } catch (e) {
       log(`[lapis:${botId}] 엔진 오류: ${e.message}`);

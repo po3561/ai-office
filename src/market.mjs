@@ -385,13 +385,16 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
         if (!ID_RE.test(item.marketId)) return { ...item, status: 'unsharable', reason: '폴더 이름에 마켓에서 쓸 수 없는 문자가 있습니다(글자·숫자·하이픈만).' };
         const { files, errors } = collectPackage(k.dir);
         if (errors.length) return { ...item, status: 'unsharable', reason: errors[0] };
+        item.localHash = packageHash(files);
         const e = entries.find((x) => x.id === item.marketId);
         if (!e) return item;
         item.version = e.version;
+        item.publishedHash = e.sha256;
         if (revoked[e.id]) return { ...item, status: 'revoked', reason: '마켓에서 회수된 스킬입니다.' };
         if (me && e.publisher !== me) return { ...item, status: 'conflict', reason: `같은 이름의 스킬을 다른 게시자(${e.publisher})가 이미 올렸습니다.` };
         return { ...item, status: packageHash(files) === e.sha256 ? 'published' : 'changed' };
-      }),
+      }).map(item => ({ ...item, candidateStatus: ({ private: 'new', changed: 'changed', published: 'same', 'from-market': 'from-market' })[item.status] || 'excluded',
+        suggestedVersion: item.version ? nextPatch(item.version) : '1.0.0' })),
       };
     });
   }
@@ -414,7 +417,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     return {
       id: marketId, files: files.map((f) => ({ path: f.path, size: f.buf.length, kind: fileKind(f.path) })), findings: scan.findings, blockers, riskLevel: scan.riskLevel,
       warnings: scan.findings.filter((f) => f.level === 'warn'), risks: scan.findings.filter((f) => f.level === 'risk'),
-      existing, suggestedVersion: existing ? nextPatch(existing.version) : '1.0.0', publishable: !blockers.length,
+      existing, localHash: packageHash(files), suggestedVersion: existing ? nextPatch(existing.version) : '1.0.0', publishable: !blockers.length,
     };
   }
 
@@ -424,6 +427,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     need(isSemver(version), '버전은 1.0.0 처럼 숫자 세 개(점으로 구분)로 적어 주세요.');
     const marketId = String(id || '').toLowerCase();
     need(!builtinIds().has(marketId), 'AI-Office 기본 스킬은 공유하지 않습니다.', 409);
+    need(!readInstalledMarker(skillDir), '마켓에서 받은 스킬은 다시 게시할 수 없습니다.', 409);
     const info = await inspect({ skillDir, id: marketId, honorifics });
     need(!info.blockers.length, '공유할 수 없는 내용이 있어 게시하지 않았습니다.', 422, info);
     need(!info.warnings.length || confirmWarnings, '개인정보로 보이는 내용이 있습니다. 확인 후 다시 게시해 주세요.', 409, { ...info, needsConfirm: 'warnings' });
@@ -439,6 +443,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
       need(semverCmp(version, cur.version) > 0, `이미 게시된 버전(${cur.version})보다 높은 버전이어야 합니다. (예: ${nextPatch(cur.version)})`, 409);
     }
     const { files } = collectPackage(skillDir);
+    need(packageHash(files) === info.localHash, '검사 후 스킬 내용이 변경되었습니다. 다시 검사해 주세요.', 409);
     const skillMd = files.find((f) => f.path === 'SKILL.md');
     const fm = parseFrontmatter(skillMd.buf.toString('utf8').replace(/^﻿/, ''));
     const tags = String(fm.meta.tags || '').replace(/[[\]]/g, '').split(',').map((t) => t.trim()).filter(Boolean).slice(0, 10);
@@ -472,6 +477,31 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     }
     return { id: marketId, version, sha256: meta.sha256, publisher, updated: Boolean(cur) };
   });
+
+  async function publishBatch({ items, offices = [] }) {
+    need(Array.isArray(items) && items.length && items.length <= 200, '공유할 항목을 1~200개 선택해 주세요.');
+    const result = { published: [], skipped: [], failed: [] };
+    const seen = new Set();
+    for (const item of items) {
+      try {
+        const office = offices.find(o => o.id === item.office);
+        need(office && !office.external, '공유할 사무실을 찾을 수 없습니다.', 404);
+        const skill = findSkillDirs(office.skillsDir).find(k => k.id === item.skillId);
+        need(skill, '스킬을 찾을 수 없습니다.', 404);
+        const candidate = (await shareable({ offices: [office] }))[0].skills.find(s => s.id === item.skillId);
+        const key = `${candidate.marketId}:${candidate.localHash}`;
+        if (seen.has(key) || candidate.candidateStatus === 'same') { result.skipped.push({ office: item.office, skillId: item.skillId, reason: seen.has(key) ? 'duplicate' : 'same' }); continue; }
+        need(['new', 'changed'].includes(candidate.candidateStatus), candidate.reason || '공유 후보가 아닌 스킬입니다.', 409);
+        need(!item.localHash || item.localHash === candidate.localHash, '검사 후 스킬 내용이 변경되었습니다. 다시 검사해 주세요.', 409);
+        const published = await publish({ skillDir: skill.dir, id: skill.id, version: item.version || candidate.suggestedVersion, notes: item.notes,
+          honorifics: office.honorifics, confirmWarnings: item.confirmWarnings === true, confirmRisks: item.confirmRisks === true });
+        seen.add(key); result.published.push({ office: item.office, skillId: item.skillId, ...published });
+      } catch (e) {
+        result.failed.push({ office: item?.office, skillId: item?.skillId, error: e.message, status: e.status || 500, ...(e.details ? { details: e.details } : {}) });
+      }
+    }
+    return result;
+  }
 
   const revoke = ({ id, reason = '' }) => locked(async () => {
     const s = conf();
@@ -566,5 +596,5 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
   // 연결을 끊는다. 복제본(cache)은 마켓에서 내려받은 사본일 뿐이라 지워도 스킬·게시 내용에는 영향이 없다.
   const purgeCache = (repo) => { rmSync(cacheDirFor(repo), { recursive: true, force: true }); };
 
-  return { status, connect, refresh, autoSync, list, detail, shareable, inspect, publish, revoke, install, uninstall, purgeCache, _test: { cacheDirFor, readEntries, syncDir } };
+  return { status, connect, refresh, autoSync, list, detail, shareable, inspect, publish, publishBatch, revoke, install, uninstall, purgeCache, _test: { cacheDirFor, readEntries, syncDir } };
 }

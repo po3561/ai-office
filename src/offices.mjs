@@ -2,7 +2,7 @@
 //   claude-office : Claude Code 로 돌아가는 사무실. 이 프로그램이 만들거나(managed) 기존 폴더를 불러온 것.
 //   hermes        : Hermes(라피스 등) 같은 별개의 봇. 기본은 **읽기 전용**(인식해서 보여 주기만 함).
 //                   사용자가 「사무실용」 모드로 바꾼 것만 이 프로그램이 켜고 끄고 항상 켜두기를 맡는다(부서·텔레그램·드라이브는 여전히 Hermes 자체 설정).
-import { join, resolve, basename } from 'node:path';
+import { join, resolve, basename, parse } from 'node:path';
 import { readdirSync, mkdirSync, copyFileSync, renameSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { FILES, OFFICES_DIR, CLOSED_DIR, TEMPLATES, CLI, STATUS_HOOK, DEFAULT_TG_STATE } from './paths.mjs';
@@ -11,16 +11,20 @@ import { getConfig } from './config.mjs';
 import { addTeam, saveOffice, loadOffice, renderTeamsBlock, syncClaudeMd } from './teams.mjs';
 import { DEFAULT_PRESETS } from './presets.mjs';
 import { repairGrants } from './drives.mjs';
+import { readDurableJson, writeDurableJson } from './durable-json.mjs';
 
 const KINDS = ['claude-office', 'hermes'];
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
 
 // ── 등록부 ──
 export function readRegistry() {
-  const r = readJson(FILES.offices, null);
-  return r && Array.isArray(r.offices) ? r : { offices: [] };
+  const { value, status } = readDurableJson(FILES.offices, validRegistry);
+  need(value || status === 'missing', '사무실 등록부가 손상되어 있습니다. 복구 전에는 빈 목록으로 덮어쓰지 않습니다.', 409);
+  return value || { offices: [] };
 }
-const writeRegistry = (r) => writeJson(FILES.offices, r);
+const validRegistry = r => Boolean(r && Array.isArray(r.offices) && r.offices.every(o => o && typeof o.id === 'string' && typeof o.folder === 'string')
+  && new Set(r.offices.map(o => o.id)).size === r.offices.length);
+const writeRegistry = (r) => writeDurableJson(FILES.offices, r, validRegistry);
 
 export const listOffices = () => readRegistry().offices;
 
@@ -287,6 +291,8 @@ export function autoRelink() {
   const done = [];
   for (const o of listOffices()) {
     if (o.kind !== 'claude-office' || o.readonly || isDir(o.folder)) continue;
+    // A missing removable/network drive is not evidence that its office moved.
+    if (!isDir(parse(resolve(o.folder)).root)) continue;
     const c = findMovedFolders(o);
     if (c.length !== 1) continue;
     try { relocateOffice(o.id, c[0]); done.push({ id: o.id, from: o.folder, to: c[0] }); } catch { /* 다음 점검 때 다시 시도 */ }

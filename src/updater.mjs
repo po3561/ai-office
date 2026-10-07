@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { APP_HOME, DATA_HOME, UPDATE_DIR } from './paths.mjs';
 import { getConfig } from './config.mjs';
+import { snapshotUserData, verifyUserData } from './data-snapshot.mjs';
 import { readJson, writeJson, copyTree, isFile, isDir, need, run, ps, psQuote, isWindows, nowIso, stamp, HttpError } from './util.mjs';
 
 export const REPO = 'po3561/ai-office';
@@ -167,17 +168,20 @@ export function createUpdater({ current, appHome = APP_HOME, dataHome = DATA_HOM
 
       // 교체: 현재 프로그램을 백업한 뒤 새 파일로 맞춘다. 실패하면 백업으로 되돌린다.
       mkdirSync(backup, { recursive: true });
+      const dataSnapshot = join(backup, 'user-data');
+      const userData = snapshotUserData(dataHome, dataSnapshot);
       for (const n of [...APP_ITEMS, ...APP_FILES]) if (existsSync(join(appHome, n))) copyTree(join(appHome, n), join(backup, n));
       swapped = true;
       for (const n of APP_ITEMS) if (isDir(join(out, n))) mirror(join(out, n), join(appHome, n));
       for (const n of APP_FILES) if (isFile(join(out, n))) copyTree(join(out, n), join(appHome, n));
+      const integrity = verifyUserData(userData);
       const instFile = join(dataHome, 'install.json');
       writeJson(instFile, { ...readJson(instFile, {}), version: pkg.version, updatedAt: nowIso() });
 
-      state.lastApplied = { from: current, to: pkg.version, at: nowIso(), backup };
+      state.lastApplied = { from: current, to: pkg.version, at: nowIso(), backup, dataSnapshot, integrity };
       rmSync(work, { recursive: true, force: true });
       pruneBackups(updateDir);
-      const result = { from: current, to: pkg.version, backup };
+      const result = { from: current, to: pkg.version, backup, dataSnapshot, integrity };
       setTimeout(() => { t.restart(join(appHome, 'bin', 'ai-office.mjs'), restartPort()); }, 400).unref?.();   // 응답이 먼저 나가도록
       return result;
     } catch (e) {
