@@ -479,10 +479,13 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     return { id: marketId, version, sha256: meta.sha256, publisher, updated: Boolean(cur) };
   });
 
-  async function publishBatch({ items, offices = [] }) {
+  async function publishBatch({ items, offices = [], onProgress = () => {} }) {
     need(Array.isArray(items) && items.length && items.length <= 200, '공유할 항목을 1~200개 선택해 주세요.');
     const result = { published: [], skipped: [], failed: [] };
     const seen = new Set();
+    let completed = 0;
+    const progress = () => { try { onProgress(completed, items.length); } catch { /* Progress reporting must not alter publication results. */ } };
+    progress();
     for (const item of items) {
       try {
         const office = offices.find(o => o.id === item.office);
@@ -499,7 +502,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
         seen.add(key); result.published.push({ office: item.office, skillId: item.skillId, ...published });
       } catch (e) {
         result.failed.push({ office: item?.office, skillId: item?.skillId, error: e.message, status: e.status || 500, ...(e.details ? { details: e.details } : {}) });
-      }
+      } finally { completed++; progress(); }
     }
     return result;
   }

@@ -73,10 +73,12 @@ t('bulk sharing rescans all offices, reports failures and skips duplicate/alread
   assert.equal(candidate.candidateStatus, 'new');
   assert.match(candidate.localHash, /^[a-f0-9]{64}$/);
   const items = [{ office: 'office', skillId: 'bulk-new', version: '1.0.0' }, { office: 'office', skillId: 'bulk-new', version: '1.0.0' }, { office: 'missing', skillId: 'bad', version: '1.0.0' }];
-  const result = await bulk.market.publishBatch({ items, offices: bulk.offices });
+  const progress = [];
+  const result = await bulk.market.publishBatch({ items, offices: bulk.offices, onProgress: (done, total) => progress.push([done, total]) });
   assert.equal(result.published.length, 1);
   assert.equal(result.skipped.length, 1);
   assert.equal(result.failed.length, 1);
+  assert.deepEqual(progress, [[0, 3], [1, 3], [2, 3], [3, 3]]);
   const retry = await bulk.market.publishBatch({ items: items.slice(0, 1), offices: bulk.offices });
   assert.equal(retry.published.length, 0);
   assert.equal(retry.skipped[0].reason, 'same');

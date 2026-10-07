@@ -325,9 +325,15 @@ route('POST', '/api/market/inspect-batch', async ({ body }) => {
   return { results };
 });
 route('POST', '/api/market/publish-batch', async ({ body }) => {
-  const result = await market.publishBatch({ items: body.items, offices: marketOffices() });
-  for (const item of result.published) { try { const o = marketOffice(item.office); resolveRequest(o.folder, item.skillId, '게시'); } catch { /* Publication succeeded; request cleanup is secondary. */ } }
-  return result;
+  need(Array.isArray(body.items) && body.items.length && body.items.length <= 200, '공유할 항목을 1~200개 선택해 주세요.');
+  need(body.items.every(item => item && typeof item.office === 'string' && typeof item.skillId === 'string' && item.office.length && item.skillId.length), '공유할 사무실과 스킬 정보가 올바르지 않습니다.');
+  const runBatch = async ctx => {
+    ctx?.step('선택한 스킬을 검사하고 게시합니다.');
+    const result = await market.publishBatch({ items: body.items, offices: marketOffices(), onProgress: (done, total) => ctx?.progress(done, total) });
+    for (const item of result.published) { try { const o = marketOffice(item.office); resolveRequest(o.folder, item.skillId, '게시'); } catch { /* Publication succeeded; request cleanup is secondary. */ } }
+    return result;
+  };
+  return body.async === true ? jobs.start('market-publish-batch', '스킬 일괄 공유', runBatch) : runBatch();
 });
 route('POST', '/api/market/publish', async ({ body }) => {
   const o = marketOffice(body.office), k = localSkill(o, body.skillId);
