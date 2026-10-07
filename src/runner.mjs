@@ -21,6 +21,25 @@ const stoppedFile = (id) => join(RUN_DIR, `${id}.stopped`);   // 사용자가 �
 const startedAt = new Map();
 const STARTING_GRACE_MS = 90 * 1000;
 const recentlyStarted = (id) => Date.now() - (startedAt.get(id) || 0) < STARTING_GRACE_MS;
+const seenAlive = new Set();   // 출근 뒤 pid 가 실제로 확인된 사무실: 그 뒤 꺼지면 '켜는 중' 표시를 바로 푼다
+
+// 방금 켠 직후라도 시작 스크립트(창)가 이미 닫혔거나 실패해 죽었다면 다시 출근시킬 수 있어야 한다.
+// 스크립트 파일 경로를 명령줄에 가진 powershell 이 아직 있는지 확인한다(확인이 안 되면 켜는 중으로 본다).
+let launcherImpl = async (o) => {
+  const f = o.launch && o.launch.start ? o.launch.start : scriptFile(o.id);
+  const r = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    `@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains(${psQuote(f)}) }).Count`], { timeout: 10000 });
+  if (r.code !== 0) return true;
+  const n = parseInt((r.stdout || '').trim(), 10);
+  return Number.isInteger(n) ? n > 0 : true;
+};
+async function stillStarting(o) {
+  if (!recentlyStarted(o.id)) return false;
+  if (o.kind === 'hermes') return true;
+  if (await launcherImpl(o)) return true;
+  startedAt.delete(o.id);
+  return false;
+}
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
@@ -86,7 +105,8 @@ async function hermesPid(o) {
 export function runtime(o, { legitPollers = 0 } = {}) {
   if (o.kind === 'hermes') return hermesRuntime(o);
   const pid = readPid(o.id);
-  if (pid && alive(pid)) return { running: true, pid, detail: '가동 중' };
+  if (pid && alive(pid)) { seenAlive.add(o.id); return { running: true, pid, detail: '가동 중' }; }
+  if (seenAlive.delete(o.id)) startedAt.delete(o.id);   // 켜졌다가 꺼졌다 = 더는 '켜는 중'이 아니다
   if (o.launch && legitPollers > 0) return { running: true, detail: '가동 중(기존 실행 방식)' };
   return { running: false, detail: '꺼짐' };
 }
@@ -121,15 +141,19 @@ export async function startOffice(id, ctx = {}) {
   need(!isReadonly(o), `"${o.name}"은(는) 읽기 전용이라 이 프로그램에서 켜거나 끄지 않습니다. 「사무실용」 모드로 바꾸면 켤 수 있어요.`, 403);
   if (o.kind === 'hermes') return startHermes(o, ctx);
   need(!runtime(o, ctx).running, '이미 근무 중입니다.', 409);
-  need(!recentlyStarted(id), '방금 출근시켰습니다. 창이 뜰 때까지 잠시 기다려 주세요.', 409);
+  need(!(await stillStarting(o)), '방금 출근시켰습니다. 창이 뜰 때까지 잠시 기다려 주세요.', 409);
   const bin = await checkReady(o);
   rmSync(restartFile(id), { force: true });
   rmSync(stoppedFile(id), { force: true });
   startedAt.set(id, Date.now());
+  seenAlive.delete(id);
   if (o.launch && o.launch.start) {
     // 예전 방식으로 만들어진 사무실은 그 사무실의 출근 스크립트를 그대로 쓴다.
-    // detached 금지: 콘솔 없이 뜬 Windows PowerShell 5.1 은 스크립트를 실행하지 않고 끝난다.
-    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', o.launch.start], { cwd: o.folder, stdio: 'ignore', windowsHide: true }).unref();
+    // 스크립트 안의 Claude 는 진짜 콘솔 창이 있어야 대화형으로 뜬다. 콘솔 없이(숨김·stdio ignore) 띄우면
+    // `--print` 모드로 해석돼 "Input must be provided…" 오류로 바로 끝나므로, 최소화된 창으로 띄운다.
+    const cmd = `Start-Process powershell.exe -WorkingDirectory ${psQuote(o.folder)} -WindowStyle Minimized -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${psQuote(o.launch.start)})`;
+    try { await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { timeout: 15000 }); }
+    catch (e) { startedAt.delete(id); throw e; }
     return { started: true, via: 'script' };
   }
   mkdirSync(RUN_DIR, { recursive: true });
@@ -144,6 +168,7 @@ export async function stopOffice(id) {
   const o = getOffice(id);
   need(!isReadonly(o), `"${o.name}"은(는) 읽기 전용이라 이 프로그램에서 켜거나 끄지 않습니다. 「사무실용」 모드로 바꾸면 끌 수 있어요.`, 403);
   startedAt.delete(id);
+  seenAlive.delete(id);
   if (o.kind === 'hermes') {
     const hp = await hermesPid(o);
     const done = hp ? (await run('taskkill.exe', ['/PID', String(hp), '/T', '/F'], { timeout: 15000 })).code === 0 : false;
@@ -169,6 +194,7 @@ export async function stopOffice(id) {
 // 폐쇄한 사무실이 남긴 실행 흔적(pid·시작 스크립트·재시작 요청·퇴근 표시)을 지운다. 같은 id 를 새 사무실이 쓰게 되어도 영향이 없도록.
 export function forgetRuntime(id) {
   startedAt.delete(id);
+  seenAlive.delete(id);
   for (const f of [pidFile(id), scriptFile(id), restartFile(id), stoppedFile(id)]) rmSync(f, { force: true });
 }
 
@@ -214,4 +240,4 @@ export async function watchdogTick({ autoRestart = true, legitPollers = 0 } = {}
   return acts;
 }
 
-export const _test = { launcherScript, isFile, hermesLaunch, setSpawn: (fn) => { spawnImpl = fn || spawn; }, setVerify: (fn) => { verifyImpl = fn; } };
+export const _test = { launcherScript, isFile, hermesLaunch, setSpawn: (fn) => { spawnImpl = fn || spawn; }, setVerify: (fn) => { verifyImpl = fn; }, setLauncherCheck: (fn) => { launcherImpl = fn; } };
