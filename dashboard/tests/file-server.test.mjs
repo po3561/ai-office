@@ -138,7 +138,7 @@ test('host streams a file through the relay protocol, records it, and reports dr
   await host.start({serverId:SERVER_ID,hostToken:'a'.repeat(64),shares:[{...scan.root,id:'docs'}]},s=>states.push(s));
   const ws=FakeSocket.last,id='44444444-4444-4444-8444-444444444444';
   ws.receive({type:'request',id,userId:USER.id,operation:'download',shareId:'docs',path:'큰파일.bin'});
-  await wait(1500);
+  for(let i=0;i<100&&!ws.sent.some(m=>m.type==='head');i++)await wait(100);   // 고정 대기는 부하가 큰 CI 에서 모자란다
   const head=ws.sent.find(m=>m.type==='head');assert.equal(head.length,data.length);
   for(let i=0;i<8&&!ws.sent.some(m=>m.type==='end');i++){ws.receive({type:'pull',id,count:4});await wait(150);}
   const got=Buffer.concat(ws.sent.filter(m=>m.type==='chunk').map(m=>Buffer.from(m.data,'base64')));
