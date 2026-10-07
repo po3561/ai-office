@@ -331,7 +331,7 @@ route('POST', '/api/market/publish-batch', async ({ body }) => {
 });
 route('POST', '/api/market/publish', async ({ body }) => {
   const o = marketOffice(body.office), k = localSkill(o, body.skillId);
-  const r = await market.publish({ skillDir: k.dir, id: k.id, version: body.version, notes: body.notes, honorifics: o.honorifics, confirmWarnings: body.confirmWarnings === true, confirmRisks: body.confirmRisks === true });
+  const r = await market.publish({ skillDir: k.dir, id: k.id, version: body.version, localHash: body.localHash, notes: body.notes, honorifics: o.honorifics, confirmWarnings: body.confirmWarnings === true, confirmRisks: body.confirmRisks === true });
   try { if (resolveRequest(o.folder, k.id, '게시')) logChange(o.folder, '마켓 요청', k.id, `봇의 게시 요청을 승인해 v${r.version} 게시`, ''); } catch { /* 요청 파일 정리가 실패해도 게시는 끝났다 */ }
   return r;
 });
@@ -376,7 +376,8 @@ export const tgApi = createTgApi();
 export const usage = createUsage({ home: DATA_HOME });
 route('GET', '/api/usage', async ({ url }) => usage.query(Object.fromEntries(url.searchParams)));
 route('PUT', '/api/usage/pricing', async ({ body }) => usage.setPricing(body));
-export const engines = createEngines({ ollama, secrets, components, usage, runImpl: run });
+export const engines = createEngines({ ollama, secrets, components, usage, runImpl: run,
+  onAccountingError: failure => console.warn(`[ai-office] 사용량 기록 실패 (${failure.sources.join(', ')}). 원장 저장 상태를 확인해 주세요.`) });
 export const bots = createBots({ secrets, tg: tgApi });
 export const runtimeBots = createRuntime({ bots, engines, tg: tgApi, log: (m) => console.log(m) });
 route('GET', '/api/bots', async () => ({ bots: await bots.listSummaries(), engineTypes: ENGINE_TYPES, agentPresets: AGENT_PRESETS, readiness: await connections.readiness() }));

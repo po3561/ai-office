@@ -100,6 +100,18 @@ t('publication refuses content changed while remote sync is running', async () =
   assert.equal((await market.list()).length, 0);
 });
 
+t('publication binds fresh inspection to the previously reviewed package hash', async () => {
+  const reviewedBare = join(root, 'reviewed-publish.git');
+  spawnSync('git', ['init', '--bare', '-q', reviewedBare]);
+  const client = pc('reviewed-publish', reviewedBare);
+  await client.market.connect({ repo: client.cfg.repo, alias: 'Reviewed' });
+  const dir = mkSkill(client.office.skillsDir, 'reviewed-content');
+  const reviewed = await client.market.inspect({ skillDir: dir, id: 'reviewed-content' });
+  writeFileSync(join(dir, 'SKILL.md'), SKILL('reviewed-content', '\nUnreviewed addition'));
+  await assert.rejects(client.market.publish({ skillDir: dir, id: 'reviewed-content', version: '1.0.0', localHash: reviewed.localHash }), /검사 후/);
+  assert.equal((await client.market.list()).length, 0);
+});
+
 test('검사: 토큰·개인 키·주민번호·카드는 차단, 전화·이메일·내 경로는 확인, 스크립트·지시 무시는 위험', () => {
   const f = (path, text) => ({ path, buf: Buffer.from(text) });
   const scan = (files, o) => scanFiles([f('SKILL.md', SKILL('x')), ...files], o);

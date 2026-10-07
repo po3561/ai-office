@@ -33,6 +33,23 @@ test('engine failure records unknown usage instead of inventing zero token count
   assert.equal(events[0].success, false);
   assert.equal(events[0].inputTokens, null);
 });
+test('paid provider answers survive ledger and observer failures while reporting accountingError', async () => {
+  const failures = [];
+  const engines = createEngines({ secrets: { get: async () => 'test-key' }, usage: { record: () => { throw new Error('disk full'); } }, onAccountingError: failure => failures.push(failure),
+    fetchImpl: async () => new Response(JSON.stringify({ model: 'actual', choices: [{ message: { content: 'Paid answer' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } })) });
+  const result = await engines.completeDetailed({ engine: { type: 'openai', model: 'm' }, messages: [{ role: 'user', content: 'Test' }], onUsage: () => { throw new Error('observer failed'); } });
+  assert.equal(result.text, 'Paid answer');
+  assert.equal(result.success, true);
+  assert.equal(result.inputTokens, 10);
+  assert.equal(result.accountingError, 'usage_record_failed');
+  assert.equal(failures.length, 1);
+  assert.deepEqual(failures[0].sources, ['ledger', 'observer']);
+  assert.equal(await engines.complete({ engine: { type: 'openai', model: 'm' }, messages: [{ role: 'user', content: 'Test' }] }), 'Paid answer');
+});
+test('ledger failure does not replace the original provider failure', async () => {
+  const engines = createEngines({ secrets: { get: async () => 'test-key' }, usage: { record: () => { throw new Error('disk full'); } }, fetchImpl: async () => { throw new Error('provider unavailable'); } });
+  await assert.rejects(engines.complete({ engine: { type: 'openai', model: 'm' }, messages: [{ role: 'user', content: 'Test' }] }), /provider unavailable/);
+});
 test('CLI JSON yields measured subscription usage and actual Claude model without storing prompts', async () => {
   const engines = createEngines({ components: { detect: async () => ({ installed: true, path: 'claude' }) }, runImpl: async (_path, args) => {
     assert.equal(args[args.indexOf('--output-format') + 1], 'json');

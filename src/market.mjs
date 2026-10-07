@@ -421,7 +421,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     };
   }
 
-  const publish = ({ skillDir, id, version, notes = '', honorifics = [], confirmWarnings = false, confirmRisks = false }) => locked(async () => {
+  const publish = ({ skillDir, id, version, localHash, notes = '', honorifics = [], confirmWarnings = false, confirmRisks = false }) => locked(async () => {
     const s = conf();
     need(s.enabled && s.repo, '스킬 마켓이 연결되어 있지 않습니다.', 409);
     need(isSemver(version), '버전은 1.0.0 처럼 숫자 세 개(점으로 구분)로 적어 주세요.');
@@ -429,6 +429,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
     need(!builtinIds().has(marketId), 'AI-Office 기본 스킬은 공유하지 않습니다.', 409);
     need(!readInstalledMarker(skillDir), '마켓에서 받은 스킬은 다시 게시할 수 없습니다.', 409);
     const info = await inspect({ skillDir, id: marketId, honorifics });
+    need(!localHash || info.localHash === localHash, '검사 후 스킬 내용이 변경되었습니다. 다시 검사해 주세요.', 409);
     need(!info.blockers.length, '공유할 수 없는 내용이 있어 게시하지 않았습니다.', 422, info);
     need(!info.warnings.length || confirmWarnings, '개인정보로 보이는 내용이 있습니다. 확인 후 다시 게시해 주세요.', 409, { ...info, needsConfirm: 'warnings' });
     need(!info.risks.length || confirmRisks, '설치하는 쪽에서 위험할 수 있는 내용(스크립트 등)이 있습니다. 확인 후 다시 게시해 주세요.', 409, { ...info, needsConfirm: 'risks' });
@@ -493,7 +494,7 @@ export function createMarket({ home, settings, log = () => {}, run = defaultRun,
         if (seen.has(key) || candidate.candidateStatus === 'same') { result.skipped.push({ office: item.office, skillId: item.skillId, reason: seen.has(key) ? 'duplicate' : 'same' }); continue; }
         need(['new', 'changed'].includes(candidate.candidateStatus), candidate.reason || '공유 후보가 아닌 스킬입니다.', 409);
         need(!item.localHash || item.localHash === candidate.localHash, '검사 후 스킬 내용이 변경되었습니다. 다시 검사해 주세요.', 409);
-        const published = await publish({ skillDir: skill.dir, id: skill.id, version: item.version || candidate.suggestedVersion, notes: item.notes,
+        const published = await publish({ skillDir: skill.dir, id: skill.id, version: item.version || candidate.suggestedVersion, localHash: item.localHash || candidate.localHash, notes: item.notes,
           honorifics: office.honorifics, confirmWarnings: item.confirmWarnings === true, confirmRisks: item.confirmRisks === true });
         seen.add(key); result.published.push({ office: item.office, skillId: item.skillId, ...published });
       } catch (e) {

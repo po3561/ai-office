@@ -33,7 +33,7 @@ export function flatten({ system, messages }) {
   return parts.join('\n\n');
 }
 
-export function createEngines({ ollama, secrets, components, usage, fetchImpl = fetch, runImpl, timeoutMs = 180000 }) {
+export function createEngines({ ollama, secrets, components, usage, onAccountingError = () => {}, fetchImpl = fetch, runImpl, timeoutMs = 180000 }) {
   const cmd = (path, args) => (/\.(cmd|bat)$/i.test(path)
     ? ['cmd.exe', ['/d', '/s', '/c', `""${path}" ${args.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(' ')}"`], { verbatim: true }]
     : [path, args, {}]);
@@ -136,18 +136,28 @@ export function createEngines({ ollama, secrets, components, usage, fetchImpl = 
     if (cwd) mkdirSync(cwd, { recursive: true });
     const base = { ...context, requestId: context.requestId || randomUUID(), provider: engine.type, model: engine.model || '', requestedModel: engine.model || '', modelSource: engine.model ? 'requested' : 'unknown',
       billing: ['openai', 'anthropic'].includes(engine.type) ? 'api' : engine.type === 'ollama' ? 'local' : 'subscription' };
-    let event;
+    const account = async event => {
+      const sources = [];
+      try { await usage?.record(event); } catch { sources.push('ledger'); }
+      try { await onUsage?.(event); } catch { sources.push('observer'); }
+      if (sources.length) {
+        try { await onAccountingError({ code: 'usage_record_failed', requestId: event.requestId, provider: event.provider, sources }); } catch { /* A diagnostic must not replace a paid response. */ }
+        return 'usage_record_failed';
+      }
+      return null;
+    };
+    let event, detail;
     try {
       const result = await impl[engine.type]({ model: engine.model || '', system, messages, cwd, access: ENGINE_TYPES[engine.type].tools ? access : 'chat' });
-      const detail = typeof result === 'string' ? { text: result } : result;
+      detail = typeof result === 'string' ? { text: result } : result;
       event = { ...base, model: detail.model || base.model, modelSource: detail.modelSource || (detail.model ? 'provider' : base.modelSource), providerRequestId: detail.providerRequestId || '', ...(detail.usage || normalizeUsage(engine.type)), success: Boolean(detail.text) };
       need(detail.text, '엔진이 빈 답을 돌려줬습니다.', 502);
-      usage?.record(event); onUsage?.(event);
-      return { text: detail.text, ...event };
     } catch (e) {
-      usage?.record(event || { ...base, ...normalizeUsage(engine.type), success: false });
+      await account(event || { ...base, ...normalizeUsage(engine.type), success: false });
       throw e;
     }
+    const accountingError = await account(event);
+    return { text: detail.text, ...event, accountingError };
   }
   const complete = async options => (await completeDetailed(options)).text;
   return { complete, completeDetailed };

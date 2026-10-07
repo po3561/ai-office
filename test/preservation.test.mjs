@@ -42,6 +42,15 @@ test('retirement survives damaged office.json whose previous document predates t
   T.addTeam(dir, { key: 'developer', name: 'New development', role: 'Build' });
   assert.equal(T.listTeams(dir).length, 1);
 });
+test('invalid retired entries make organization damaged and recover the previous valid document', () => {
+  const dir = fakeLegacyOffice(join(root, 'invalid-retired'));
+  T.saveOffice(dir, { name: 'Original', teams: T.listTeams(dir), retiredTeams: [] });
+  T.saveOffice(dir, T.loadOffice(dir));
+  writeFileSync(T.officeJsonPath(dir), JSON.stringify({ name: 'Broken', teams: [{ key: 'developer' }], retiredTeams: [null] }));
+  assert.equal(T.loadOffice(dir).recovery.status, 'previous-valid');
+  assert.equal(T.loadOffice(dir).name, 'Original');
+  assert.throws(() => T.saveOffice(dir, { teams: [{ key: 'developer' }], retiredTeams: [{ key: '../unsafe' }] }), /설정 형식/);
+});
 test('corrupt registry never silently becomes empty; previous valid registry keeps disconnected offices', () => {
   mkdirSync(P.DATA_HOME, { recursive: true });
   writeFileSync(P.FILES.offices, JSON.stringify({ offices: [{ id: 'offline', folder: join(root, 'missing'), name: 'External' }] }));

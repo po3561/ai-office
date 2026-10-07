@@ -64,15 +64,17 @@ export function loadOffice(folder) {
 }
 
 const retiredJsonPath = folder => join(folder, '.ai-office', 'retired-teams.json');
-const validRetired = o => Boolean(o && Array.isArray(o.retiredTeams) && o.retiredTeams.every(t => t && typeof t.key === 'string'));
+const validRetired = o => Boolean(o && Array.isArray(o.retiredTeams) && o.retiredTeams.every(t => t && typeof t.key === 'string' && /^[a-zA-Z0-9_-]+$/.test(t.key))
+  && new Set(o.retiredTeams.map(t => t.key)).size === o.retiredTeams.length);
 
 const validOffice = o => Boolean(o && Array.isArray(o.teams) && o.teams.every(t => t && typeof t.key === 'string' && /^[a-zA-Z0-9_-]+$/.test(t.key))
-  && new Set(o.teams.map(t => t.key)).size === o.teams.length && (!o.retiredTeams || Array.isArray(o.retiredTeams)));
+  && new Set(o.teams.map(t => t.key)).size === o.teams.length && (o.retiredTeams === undefined || validRetired(o)));
 
 export function saveOffice(folder, office) {
   const current = readDurableJson(officeJsonPath(folder), validOffice);
   need(current.status !== 'damaged' || office.teams?.length, '조직 설정이 손상되어 빈 조직으로 덮어쓰지 않습니다. 먼저 복구해 주세요.', 409);
   const { imported, recovery, ...rest } = office;
+  need(validOffice(rest), '저장할 설정 형식이 올바르지 않습니다.', 409);
   // Keep deletion decisions independent of an older organization recovery copy.
   writeDurableJson(retiredJsonPath(folder), { retiredTeams: rest.retiredTeams || [] }, validRetired);
   writeDurableJson(officeJsonPath(folder), { ...rest, updatedAt: nowIso() }, validOffice);
