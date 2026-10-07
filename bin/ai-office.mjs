@@ -17,6 +17,7 @@ const DASH_ENTRY = join(APP_HOME, 'dashboard', 'src', 'server.mjs');
 import { getConfig } from '../src/config.mjs';
 import { PRESETS } from '../src/presets.mjs';
 import { isWindows, run, HttpError, isDir } from '../src/util.mjs';
+import { pingEngine, isStale, stopEngine, diskVersion } from '../src/engine-guard.mjs';
 import { mkdirSync, openSync, existsSync } from 'node:fs';
 
 const [, , cmd, sub, ...rest] = process.argv;
@@ -33,16 +34,25 @@ function flags(args) {
 
 const fail = (msg, code = 1) => { console.error(`⚠️ ${msg}`); process.exit(code); };
 
-async function ping(port) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/api/ping`, { signal: AbortSignal.timeout(1500) });
-    const j = await r.json();
-    return j.app === 'ai-office' ? j : null;
-  } catch { return null; }
+const ping = (port) => pingEngine(port);
+
+// 이미 켜진 엔진이 옛 버전이면(업데이트 뒤 옛 프로세스가 남은 경우) 내리고 새 코드로 바꾼다.
+// 내릴 필요가 없거나 내렸으면 true, 내리지 못했으면 false.
+async function retireStaleEngine(port) {
+  const live = await ping(port);
+  if (!live || !isStale(live)) return true;
+  line(`켜져 있는 엔진이 옛 버전(${live.version || '알 수 없음'})이라 새 버전(${diskVersion()})으로 바꿉니다.`);
+  return stopEngine(port);
 }
 
 async function ensureServer(port) {
-  if (await ping(port)) return true;
+  const live = await ping(port);
+  if (live && !isStale(live)) return true;
+  if (live && !(await retireStaleEngine(port))) return true;   // 내리지 못하면 켜져 있는 엔진이라도 쓴다
+  return startEngineProcess(port);
+}
+
+async function startEngineProcess(port) {
   mkdirSync(LOG_DIR, { recursive: true });
   const out = openSync(join(LOG_DIR, 'server.log'), 'a');
   spawn(process.execPath, [CLI, 'serve', '--port', String(port)], { detached: true, stdio: ['ignore', out, out], windowsHide: true }).unref();
@@ -89,7 +99,11 @@ async function main() {
     case 'serve': {
       const f = flags([sub, ...rest].filter(Boolean));
       const port = Number(f.port) || cfg.port;
-      if (await ping(port)) { line(`이미 실행 중입니다: http://127.0.0.1:${port}`); return; }
+      const live = await ping(port);
+      if (live) {
+        if (!isStale(live)) { line(`이미 실행 중입니다: http://127.0.0.1:${port}`); return; }
+        if (!(await retireStaleEngine(port))) fail('옛 버전 엔진을 끄지 못했습니다. 작업 관리자에서 node.exe 를 끝낸 뒤 다시 실행해 주세요.');
+      }
       const { startServer } = await import('../src/server.mjs');
       try { await startServer({ port }); } catch (e) {
         if (e.code === 'EADDRINUSE') fail(`포트 ${port} 를 다른 프로그램이 쓰고 있습니다. 설정에서 포트를 바꿔 주세요.`);

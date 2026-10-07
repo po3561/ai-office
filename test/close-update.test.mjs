@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { sandbox } from './helpers.mjs';
@@ -73,6 +73,18 @@ test('업데이트: 새 파일로 바꾸고, 옛 파일은 지우고, 백업을 
   assert.equal(existsSync(join(app, 'src', 'gone.mjs')), false, '새 버전에 없는 파일은 지운다');
   assert.equal(JSON.parse(readFileSync(join(data, 'install.json'), 'utf8')).version, '0.4.0');
   assert.equal(readFileSync(join(r.backup, 'src', 'server.mjs'), 'utf8'), '// old', '이전 버전이 백업된다');
+  await new Promise((ok) => setTimeout(ok, 700));
+  assert.equal(tools.calls.restart, 1);
+});
+
+test('업데이트: install.json 이 없어도 표준 설치 위치면 적용하고, 적용하면 install.json 을 만든다', async () => {
+  const { data, app } = fakeInstall('0.3.0');
+  rmSync(join(data, 'install.json'));
+  const tools = fakeTools();
+  const up = U.createUpdater({ current: '0.3.0', appHome: app, dataHome: data, updateDir: join(data, 'update'), tools });
+  assert.equal((await up.check()).canApply, true);
+  await up.apply();
+  assert.equal(JSON.parse(readFileSync(join(data, 'install.json'), 'utf8')).version, '0.4.0');
   await new Promise((ok) => setTimeout(ok, 700));
   assert.equal(tools.calls.restart, 1);
 });

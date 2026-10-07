@@ -5,7 +5,9 @@
 import { join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, statSync, readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { APP_HOME, DATA_HOME, UPDATE_DIR } from './paths.mjs';
+import { getConfig } from './config.mjs';
 import { readJson, writeJson, copyTree, isFile, isDir, need, run, ps, psQuote, isWindows, nowIso, stamp, HttpError } from './util.mjs';
 
 export const REPO = 'po3561/ai-office';
@@ -64,6 +66,20 @@ function mirror(from, to) {
 
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
 
+// 이 엔진을 끝내고 새 코드로 다시 켠다. 도우미는 옛 엔진이 포트를 놓을 때까지 기다린 뒤 띄운다
+// (고정 대기만 하면 옛 엔진이 늦게 끝날 때 새 엔진이 "이미 실행 중"이라며 그냥 종료해, 옛 코드가 계속 남는다).
+let restarting = false;
+export function restartEngine(cli, port = 0) {
+  if (restarting) return;
+  restarting = true;
+  const script = `const net=require('node:net'),cp=require('node:child_process');const port=${Number(port) || 0};
+const free=()=>new Promise((ok)=>{if(!port)return ok(true);const s=net.connect(port,'127.0.0.1');s.once('connect',()=>{s.destroy();ok(false)});s.once('error',()=>ok(true));s.setTimeout(1000,()=>{s.destroy();ok(false)})});
+(async()=>{await new Promise((r)=>setTimeout(r,800));for(let i=0;i<50&&!(await free());i++)await new Promise((r)=>setTimeout(r,300));
+cp.spawn(process.execPath,[${JSON.stringify(cli)},'serve'${port ? ",'--port','" + Number(port) + "'" : ''}],{detached:true,stdio:'ignore',windowsHide:true}).unref();process.exit(0)})()`;
+  spawn(process.execPath, ['-e', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  setTimeout(() => process.exit(0), 600).unref?.();
+}
+
 // 기본 도구: 인터넷 조회·내려받기·압축 풀기·서버 다시 시작. 테스트에서는 바꿔 끼운다.
 const defaults = {
   async fetchJson(url) {
@@ -86,17 +102,14 @@ const defaults = {
     if (r.code !== 0) throw new Error(`압축을 풀지 못했습니다. ${String(r.stderr).trim().slice(0, 200)}`);
   },
   // 응답을 보낸 뒤 이 서버를 끝내고, 따로 띄운 도우미가 새 코드로 서버를 다시 시작한다.
-  async restart(cli) {
-    const { spawn } = await import('node:child_process');
-    const script = `setTimeout(()=>{require('node:child_process').spawn(process.execPath,[${JSON.stringify(cli)},'serve'],{detached:true,stdio:'ignore',windowsHide:true}).unref();process.exit(0)},2500)`;
-    spawn(process.execPath, ['-e', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    setTimeout(() => process.exit(0), 600).unref?.();
-  },
+  async restart(cli, port) { restartEngine(cli, port); },
 };
 
 export function createUpdater({ current, appHome = APP_HOME, dataHome = DATA_HOME, updateDir = UPDATE_DIR, repo = REPO, tools = {} } = {}) {
   const t = { ...defaults, ...tools };
-  const installed = resolve(appHome) === resolve(join(dataHome, 'app')) && isFile(join(dataHome, 'install.json'));
+  const restartPort = () => { try { return getConfig().port; } catch { return 0; } };
+  // 표준 설치 위치(<설치폴더>\app)면 적용할 수 있다. install.json 은 없어도 된다(적용하면 만든다). 이 파일이 없다는 이유로 영영 업데이트가 안 되던 문제를 막는다.
+  const installed = resolve(appHome) === resolve(join(dataHome, 'app'));
   let state = { checkedAt: '', latest: null, error: '', applying: false, lastApplied: null };
 
   const view = () => {
@@ -165,7 +178,7 @@ export function createUpdater({ current, appHome = APP_HOME, dataHome = DATA_HOM
       rmSync(work, { recursive: true, force: true });
       pruneBackups(updateDir);
       const result = { from: current, to: pkg.version, backup };
-      setTimeout(() => { t.restart(join(appHome, 'bin', 'ai-office.mjs')); }, 400).unref?.();   // 응답이 먼저 나가도록
+      setTimeout(() => { t.restart(join(appHome, 'bin', 'ai-office.mjs'), restartPort()); }, 400).unref?.();   // 응답이 먼저 나가도록
       return result;
     } catch (e) {
       if (swapped && isDir(backup)) {

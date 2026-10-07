@@ -4,7 +4,7 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { WEB, APP_HOME, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
+import { WEB, APP_HOME, CLI, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows, run } from './util.mjs';
 import { PRESETS } from './presets.mjs';
@@ -16,7 +16,7 @@ import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
 import { readStatus, summarize } from './status.mjs';
 import { runtime, startOffice, stopOffice, requestRestart, watchdogTick, forgetRuntime } from './runner.mjs';
-import { createUpdater } from './updater.mjs';
+import { createUpdater, restartEngine } from './updater.mjs';
 import * as tg from './telegram.mjs';
 import * as lr from './rooms-legacy.mjs';
 import * as RV from './roomsview.mjs';
@@ -31,6 +31,7 @@ import { createEngines, ENGINE_TYPES } from './engines.mjs';
 import { createBots, AGENT_PRESETS } from './bots.mjs';
 import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
 import { createPublisher } from './publish.mjs';
+import { createStaleWatcher } from './engine-guard.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -41,7 +42,11 @@ let diag = { at: 0, value: { supported: true, pollers: [] }, busy: null };
 async function diagnostics(force = false) {
   if (!force && Date.now() - diag.at < 12000) return diag.value;
   if (diag.busy) return diag.busy;
-  diag.busy = tg.listPollers().then((v) => { diag = { at: Date.now(), value: v, busy: null }; return v; }, () => { diag.busy = null; return diag.value; });
+  // 조회가 실패하면(느린 PC 의 시간 초과 등) 직전의 좋은 결과를 유지한다. 실패를 "수신 프로세스 0개"로 보면 근무 중인 사무실을 꺼진 것으로 착각해 감시가 창을 또 띄운다.
+  diag.busy = tg.listPollers().then((v) => {
+    const keep = v.error && diag.value && !diag.value.error ? { ...diag.value, stale: true } : v;
+    diag = { at: Date.now(), value: keep, busy: null }; return keep;
+  }, () => { diag.busy = null; return diag.value; });
   return diag.busy;
 }
 const legitCount = (d) => (d.pollers || []).filter((p) => p.legit).length;
@@ -465,8 +470,11 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
   relink();
   try { for (const o of listOffices()) if (o.kind === 'claude-office' && o.stateDir && lr.repairLegacy(o.stateDir)) console.log('[ai-office] 예전 방 설정(rooms.json)의 불필요한 항목을 정리했습니다.'); } catch (e) { console.error(e); }
   try { const fixed = repairOffices(); if (fixed.length) console.log(`[ai-office] 사무실 설정 경로를 다시 맞췄습니다: ${fixed.join(', ')}`); } catch (e) { console.error(e); }
+  // 업데이트 등으로 디스크의 프로그램이 이 엔진보다 새 버전이 되면(옛 코드가 계속 도는 것을 막기 위해) 스스로 새 코드로 다시 시작한다.
+  const staleCheck = createStaleWatcher({ loaded: pkg.version, restart: () => restartEngine(CLI, port), busy: () => updater.view().applying, log: (m) => console.log(m) });
   const timer = setInterval(async () => {
     try {
+      staleCheck();
       relink();
       const d = await diagnostics();
       const acts = await watchdogTick({ autoRestart: getConfig().autoRestart, legitPollers: legitCount(d) });

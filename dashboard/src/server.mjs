@@ -12,7 +12,11 @@ import {createCalendarStore,createGoogleCalendar} from './calendar.mjs';
 import {createExtraRoutes} from './extra-routes.mjs';
 import {createTaskStore} from './tasks.mjs';
 import {createAccounts} from './accounts.mjs';
-import {rentalUrl as configuredRentalUrl} from './config.mjs';
+import {rentalUrl as configuredRentalUrl,cloudBase} from './config.mjs';
+import {createFileServerManager} from './file-server/manager.mjs';
+import {createFileHost} from './file-server/host.mjs';
+import {createFileServerRoutes,startAutoResume} from './file-server/routes.mjs';
+import {pickFolderNative} from './file-server/pick-folder.mjs';
 
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const OFFICE_ROUTES=JSON.parse(readFileSync(join(ROOT,'src/office-routes.json'),'utf8')).map(r=>({
@@ -93,6 +97,12 @@ export function createDashboardServer(options={}){
     return (detail.drives||[]).map(g=>g.path);
   });
   const extra=createExtraRoutes({cloud,calendar:calendarStore,gcal,tasks:taskStore,getGrants,listLocal:options.listLocal,reveal:options.reveal});
+  // 파일 서버: 이 PC 의 고른 폴더를 라피스 계정·초대 코드로 읽기 전용 공유한다(클라우드 중계, 받는 포트 없음).
+  const fileData=join(dataDir,'file-server');
+  const fileHost=options.fileHost||createFileHost({baseUrl:options.cloudBase||cloudBase(),dataDir:join(fileData,'audit'),fetchImpl:options.cloudFetch});
+  const fileManager=options.fileManager||createFileServerManager({dataDir:fileData,vault:createVault(join(fileData,'host-vault.bin'),options.vaultCrypto||dpapi),
+    pickFolder:options.pickFolder||pickFolderNative,onStart:(config,changed)=>fileHost.start(config,changed),onStop:()=>fileHost.stop(),hostStats:()=>fileHost.stats?.()});
+  const fileRoutes=createFileServerRoutes({manager:fileManager,cloud,auditDir:join(fileData,'audit')});
   const sessions=new RentalSessions();
   const getTelegram=options.telegramSnapshot||(()=>import('./telegram.mjs').then(m=>m.telegramSnapshot()));
   let overviewCache=null,overviewPending=null;
@@ -115,6 +125,7 @@ export function createDashboardServer(options={}){
       // 회원제 게이트: 화면 파일을 뺀 모든 기능은 로그인한 뒤에만 쓸 수 있다.
       if(requireLogin&&needsLogin(req.method,url.pathname)&&!(await signedIn(cloud)))throw new RequestError(401,'로그인이 필요해요.');
       if(await extra(req,res,url,{json,readJson,readRaw:(request,limit)=>readLimited(request,limit),port}))return;
+      if(await fileRoutes(req,res,url,{json,readJson}))return;
       if(url.pathname==='/api/overview'&&req.method==='GET'){
         if(!overviewCache||Date.now()-overviewCache.at>5000){
           overviewPending??=Promise.all([safeJson(officeUrl+'/api/overview'),safeJson(rentalUrl+'/list/data')])
@@ -183,12 +194,17 @@ export function createDashboardServer(options={}){
       if(!res.headersSent)json(res,e instanceof RequestError?e.status:500,{error:e instanceof RequestError?e.message:'처리 중 오류가 발생했습니다.'});
       else res.end();
     }
-  });return server;
+  });
+  server.fileServer={manager:fileManager,cloud};
+  return server;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   const port=Number(process.env.LAPIS_DASHBOARD_PORT||4310);
   if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid dashboard port');
   const server=createDashboardServer({dataDir:process.env.LAPIS_DATA_DIR||undefined,officeUrl:process.env.LAPIS_OFFICE_URL||undefined});
-  server.listen(port,'127.0.0.1',()=>console.log('LAPIS Office: http://127.0.0.1:'+port));
+  server.listen(port,'127.0.0.1',()=>{
+    console.log('LAPIS Office: http://127.0.0.1:'+port);
+    startAutoResume({...server.fileServer,log:m=>console.log(m)});
+  });
   server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'지정한 포트가 이미 사용 중입니다.':'대시보드 시작 실패');process.exitCode=1;});
 }
