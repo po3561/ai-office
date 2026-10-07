@@ -49,17 +49,22 @@ function scanAgentTeams(folder) {
 
 export function loadOffice(folder) {
   const { value: saved, status } = readDurableJson(officeJsonPath(folder), validOffice);
+  const retiredDocument = readDurableJson(retiredJsonPath(folder), validRetired);
+  const retiredTeams = retiredDocument.value?.retiredTeams || saved?.retiredTeams || [];
+  const retired = new Set(retiredTeams.map(t => t.key));
   const scanned = scanAgentTeams(folder);
   if (saved) {
-    const retired = new Set((saved.retiredTeams || []).map(t => t.key));
     const teams = saved.teams.filter(t => !retired.has(t.key));
     const known = new Set(teams.map(t => t.key));
-    return { ...saved, teams: [...teams, ...scanned.filter(t => !known.has(t.key) && !retired.has(t.key))], imported: false,
+    return { ...saved, retiredTeams, teams: [...teams, ...scanned.filter(t => !known.has(t.key) && !retired.has(t.key))], imported: false,
       recovery: { status, recoveredKeys: scanned.filter(t => !known.has(t.key) && !retired.has(t.key)).map(t => t.key) } };
   }
-  return { version: 1, name: basename(folder), honorific: null, teams: scanned, retiredTeams: [], imported: true,
+  return { version: 1, name: basename(folder), honorific: null, teams: scanned.filter(t => !retired.has(t.key)), retiredTeams, imported: true,
     recovery: { status, recoveredKeys: scanned.map(t => t.key) } };
 }
+
+const retiredJsonPath = folder => join(folder, '.ai-office', 'retired-teams.json');
+const validRetired = o => Boolean(o && Array.isArray(o.retiredTeams) && o.retiredTeams.every(t => t && typeof t.key === 'string'));
 
 const validOffice = o => Boolean(o && Array.isArray(o.teams) && o.teams.every(t => t && typeof t.key === 'string' && /^[a-zA-Z0-9_-]+$/.test(t.key))
   && new Set(o.teams.map(t => t.key)).size === o.teams.length && (!o.retiredTeams || Array.isArray(o.retiredTeams)));
@@ -68,6 +73,8 @@ export function saveOffice(folder, office) {
   const current = readDurableJson(officeJsonPath(folder), validOffice);
   need(current.status !== 'damaged' || office.teams?.length, '조직 설정이 손상되어 빈 조직으로 덮어쓰지 않습니다. 먼저 복구해 주세요.', 409);
   const { imported, recovery, ...rest } = office;
+  // Keep deletion decisions independent of an older organization recovery copy.
+  writeDurableJson(retiredJsonPath(folder), { retiredTeams: rest.retiredTeams || [] }, validRetired);
   writeDurableJson(officeJsonPath(folder), { ...rest, updatedAt: nowIso() }, validOffice);
 }
 

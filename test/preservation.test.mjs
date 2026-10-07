@@ -33,6 +33,15 @@ test('retired department markers prevent a leftover agent from resurrecting it',
   assert.deepEqual(T.listTeams(dir), []);
   assert.ok(T.loadOffice(dir).retiredTeams.some(t => t.key === 'developer'));
 });
+test('retirement survives damaged office.json whose previous document predates the removal', () => {
+  const dir = fakeLegacyOffice(join(root, 'retired-recovery'));
+  T.removeTeam(dir, 'developer');
+  writeFileSync(T.officeJsonPath(dir), '{broken');
+  assert.equal(T.loadOffice(dir).recovery.status, 'previous-valid');
+  assert.deepEqual(T.listTeams(dir), []);
+  T.addTeam(dir, { key: 'developer', name: 'New development', role: 'Build' });
+  assert.equal(T.listTeams(dir).length, 1);
+});
 test('corrupt registry never silently becomes empty; previous valid registry keeps disconnected offices', () => {
   mkdirSync(P.DATA_HOME, { recursive: true });
   writeFileSync(P.FILES.offices, JSON.stringify({ offices: [{ id: 'offline', folder: join(root, 'missing'), name: 'External' }] }));
