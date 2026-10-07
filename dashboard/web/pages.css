@@ -79,7 +79,7 @@ button.file-name:hover{color:var(--accent-ink)}
 /* 파일 서버 */
 .fs-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .fs-sub{margin-top:4px}
-.fs-check{gap:8px;align-items:flex-start;line-height:1.55}
+.fs-check{gap:8px;align-items:flex-start;line-height:1.55;flex-wrap:nowrap!important}
 .fs-check input{margin-top:3px;flex:none}
 .fs-share,.fs-member,.fs-audit-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 2px;border-top:1px solid var(--line)}
 .fs-share{justify-content:flex-start}

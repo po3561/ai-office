@@ -226,3 +226,12 @@ test('cloud client allows only file-server paths and retries a stream once after
   assert.equal(seen.at(-1)[2],'bytes=1-');
   assert.deepEqual(await cloud.fileServers('GET','/file-servers'),{servers:[]});
 });
+test('every dashboard screen script parses as an ES module',async()=>{
+  const {readdir,copyFile}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');
+  const dir=new URL('../web/',import.meta.url),tmp=await mkdtemp(join(BASE,'parse-'));
+  for(const name of (await readdir(dir)).filter(n=>n.endsWith('.js'))){
+    // .js 를 .mjs 로 복사해 모듈 문법으로만 확인한다(실행하지 않는다).
+    const copy=join(tmp,name.replace(/\.js$/,'.mjs'));await copyFile(new URL(name,dir),copy);
+    assert.doesNotThrow(()=>execFileSync(process.execPath,['--check',copy],{stdio:'pipe'}),name);
+  }
+});

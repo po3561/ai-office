@@ -180,7 +180,7 @@ function configureCard(state,existing){
     toast(existing?'공유 설정을 바꿨어요. 서버를 다시 시작해 주세요.':'서버를 만들었어요. 「서버 시작」을 누르면 공유가 열려요.');render();
   }));
   put(card,
-    put(node('div','card-head'),put(node('div'),node('h2','',existing?'공유 폴더 변경':'내 서버 만들기'),node('p','sub','드라이브 전체는 공유할 수 없고, 하위 폴더만 최대 10개까지 고를 수 있어요.')))),
+    put(node('div','card-head'),put(node('div'),node('h2','',existing?'공유 폴더 변경':'내 서버 만들기'),node('p','sub','드라이브 전체는 공유할 수 없고, 하위 폴더만 최대 10개까지 고를 수 있어요.'))),
     existing?node('p','banner warn','공유할 폴더를 모두 다시 골라 검사해야 해요. 예전과 같은 폴더를 고르면 이미 초대한 멤버의 권한이 그대로 이어져요.'):null,
     put(node('div','field'),node('label','','서버 이름'),name,node('span','hint','초대받은 사람에게 보이는 이름이에요.')),
     put(node('div','row between'),node('b','','공유할 폴더'),pick),list,
@@ -210,7 +210,7 @@ async function renderMembers(box,state){
     const left=node('span','small muted');const tick=()=>{const s=Math.max(0,Math.round((Date.parse(r.expiresAt)-Date.now())/1000));left.textContent=s?Math.floor(s/60)+'분 '+String(s%60).padStart(2,'0')+'초 뒤 만료 · 한 번만 쓸 수 있어요':'만료됐어요. 새 코드를 발급해 주세요.';if(s&&code.isConnected)setTimeout(tick,1000);};
     result.replaceChildren(put(node('div','fs-invite'),code,button('복사',async()=>{try{await navigator.clipboard.writeText(r.code);toast('초대 코드를 복사했어요.');}catch{code.select();toast('코드를 선택했어요. Ctrl+C로 복사해 주세요.');}},'btn sm'),left));tick();
   });},'btn primary');
-  put(invite,put(node('div','card-head'),put(node('div'),node('h2','','초대 코드 발급'),node('p','sub','받는 사람은 자기 라피스 계정으로 로그인한 뒤 「참여 서버」에 코드를 넣어요. 새 코드를 발급하면 이전 코드는 무효가 돼요.')))),
+  put(invite,put(node('div','card-head'),put(node('div'),node('h2','','초대 코드 발급'),node('p','sub','받는 사람은 자기 라피스 계정으로 로그인한 뒤 「참여 서버」에 코드를 넣어요. 새 코드를 발급하면 이전 코드는 무효가 돼요.'))),
     node('p','small muted','이 코드로 볼 수 있는 폴더'),checks,put(node('div','row'),issue),result,
     server.status!=='active'?node('p','banner warn','서버가 중지 상태라 코드를 써도 참여할 수 없어요. 서버를 시작한 뒤 발급해 주세요.'):null);
   const list=node('section','card');
@@ -282,10 +282,10 @@ function fileBrowser(server,note){
           e.folder?node('span'):button('⬇ 받기',()=>download(server.id,browse.shareId,e),'btn sm'));
         table.append(row);
       }
-      listBox.replaceChildren(crumbs,listing.entries.length?table:emptyLine('빈 폴더예요.'),listing.truncated?node('p','small muted','항목이 많아 앞의 500개만 보여 줘요.'):null);
+      listBox.replaceChildren();put(listBox,crumbs,listing.entries.length?table:emptyLine('빈 폴더예요.'),listing.truncated?node('p','small muted','항목이 많아 앞의 500개만 보여 줘요.'):null);
     }catch(error){listBox.replaceChildren(node('p','banner warn',errorText(error)));}
   }
-  put(card,put(node('div','card-head'),put(node('div'),node('h2','','공유 파일'),node('p','sub',note))),button('↻',()=>paint(),'btn sm')),
+  put(card,put(node('div','card-head'),put(node('div'),node('h2','','공유 파일'),node('p','sub',note)),button('↻',()=>paint(),'btn sm')),
     server.host?.online?null:node('p','banner warn','서버 PC가 오프라인이에요. 주인이 PC와 서버를 켜면 다시 볼 수 있어요.'),tabs,listBox);
   paint();return card;
 }
