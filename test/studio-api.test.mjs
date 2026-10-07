@@ -1,15 +1,64 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { sandbox } from './helpers.mjs';
 
 sandbox();
-const { startServer } = await import('../src/server.mjs');
+const { startServer, jobs } = await import('../src/server.mjs');
 const { server, port } = await startServer({ port: 39000 + Math.floor(Math.random() * 900), updateCheck: false });
 after(() => server.close());
 const base = `http://127.0.0.1:${port}`;
 const h = { 'content-type': 'application/json', 'x-ai-office': '1' };
 const call = (p, b, method = 'POST') => fetch(`${base}${p}`, { method, headers: h, body: method === 'GET' ? undefined : JSON.stringify(b ?? {}) }).then(async (r) => ({ status: r.status, json: await r.json() }));
 const get = (p) => fetch(`${base}${p}`).then(async (r) => ({ status: r.status, json: await r.json() }));
+
+test('asynchronous batch validates selection, prevents duplicate jobs and exposes completed per-item results', async () => {
+  assert.equal((await call('/api/market/publish-batch', { async: true, items: [] })).status, 400);
+  assert.equal((await call('/api/market/publish-batch', { async: true, items: Array.from({ length: 201 }, () => ({ office: 'missing', skillId: 'missing' })) })).status, 400);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  jobs.start('market-publish-batch', 'Existing batch', async () => { await gate; return {}; });
+  try { assert.equal((await call('/api/market/publish-batch', { async: true, items: [{ office: 'missing', skillId: 'missing' }] })).status, 409); }
+  finally { release(); }
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const started = await call('/api/market/publish-batch', { async: true, items: [{ office: 'missing', skillId: 'missing' }] });
+  assert.equal(started.status, 200);
+  assert.equal(started.json.kind, 'market-publish-batch');
+  let job = started.json;
+  for (let attempt = 0; attempt < 40 && job.state === 'running'; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    job = (await get(`/api/jobs/${started.json.id}`)).json;
+  }
+  assert.equal(job.state, 'done');
+  assert.deepEqual(job.progress, { done: 1, total: 1 });
+  assert.equal(job.result.failed.length, 1);
+  assert.equal(job.result.published.length, 0);
+  const sync = await call('/api/market/publish-batch', { items: [{ office: 'missing', skillId: 'missing' }] });
+  assert.equal(sync.json.failed.length, 1);
+  assert.equal(sync.json.id, undefined);
+});
+
+test('office API exposes damaged organization recovery status while retaining recovered departments', async () => {
+  const created = await call('/api/offices', { name: 'Recovery', presets: ['planner'] });
+  const O = await import('../src/offices.mjs');
+  const T = await import('../src/teams.mjs');
+  const folder = O.getOffice(created.json.id).folder;
+  T.saveOffice(folder, T.loadOffice(folder));
+  writeFileSync(T.officeJsonPath(folder), '{broken');
+  const detail = await get(`/api/offices/${created.json.id}`);
+  assert.equal(detail.json.recovery.status, 'previous-valid');
+  assert.equal(detail.json.teams.length, 1);
+});
+
+test('usage API returns five-part contract and accepts explicit nullable pricing', async () => {
+  const result = await get('/api/usage');
+  assert.equal(result.status, 200);
+  assert.deepEqual(Object.keys(result.json).sort(), ['bots', 'events', 'models', 'pricing', 'totals']);
+  const price = await call('/api/usage/pricing', { currency: 'USD', asOf: '2026-10-07', models: [{ provider: 'openai', model: 'test', inputPerMillion: 2, outputPerMillion: 8 }] }, 'PUT');
+  assert.equal(price.status, 200);
+  assert.equal(price.json.models[0].cacheReadPerMillion, null);
+  assert.equal((await get('/api/usage?from=invalid')).status, 400);
+});
 
 test('컴포넌트 목록: 다섯 가지 도구의 설치 여부와 설명을 돌려준다', async () => {
   const r = await get('/api/components');

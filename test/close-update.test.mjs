@@ -60,6 +60,26 @@ const fakeTools = ({ digest, version = '0.4.0', files, name = 'ai-office' } = {}
   };
 };
 
+test('update snapshots external departments, registry, bot settings and verifies integrity before success', async () => {
+  const { data, app } = fakeInstall('0.3.0');
+  const office = join(root, 'external-update-office');
+  mkdirSync(join(office, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(office, '.claude', 'agents', 'custom.md'), '---\nname: custom\n---\nPersonal department');
+  writeFileSync(join(data, 'offices.json'), JSON.stringify({ offices: [{ id: 'stable-id', folder: office }, { id: 'offline', folder: join(root, 'unplugged') }] }));
+  writeFileSync(join(data, 'config.json'), '{"honorific":"Owner"}');
+  const tools = fakeTools();
+  const up = U.createUpdater({ current: '0.3.0', appHome: app, dataHome: data, updateDir: join(data, 'update'), tools });
+  await up.check();
+  const r = await up.apply();
+  assert.equal(r.integrity.verified, true);
+  const manifest = JSON.parse(readFileSync(join(r.dataSnapshot, 'manifest.json'), 'utf8'));
+  assert.deepEqual(manifest.offices.map(o => o.id), ['stable-id', 'offline']);
+  assert.deepEqual(manifest.offices[0].teamKeys, ['custom']);
+  assert.equal(manifest.offices[1].available, false);
+  assert.ok(manifest.files.some(f => f.source === join(office, '.claude', 'agents', 'custom.md')));
+  assert.ok(manifest.files.every(f => /^[a-f0-9]{64}$/.test(f.sha256)));
+});
+
 test('업데이트: 새 파일로 바꾸고, 옛 파일은 지우고, 백업을 남기고, 서버를 다시 시작한다', async () => {
   const { data, app } = fakeInstall('0.3.0');
   const tools = fakeTools();

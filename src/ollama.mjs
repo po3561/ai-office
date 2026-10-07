@@ -2,6 +2,7 @@
 // 서버는 항상 이 PC(127.0.0.1:11434) 것만 쓴다.
 import { spawn } from 'node:child_process';
 import { HttpError, need } from './util.mjs';
+import { normalizeUsage } from './usage.mjs';
 
 export const OLLAMA_URL = process.env.OLLAMA_HOST && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(process.env.OLLAMA_HOST) ? process.env.OLLAMA_HOST : 'http://127.0.0.1:11434';
 
@@ -59,14 +60,15 @@ export function createOllama({ fetchImpl = fetch, baseUrl = OLLAMA_URL, bin = ()
     return { name };
   }
   // 한 번 묻고 답 받기(스트리밍 없음). messages: [{role, content}]
-  async function chat({ model, messages, system, timeout = 180000 }) {
+  async function chatDetailed({ model, messages, system, timeout = 180000 }) {
     need(validModel(model), '모델 이름이 올바르지 않습니다.', 400);
     await ensureServer();
     const body = { model, stream: false, messages: system ? [{ role: 'system', content: system }, ...messages] : messages };
     const res = await fetchImpl(baseUrl + '/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new HttpError(502, j.error || `Ollama 응답 오류(${res.status})`);
-    return String(j.message?.content || '').trim();
+    return { text: String(j.message?.content || '').trim(), model: j.model || model, usage: normalizeUsage('ollama', j) };
   }
-  return { running, ensureServer, models, pull, chat, baseUrl };
+  const chat = async options => (await chatDetailed(options)).text;
+  return { running, ensureServer, models, pull, chat, chatDetailed, baseUrl };
 }

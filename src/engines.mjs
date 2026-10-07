@@ -10,6 +10,8 @@ import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HttpError, need } from './util.mjs';
+import { randomUUID } from 'node:crypto';
+import { normalizeUsage } from './usage.mjs';
 
 export const ENGINE_TYPES = {
   ollama: { label: '로컬 AI (Ollama)', needs: 'ollama', remote: false, tools: false },
@@ -31,7 +33,7 @@ export function flatten({ system, messages }) {
   return parts.join('\n\n');
 }
 
-export function createEngines({ ollama, secrets, components, fetchImpl = fetch, runImpl, timeoutMs = 180000 }) {
+export function createEngines({ ollama, secrets, components, usage, onAccountingError = () => {}, fetchImpl = fetch, runImpl, timeoutMs = 180000 }) {
   const cmd = (path, args) => (/\.(cmd|bat)$/i.test(path)
     ? ['cmd.exe', ['/d', '/s', '/c', `""${path}" ${args.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(' ')}"`], { verbatim: true }]
     : [path, args, {}]);
@@ -44,7 +46,7 @@ export function createEngines({ ollama, secrets, components, fetchImpl = fetch, 
   const impl = {
     async ollama({ model, system, messages }) {
       need(model, 'Ollama 모델을 골라 주세요.');
-      return ollama.chat({ model, system, messages });
+      return ollama.chatDetailed ? ollama.chatDetailed({ model, system, messages }) : ollama.chat({ model, system, messages });
     },
     async openai({ model, system, messages }) {
       const key = await secrets.get('openai');
@@ -57,7 +59,7 @@ export function createEngines({ ollama, secrets, components, fetchImpl = fetch, 
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new HttpError(502, `GPT 오류: ${j.error?.message || res.status}`);
-      return String(j.choices?.[0]?.message?.content || '').trim();
+      return { text: String(j.choices?.[0]?.message?.content || '').trim(), model: j.model, providerRequestId: j.id, usage: normalizeUsage('openai', j.usage) };
     },
     async anthropic({ model, system, messages }) {
       const key = await secrets.get('anthropic');
@@ -70,13 +72,13 @@ export function createEngines({ ollama, secrets, components, fetchImpl = fetch, 
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new HttpError(502, `Claude 오류: ${j.error?.message || res.status}`);
-      return (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+      return { text: (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim(), model: j.model, providerRequestId: j.id, usage: normalizeUsage('anthropic', j.usage) };
     },
     async claude({ model, system, messages, cwd, access }) {
       const d = await need2('claude', 'Claude Code 가 설치되어 있지 않습니다.');
       const tmp = mkdtempSync(join(tmpdir(), 'lapis-claude-'));
       try {
-        const args = ['-p', '--output-format', 'text', '--no-session-persistence'];
+        const args = ['-p', '--output-format', 'json', '--no-session-persistence'];
         if (model) args.push('--model', model);
         if (system) {   // 길이 제한이 있는 명령줄 대신 파일로 넘긴다
           const f = join(tmp, 'system.md');
@@ -88,7 +90,11 @@ export function createEngines({ ollama, secrets, components, fetchImpl = fetch, 
         else args.push('--tools', '');
         const r = await exec(d.path, args, { input: flatten({ messages }), cwd });
         if (r.code !== 0) throw new HttpError(502, `Claude Code 오류: ${(r.stderr || r.stdout).trim().split(/\r?\n/)[0] || r.code}`);
-        return r.stdout.trim();
+        let j; try { j = JSON.parse(r.stdout); } catch { /* Older CLIs may only return text. */ }
+        if (j?.is_error) throw new HttpError(502, 'Claude Code가 요청을 완료하지 못했습니다.');
+        const models = Object.keys(j?.modelUsage || {});
+        return j ? { text: String(j.result || '').trim(), model: models.length === 1 ? models[0] : model, modelSource: models.length === 1 ? 'provider' : model ? 'requested' : 'unknown', providerRequestId: j.uuid || j.session_id,
+          usage: normalizeUsage('claude', j.usage) } : r.stdout.trim();
       } finally { rmSync(tmp, { recursive: true, force: true }); }
     },
     async codex({ model, system, messages, cwd, access }) {
@@ -97,14 +103,20 @@ export function createEngines({ ollama, secrets, components, fetchImpl = fetch, 
       try {
         const out = join(tmp, 'last.txt');
         const sandbox = access === 'write' ? 'workspace-write' : 'read-only';
-        const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', sandbox, '--color', 'never', '-o', out];
+        const args = ['exec', '--json', '--skip-git-repo-check', '--ephemeral', '--sandbox', sandbox, '--color', 'never', '-o', out];
         if (model) args.push('-m', model);
         args.push('-');
         const r = await exec(d.path, args, { input: flatten({ system, messages }), cwd });
         let text = '';
         try { text = readFileSync(out, 'utf8').trim(); } catch { /* 아래에서 오류로 처리 */ }
         if (r.code !== 0 && !text) throw new HttpError(502, `Codex 오류: ${(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || r.code}`);
-        return text;
+        const events = r.stdout.split(/\r?\n/).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+        const turns = events.filter(e => e.type === 'turn.completed' && e.usage);
+        const metrics = turns.length ? turns.reduce((sum, e) => ({ input_tokens: sum.input_tokens + (e.usage.input_tokens || 0),
+          output_tokens: sum.output_tokens + (e.usage.output_tokens || 0), cached_input_tokens: sum.cached_input_tokens + (e.usage.cached_input_tokens || 0),
+          cache_write_tokens: sum.cache_write_tokens + (e.usage.cache_write_tokens || 0) }), { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0 }) : {};
+        const actualModel = events.find(e => e.model)?.model;
+        return { text, model: actualModel || model, modelSource: actualModel ? 'provider' : model ? 'requested' : 'unknown', providerRequestId: events.find(e => e.thread_id)?.thread_id, usage: normalizeUsage('codex', metrics) };
       } finally { rmSync(tmp, { recursive: true, force: true }); }
     },
     async hermes({ model, system, messages, cwd }) {
@@ -118,13 +130,35 @@ export function createEngines({ ollama, secrets, components, fetchImpl = fetch, 
   };
 
   // engine: {type, model}, access: chat|read|write, cwd: 도구를 쓸 때의 작업 폴더(봇 폴더)
-  async function complete({ engine, system, messages, cwd, access = 'chat' }) {
+  async function completeDetailed({ engine, system, messages, cwd, access = 'chat', context = {}, onUsage }) {
     need(engine && impl[engine.type], '엔진 종류를 알 수 없습니다.', 400);
     need(Array.isArray(messages) && messages.length, '보낼 메시지가 없습니다.');
     if (cwd) mkdirSync(cwd, { recursive: true });
-    const text = await impl[engine.type]({ model: engine.model || '', system, messages, cwd, access: ENGINE_TYPES[engine.type].tools ? access : 'chat' });
-    need(text, '엔진이 빈 답을 돌려줬습니다.', 502);
-    return text;
+    const base = { ...context, requestId: context.requestId || randomUUID(), provider: engine.type, model: engine.model || '', requestedModel: engine.model || '', modelSource: engine.model ? 'requested' : 'unknown',
+      billing: ['openai', 'anthropic'].includes(engine.type) ? 'api' : engine.type === 'ollama' ? 'local' : 'subscription' };
+    const account = async event => {
+      const sources = [];
+      try { await usage?.record(event); } catch { sources.push('ledger'); }
+      try { await onUsage?.(event); } catch { sources.push('observer'); }
+      if (sources.length) {
+        try { await onAccountingError({ code: 'usage_record_failed', requestId: event.requestId, provider: event.provider, sources }); } catch { /* A diagnostic must not replace a paid response. */ }
+        return 'usage_record_failed';
+      }
+      return null;
+    };
+    let event, detail;
+    try {
+      const result = await impl[engine.type]({ model: engine.model || '', system, messages, cwd, access: ENGINE_TYPES[engine.type].tools ? access : 'chat' });
+      detail = typeof result === 'string' ? { text: result } : result;
+      event = { ...base, model: detail.model || base.model, modelSource: detail.modelSource || (detail.model ? 'provider' : base.modelSource), providerRequestId: detail.providerRequestId || '', ...(detail.usage || normalizeUsage(engine.type)), success: Boolean(detail.text) };
+      need(detail.text, '엔진이 빈 답을 돌려줬습니다.', 502);
+    } catch (e) {
+      await account(event || { ...base, ...normalizeUsage(engine.type), success: false });
+      throw e;
+    }
+    const accountingError = await account(event);
+    return { text: detail.text, ...event, accountingError };
   }
-  return { complete };
+  const complete = async options => (await completeDetailed(options)).text;
+  return { complete, completeDetailed };
 }

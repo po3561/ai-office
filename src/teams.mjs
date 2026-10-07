@@ -6,6 +6,7 @@ import { readdirSync, mkdirSync, renameSync, copyFileSync, appendFileSync, write
 import { readText, readJson, writeJson, writeAtomic, isDir, isFile, nowIso, stamp, localDate, need, slug } from './util.mjs';
 import { parseFrontmatter } from './skills.mjs';
 import { presetByKey } from './presets.mjs';
+import { readDurableJson, writeDurableJson } from './durable-json.mjs';
 
 export const officeJsonPath = (folder) => join(folder, '.ai-office', 'office.json');
 export const agentsDir = (folder) => join(folder, '.claude', 'agents');
@@ -47,14 +48,36 @@ function scanAgentTeams(folder) {
 }
 
 export function loadOffice(folder) {
-  const saved = readJson(officeJsonPath(folder), null);
-  if (saved && Array.isArray(saved.teams)) return { ...saved, imported: false };
-  return { version: 1, name: basename(folder), honorific: null, teams: scanAgentTeams(folder), imported: true };
+  const { value: saved, status } = readDurableJson(officeJsonPath(folder), validOffice);
+  const retiredDocument = readDurableJson(retiredJsonPath(folder), validRetired);
+  const retiredTeams = retiredDocument.value?.retiredTeams || saved?.retiredTeams || [];
+  const retired = new Set(retiredTeams.map(t => t.key));
+  const scanned = scanAgentTeams(folder);
+  if (saved) {
+    const teams = saved.teams.filter(t => !retired.has(t.key));
+    const known = new Set(teams.map(t => t.key));
+    return { ...saved, retiredTeams, teams: [...teams, ...scanned.filter(t => !known.has(t.key) && !retired.has(t.key))], imported: false,
+      recovery: { status, recoveredKeys: scanned.filter(t => !known.has(t.key) && !retired.has(t.key)).map(t => t.key) } };
+  }
+  return { version: 1, name: basename(folder), honorific: null, teams: scanned.filter(t => !retired.has(t.key)), retiredTeams, imported: true,
+    recovery: { status, recoveredKeys: scanned.map(t => t.key) } };
 }
 
+const retiredJsonPath = folder => join(folder, '.ai-office', 'retired-teams.json');
+const validRetired = o => Boolean(o && Array.isArray(o.retiredTeams) && o.retiredTeams.every(t => t && typeof t.key === 'string' && /^[a-zA-Z0-9_-]+$/.test(t.key))
+  && new Set(o.retiredTeams.map(t => t.key)).size === o.retiredTeams.length);
+
+const validOffice = o => Boolean(o && Array.isArray(o.teams) && o.teams.every(t => t && typeof t.key === 'string' && /^[a-zA-Z0-9_-]+$/.test(t.key))
+  && new Set(o.teams.map(t => t.key)).size === o.teams.length && (o.retiredTeams === undefined || validRetired(o)));
+
 export function saveOffice(folder, office) {
-  const { imported, ...rest } = office;
-  writeJson(officeJsonPath(folder), { ...rest, updatedAt: nowIso() });
+  const current = readDurableJson(officeJsonPath(folder), validOffice);
+  need(current.status !== 'damaged' || office.teams?.length, '조직 설정이 손상되어 빈 조직으로 덮어쓰지 않습니다. 먼저 복구해 주세요.', 409);
+  const { imported, recovery, ...rest } = office;
+  need(validOffice(rest), '저장할 설정 형식이 올바르지 않습니다.', 409);
+  // Keep deletion decisions independent of an older organization recovery copy.
+  writeDurableJson(retiredJsonPath(folder), { retiredTeams: rest.retiredTeams || [] }, validRetired);
+  writeDurableJson(officeJsonPath(folder), { ...rest, updatedAt: nowIso() }, validOffice);
 }
 
 function ensureSaved(folder) {
@@ -191,6 +214,7 @@ export function addTeam(folder, input = {}) {
   mkdirSync(agentsDir(folder), { recursive: true });
   writeAtomic(agentFile(folder, key), renderAgent(office, team));
   office.teams.push(team);
+  office.retiredTeams = (office.retiredTeams || []).filter(t => t.key !== key);
   saveOffice(folder, office);
   syncClaudeMd(folder);
   logChange(folder, '부서 추가', team.name, team.role, input.request || '');
@@ -229,6 +253,7 @@ export function removeTeam(folder, key, request = '') {
   const i = office.teams.findIndex((x) => x.key === key);
   need(i >= 0, `없는 부서입니다: ${key}`, 404);
   const [t] = office.teams.splice(i, 1);
+  office.retiredTeams = [...(office.retiredTeams || []).filter(x => x.key !== key), { key, retiredAt: nowIso() }];
   const file = agentFile(folder, key);
   if (isFile(file)) {
     const dir = join(folder, '보관함', '부서보관');

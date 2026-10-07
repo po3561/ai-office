@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createMarket, normalizeRepo, safeParts, semverCmp, nextPatch, collectPackage, packageHash, INSTALLED_FILE, REQUEST_DIR, readRequests, resolveRequest } from '../src/market.mjs';
 import { scanFiles } from '../src/market-scan.mjs';
 import { scanSkills } from '../src/skills.mjs';
+import { run } from '../src/util.mjs';
 
 const hasGit = spawnSync('git', ['--version']).status === 0;
 const root = mkdtempSync(join(tmpdir(), 'ai-office-market-'));
@@ -59,6 +60,58 @@ test('버전·경로 도구', () => {
   assert.equal(nextPatch('1.0.9'), '1.0.10');
   for (const bad of ['../x', 'a/../b', '/abs', 'C:/x', 'a\\b', 'CON', 'nul.txt', 'x.', 'a/ b ', '']) assert.throws(() => safeParts(bad), (e) => e.status === 400, bad);
   assert.deepEqual(safeParts('a/b/c.md'), ['a', 'b', 'c.md']);
+});
+
+t('bulk sharing rescans all offices, reports failures and skips duplicate/already-published content on retry', async () => {
+  const bulkBare = join(root, 'bulk.git');
+  spawnSync('git', ['init', '--bare', '-q', bulkBare]);
+  const bulk = pc('bulk', bulkBare);
+  await bulk.market.connect({ repo: bulk.cfg.repo, alias: 'bulk' });
+  const dir = mkSkill(bulk.office.skillsDir, 'bulk-new');
+  const candidates = await bulk.market.shareable({ offices: bulk.offices });
+  const candidate = candidates[0].skills.find(s => s.id === 'bulk-new');
+  assert.equal(candidate.candidateStatus, 'new');
+  assert.match(candidate.localHash, /^[a-f0-9]{64}$/);
+  const items = [{ office: 'office', skillId: 'bulk-new', version: '1.0.0' }, { office: 'office', skillId: 'bulk-new', version: '1.0.0' }, { office: 'missing', skillId: 'bad', version: '1.0.0' }];
+  const progress = [];
+  const result = await bulk.market.publishBatch({ items, offices: bulk.offices, onProgress: (done, total) => progress.push([done, total]) });
+  assert.equal(result.published.length, 1);
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.failed.length, 1);
+  assert.deepEqual(progress, [[0, 3], [1, 3], [2, 3], [3, 3]]);
+  const retry = await bulk.market.publishBatch({ items: items.slice(0, 1), offices: bulk.offices });
+  assert.equal(retry.published.length, 0);
+  assert.equal(retry.skipped[0].reason, 'same');
+  writeFileSync(join(dir, 'SKILL.md'), SKILL('bulk-new', '\nChanged'));
+  const changed = (await bulk.market.shareable({ offices: bulk.offices }))[0].skills[0];
+  assert.equal(changed.candidateStatus, 'changed');
+  assert.equal(changed.suggestedVersion, '1.0.1');
+});
+
+t('publication refuses content changed while remote sync is running', async () => {
+  const isolatedBare = join(root, 'publish-race.git');
+  spawnSync('git', ['init', '--bare', '-q', isolatedBare]);
+  const dir = mkSkill(join(root, 'publish-race', 'skills'), 'race-content');
+  let active = false;
+  const market = createMarket({ home: join(root, 'publish-race', 'data'), settings: () => ({ enabled: true, repo: isolatedBare }),
+    identity: { name: 'Tester', email: 'Tester@example.com' }, useGh: false,
+    run: async (cmd, args, opts) => { const result = await run(cmd, args, opts); if (active && args.includes('fetch')) writeFileSync(join(dir, 'SKILL.md'), SKILL('race-content', '\nNew unreviewed content')); return result; } });
+  await market.connect({ repo: isolatedBare, alias: 'Race test' });
+  active = true;
+  await assert.rejects(market.publish({ skillDir: dir, id: 'race-content', version: '1.0.0' }), /검사 후/);
+  assert.equal((await market.list()).length, 0);
+});
+
+t('publication binds fresh inspection to the previously reviewed package hash', async () => {
+  const reviewedBare = join(root, 'reviewed-publish.git');
+  spawnSync('git', ['init', '--bare', '-q', reviewedBare]);
+  const client = pc('reviewed-publish', reviewedBare);
+  await client.market.connect({ repo: client.cfg.repo, alias: 'Reviewed' });
+  const dir = mkSkill(client.office.skillsDir, 'reviewed-content');
+  const reviewed = await client.market.inspect({ skillDir: dir, id: 'reviewed-content' });
+  writeFileSync(join(dir, 'SKILL.md'), SKILL('reviewed-content', '\nUnreviewed addition'));
+  await assert.rejects(client.market.publish({ skillDir: dir, id: 'reviewed-content', version: '1.0.0', localHash: reviewed.localHash }), /검사 후/);
+  assert.equal((await client.market.list()).length, 0);
 });
 
 test('검사: 토큰·개인 키·주민번호·카드는 차단, 전화·이메일·내 경로는 확인, 스크립트·지시 무시는 위험', () => {
