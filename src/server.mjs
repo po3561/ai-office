@@ -20,6 +20,7 @@ import { createUpdater } from './updater.mjs';
 import * as tg from './telegram.mjs';
 import * as lr from './rooms-legacy.mjs';
 import * as RV from './roomsview.mjs';
+import * as RL from './roomlog.mjs';
 import { createJobs } from './jobs.mjs';
 import { createComponents } from './components.mjs';
 import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
@@ -135,6 +136,7 @@ async function roomsOverview() {
   const groups = [];
   for (const b of bots.list()) {
     const rooms = RV.lapisRooms(b);
+    try { RV.attachActivity(rooms, RL.botSummary(bots.folder(b.id), rooms)); } catch (e) { console.error('[ai-office] 방 대화 요약을 읽지 못했습니다:', b.id, e.message); }
     groups.push({ source: 'lapis', id: b.id, name: b.name, username: b.telegram.username || '', running: runtimeBots.view(b.id).running, ...RV.tally(rooms), rooms });
   }
   const d = await diagnostics();
@@ -142,11 +144,23 @@ async function roomsOverview() {
     if (o.kind === 'hermes' || o.readonly || !o.stateDir || !isDir(o.folder)) continue;
     let rooms = [];
     try { rooms = lr.isLegacy(o.stateDir) ? RV.legacyOfficeRooms(lr.listRooms(o.stateDir, teamList(listTeams(o.folder)))) : RV.officeRooms(tg.roomsInfo(o.stateDir)); } catch (e) { console.error('[ai-office] 방 목록을 읽지 못했습니다:', o.id, e.message); }
+    try { RV.attachActivity(rooms, RL.officeSummary(RL.officeProjectDirs(o))); } catch (e) { console.error('[ai-office] 방 대화 요약을 읽지 못했습니다:', o.id, e.message); }
     groups.push({ source: 'office', id: o.id, name: o.name, username: '', running: Boolean(summary(o, d).running), ...RV.tally(rooms), rooms });
   }
   return { groups, ...RV.tally(groups.flatMap((g) => g.rooms)) };
 }
 route('GET', '/api/rooms', async () => roomsOverview());
+// 방(주제)의 최근 대화: ?source=lapis&id=<봇>|source=office&id=<사무실>&chat=<방>&thread=<주제, 없으면 방 전체>
+route('GET', '/api/rooms/activity', async ({ url }) => {
+  const q = (k) => url.searchParams.get(k);
+  const chat = q('chat') || '', id = q('id') || '', limit = Math.min(Math.max(Number(q('limit')) || 30, 1), 100);
+  need(/^-?\d{1,20}$/.test(chat), '방 번호가 올바르지 않습니다.');
+  const thread = q('thread') == null ? undefined : q('thread');
+  need(thread === undefined || /^\d{0,20}$/.test(thread), '주제 번호가 올바르지 않습니다.');
+  if (q('source') === 'lapis') { need(bots.list().some((b) => b.id === id), '봇을 찾을 수 없습니다.', 404); return { messages: RL.botActivity(bots.folder(id), chat, thread || 0, limit), perMessageTime: false }; }
+  const o = getOffice(id);
+  return { messages: RL.officeActivity(RL.officeProjectDirs(o), chat, thread, limit), perMessageTime: true };
+});
 route('GET', '/api/presets', async () => PRESETS.map(({ key, name, emoji, role, group, description }) => ({ key, name, emoji, role, group, description })));
 route('GET', '/api/discover', async () => discover());
 route('GET', '/api/offices/:id', async ({ p }) => detail(getOffice(p.id), await diagnostics()));

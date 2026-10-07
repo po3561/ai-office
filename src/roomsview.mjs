@@ -48,3 +48,12 @@ export function legacyOfficeRooms(list) {
 export function tally(rooms) {
   return { total: rooms.length, connected: rooms.filter((r) => r.connected).length, topics: rooms.reduce((n, r) => n + r.topics.length, 0) };
 }
+
+// 방·주제마다 마지막 대화 한 줄(last)을 붙인다. summary: { [방]: { last, topics: { [주제]: { last, count } } } }
+export function attachActivity(rooms, summary) {
+  for (const r of rooms) {
+    const s = summary?.[r.id];
+    r.last = s?.last || null;
+    for (const t of r.topics) { const ts = s?.topics?.[t.id]; t.last = ts?.last || null; t.count = ts?.count || 0; }
+  }
+}
