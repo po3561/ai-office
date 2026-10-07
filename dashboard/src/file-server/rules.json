@@ -1,0 +1,5 @@
+{
+  "sensitiveKeywords": ["명단", "연락처", "계좌", "동의서", "개인정보", "주민", "password", "passwd", "비밀번호", "npki", "signpri", "signcert", "인재현황파악", "인사관리"],
+  "denyExt": ["key", "pfx", "pem", "p12", "env", "kdbx", "exe", "bat", "cmd", "ps1", "psm1", "js", "jse", "vbs", "vbe", "wsf", "wsh", "reg", "msi", "msp", "scr", "com", "hta", "dll", "lnk", "url", "scf", "inf", "pif", "cpl", "msc", "jar", "docm", "xlsm", "pptm", "dotm", "xlam", "sh", "py", "apk", "iso", "html", "htm", "svg"],
+  "protectedFolders": ["windows", "program files", "program files (x86)", "programdata", "appdata", "system volume information", "$recycle.bin", "_서버운영_v3", "서버백업", "npki"]
+}

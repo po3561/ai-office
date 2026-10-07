@@ -76,3 +76,25 @@ button.file-name:hover{color:var(--accent-ink)}
 .ev-view dt{color:var(--muted);font-size:13px;font-weight:700}
 .ev-view dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .ev-view dd.notes{white-space:pre-wrap}
+/* 파일 서버 */
+.fs-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fs-sub{margin-top:4px}
+.fs-check{gap:8px;align-items:flex-start;line-height:1.55}
+.fs-check input{margin-top:3px;flex:none}
+.fs-share,.fs-member,.fs-audit-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 2px;border-top:1px solid var(--line)}
+.fs-share{justify-content:flex-start}
+.fs-share>span:last-child,.fs-member>span:first-child,.fs-audit-row>span:first-child{display:flex;flex-direction:column;min-width:0}
+.fs-share small,.fs-member small,.fs-audit-row small,.fs-path{overflow-wrap:anywhere}
+.fs-icon{font-size:18px}
+.fs-scan{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.fs-scan>.row>span{display:flex;flex-direction:column;min-width:0}
+.fs-invite{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.fs-code{font-size:24px;font-weight:800;letter-spacing:2px;font-variant-numeric:tabular-nums;width:220px;text-align:center}
+.fs-server{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px 12px;margin-top:8px}
+.fs-server>span{display:flex;flex-direction:column;min-width:0}
+.fs-server.on{border-color:var(--accent);background:var(--accent-soft)}
+.fs-stats{margin:0}
+.fs-stats .stat b{font-size:20px}
+.fs-checklist{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:13.5px}
+.fs-checklist .ok{color:var(--ok)}.fs-checklist .bad{color:var(--bad)}
+.fs-audit-row time{flex:none}

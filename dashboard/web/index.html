@@ -127,6 +127,13 @@
         <div id="storage-body"></div>
       </section>
 
+      <!-- 파일 서버 -->
+      <section id="view-fileserver" class="view" hidden>
+        <p class="view-intro">이 PC의 폴더를 라피스 계정과 초대 코드로 읽기 전용 공유하고, 초대받은 서버의 파일을 받아요. 포트 개방이나 Tailscale 설치 없이 라피스 클라우드가 전송만 중계해요.</p>
+        <div id="fs-tabs" class="tabs"><button data-fs-tab="own" class="on">내 서버 운영</button><button data-fs-tab="joined">참여 서버</button></div>
+        <div id="fs-body" class="stack"></div>
+      </section>
+
       <!-- 라피스 학습 -->
       <section id="view-learning" class="view" hidden>
         <p class="view-intro">라피스가 나를 어떻게 이해하고 있는지 보고, 틀린 것은 고치고, 직접 가르칠 수 있어요.</p>

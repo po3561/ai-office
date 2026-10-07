@@ -2,7 +2,7 @@
 // 사무실(Claude Office) 화면은 office.js 가 같은 페이지 안에서 직접 그린다.
 import {createWorkspaceStore,validateLink,progress,TEMPLATES,SERVICES,STORAGE_KEY} from './workspace-model.js';
 import {pages} from './ui.js';
-import './hub.js';import './studio.js';import './rooms.js';import './account.js';import './storage.js';import './learning.js';import './chat.js';import './calendar.js';
+import './hub.js';import './studio.js';import './rooms.js';import './account.js';import './storage.js';import './fileserver.js';import './learning.js';import './chat.js';import './calendar.js';
 import {applyNavPrefs,startView} from './prefs.js';
 
 const q=s=>document.querySelector(s);
@@ -38,6 +38,7 @@ const ICONS={
   calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   learning:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M7 11v5c0 1.5 2.2 3 5 3s5-1.5 5-3v-5"/>',
   account:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/>',
+  fileserver:'<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/>',
   storage:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   appearance:'<circle cx="12" cy="12" r="9"/><path d="M12 3v18M12 3a9 9 0 0 1 0 18"/>',
   settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
@@ -47,7 +48,7 @@ const GROUPS=[
   {title:'업무',items:[['home','오늘'],['calendar','캘린더'],['flows','업무 흐름'],['library','자료 모음']]},
   {title:'사무실',items:[['studio','봇 스튜디오'],['rooms','방 현황'],['board','현황판'],['teams','부서 관리'],['skills','봇 · 스킬트리'],['market','스킬 마켓']]},
   {title:'라피스',items:[['chat','라피스 대화'],['learning','라피스 학습'],['account','내 계정 · 프로필']]},
-  {title:'연결',items:[['storage','저장소'],['drive','드라이브'],['inbox','텔레그램 수신함'],['rental','물품 대여']]},
+  {title:'연결',items:[['storage','저장소'],['fileserver','파일 서버'],['drive','드라이브'],['inbox','텔레그램 수신함'],['rental','물품 대여']]},
   {title:'관리',items:[['connect','Claude · 텔레그램'],['settings','설정'],['appearance','화면 설정']]},
 ];
 const OFFICE_VIEWS=['board','teams','skills','market','connect','settings','drive'];
