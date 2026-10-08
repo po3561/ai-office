@@ -140,3 +140,14 @@ test('방 현황: 봇이 초대된 방을 모아 주고, 화면 밖에서도 읽
   assert.match(res.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   assert.equal((await fetch(`${base}/`)).headers.get('x-frame-options'), 'DENY');
 });
+
+test('bot health API judges every registered office from its records instead of only its process', async () => {
+  const created = await call('/api/offices', { name: 'Health', presets: ['planner'] });
+  const result = await get('/api/health/bots');
+  assert.equal(result.status, 200);
+  const office = result.json.bots.find((b) => b.id === created.json.id);
+  assert.equal(office.state, 'off');
+  assert.equal(office.running, false);
+  assert.ok(office.reasons.some((r) => r.text.startsWith('꺼져 있어요')));
+  assert.deepEqual(Object.keys(office.usage).sort(), ['today', 'week']);
+});
