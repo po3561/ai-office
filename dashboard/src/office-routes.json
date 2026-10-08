@@ -410,5 +410,21 @@
   {
     "method": "DELETE",
     "path": "/api/bots/:id/publish"
+  },
+  {
+    "method": "GET",
+    "path": "/api/offices/:id/connectors"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/offices/:id/connectors"
+  },
+  {
+    "method": "GET",
+    "path": "/api/offices/:id/hermes/tools"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/offices/:id/hermes/tools"
   }
 ]

@@ -13,6 +13,7 @@ const fakeCloud = process.argv.includes('--fake-lapis-cloud');   // 회원가입
 const dashPort = Number(args[0] || 4410), engPort = Number(args[1] || 5100);
 const data = args[2] || mkdtempSync(join(tmpdir(), 'lapis-dev-'));
 process.env.AI_OFFICE_HOME = join(data, 'engine');
+process.env.LAPIS_DASHBOARD_PORT = String(dashPort);   // 봇 커넥터(MCP)가 이 개발 대시보드를 부르도록
 
 if (fake) {
   const kv = [];
@@ -39,5 +40,5 @@ const { createDashboardServer } = await import(pathToFileURL(join(root, 'dashboa
 if (fake) await engine.secrets.set('cloudflare', 'dev-' + 'x'.repeat(36));
 await engine.startServer({ port: engPort, updateCheck: false });
 const cloudBase = fakeCloud ? (await (await import('./fake-lapis-cloud.mjs')).startFakeCloud()).base : undefined;
-const dash = createDashboardServer({ officeUrl: `http://127.0.0.1:${engPort}`, dataDir: join(data, 'lapis'), cloudBase, ...(fakeCloud ? { vaultCrypto: (await import(pathToFileURL(join(root, 'dashboard', 'src', 'vault.mjs')).href)).plain, vault: (await import(pathToFileURL(join(root, 'dashboard', 'src', 'vault.mjs')).href)).createVault(join(data, 'lapis', 'vault.bin'), (await import(pathToFileURL(join(root, 'dashboard', 'src', 'vault.mjs')).href)).plain) } : {}) });
+const dash = createDashboardServer({ officeUrl: `http://127.0.0.1:${engPort}`, dataDir: join(data, 'lapis'), connectorsFile: join(data, 'engine', 'connectors.json'), cloudBase, ...(fakeCloud ? { vaultCrypto: (await import(pathToFileURL(join(root, 'dashboard', 'src', 'vault.mjs')).href)).plain, vault: (await import(pathToFileURL(join(root, 'dashboard', 'src', 'vault.mjs')).href)).createVault(join(data, 'lapis', 'vault.bin'), (await import(pathToFileURL(join(root, 'dashboard', 'src', 'vault.mjs')).href)).plain) } : {}) });
 dash.listen(dashPort, '127.0.0.1', () => console.log(`LAPIS 개발 서버: http://127.0.0.1:${dashPort}  (엔진 ${engPort}, 데이터 ${data}${fake ? ', 가짜 Cloudflare' : ''})`));
