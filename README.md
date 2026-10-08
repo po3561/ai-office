@@ -2,7 +2,7 @@
 
 **터미널 없이 만드는 나의 AI 비서 팀.** 설치 파일 하나로 시작해, 버튼만 눌러 Claude·GPT·로컬 AI(Ollama)·Hermes를 연결하고, 봇을 하나든 여러 개든 만들어 텔레그램 방·주제·역할(에이전트)별로 일을 맡기세요. 완성한 봇은 웹 주소(Cloudflare Workers)로 배포할 수 있습니다.
 
-> 소개 페이지: <https://ciel-worker-api.ej210651392.workers.dev> · 설치 파일(약 1MB): [Releases](../../releases/latest)의 `LAPIS-Setup.exe`
+> 소개 페이지: <https://ciel-worker-api.ej210651392.workers.dev> · 설치 파일(약 1MB): [Releases](../../releases/latest)의 `LAPIS-Setup.exe` · 처음 쓰는 분은 [시작 가이드](site/guide.html)
 
 아래 「AI-Office」 설명은 Claude Code 로 돌아가는 **Claude 사무실**(비서실장 봇과 여러 부서)에 대한 것이며, LAPIS 앱 안의 「사무실」 메뉴에서 그대로 쓸 수 있습니다.
 
