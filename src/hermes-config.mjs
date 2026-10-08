@@ -147,21 +147,38 @@ export function writeScalar(text, parent, key, value) {
 const MCP_BEGIN = '# >>> LAPIS:CONNECTORS — LAPIS 앱의 「커넥터」 화면이 관리합니다. 여기를 직접 고치면 다음 저장 때 덮어써요.';
 const MCP_END = '# <<< LAPIS:CONNECTORS';
 
-export function hasForeignMcp(text) {
+// 표식 밖에 mcp_servers 가 있으면 사용자가 직접 적은 것이다. 단, 그 안의 서버가 모두 이 프로그램이 넣었던 이름(owned)이면
+// 다른 도구(예: 설정 화면이 YAML 을 다시 쓰며 주석을 지운 경우)가 표식만 지운 것이므로 우리 것으로 본다.
+function ownBlock(ls, owned) {
+  const block = topBlock(ls, 'mcp_servers');
+  if (!block || !owned.length) return null;
+  const names = [];
+  for (let i = block.start + 1; i < block.end; i++) {
+    if (blankOrComment(ls[i]) || indentOf(ls[i]) !== 2) continue;
+    const m = /^ {2}(?:"([^"]+)"|'([^']+)'|([^\s:#'"]+)):/.exec(ls[i]);
+    if (m) names.push(m[1] || m[2] || m[3]);
+  }
+  return names.length && names.every((n) => owned.includes(n)) ? block : null;
+}
+export function hasForeignMcp(text, owned = []) {
   const ls = lines(text);
   const b = ls.indexOf(MCP_BEGIN), e = ls.indexOf(MCP_END);
-  return ls.some((l, i) => /^mcp_servers:/.test(l) && !(b >= 0 && e > b && i > b && i < e));
+  const own = ownBlock(ls, owned);
+  return ls.some((l, i) => /^mcp_servers:/.test(l) && !(b >= 0 && e > b && i > b && i < e) && !(own && i === own.start));
 }
 
 // servers: { 이름: {command,args,env} | {url,headers} }. 비어 있으면 블록을 지운다.
 // 값은 JSON 흐름 표기로 쓴다(JSON 은 YAML 의 부분집합이라 따옴표·역슬래시가 그대로 통한다).
-export function writeMcpServers(text, servers) {
-  need(!hasForeignMcp(text), 'Hermes 설정에 직접 적은 mcp_servers 가 이미 있어서 건드리지 않았습니다. config.yaml 의 mcp_servers 를 지우거나 그 안에 직접 추가해 주세요.', 409);
+export function writeMcpServers(text, servers, owned = []) {
+  need(!hasForeignMcp(text, owned), 'Hermes 설정에 직접 적은 mcp_servers 가 이미 있어서 건드리지 않았습니다. config.yaml 의 mcp_servers 를 지우거나 그 안에 직접 추가해 주세요.', 409);
   const ls = lines(text);
   const b = ls.indexOf(MCP_BEGIN), e = ls.indexOf(MCP_END);
   if (b >= 0 && e > b) {
     ls.splice(b, e - b + 1);
     if (ls[b] === '' && ls[b - 1] === '') ls.splice(b, 1);
+  } else {
+    const own = ownBlock(ls, owned);   // 표식이 지워진 우리 블록
+    if (own) ls.splice(own.start, own.end - own.start);
   }
   const names = Object.keys(servers);
   if (names.length) {
