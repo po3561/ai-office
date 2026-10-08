@@ -71,28 +71,34 @@ export function createUsage({ home, now = () => new Date().toISOString() }) {
   function cost(event, p) {
     if (event.status === 'unknown' || event.billing !== 'api') return null;
     const m = p.models.find(m => m.provider === event.provider && m.model === event.model);
-    if (!m) return null;
+    // 단가를 정하지 않았으면 공급자 쪽(Hermes 등)이 스스로 계산해 둔 값을 쓴다.
+    if (!m) return Number.isFinite(event.providerCostUsd) ? event.providerCostUsd : null;
     const amounts = [Math.max(0, event.inputTokens - event.cacheReadTokens - event.cacheWriteTokens), event.outputTokens, event.cacheReadTokens, event.cacheWriteTokens];
     if (amounts.some((n, i) => n > 0 && m[rates[i]] == null)) return null;
     return Number((amounts.reduce((sum, n, i) => sum + n * (m[rates[i]] ?? 0), 0) / 1e6).toFixed(12));
   }
+  // 바깥 기록(Hermes 세션 요약 등)은 한 줄이 여러 번의 호출(calls)을 담는다.
+  const calls = e => e.calls || 1;
+  const n = (events, test) => events.reduce((sum, e) => sum + (test(e) ? calls(e) : 0), 0);
   function aggregate(events) {
     const knownTokens = Object.fromEntries(fields.map(f => [f, events.reduce((sum, e) => sum + (e[f] ?? 0), 0)]));
-    const unknown = events.filter(e => e.status === 'unknown').length;
-    const unpricedRequests = events.filter(e => e.cost === null).length;
+    const unknown = n(events, e => e.status === 'unknown');
+    const unpricedRequests = n(events, e => e.cost === null);
     const knownCost = Number(events.reduce((sum, e) => sum + (e.cost ?? 0), 0).toFixed(12));
-    return { requests: events.length, successful: events.filter(e => e.success).length, measured: events.filter(e => e.status === 'measured').length,
-      unknown, estimated: events.filter(e => e.status === 'estimated').length, ...Object.fromEntries(fields.map(f => [f, unknown ? null : knownTokens[f]])),
+    return { requests: n(events, () => true), successful: n(events, e => e.success), measured: n(events, e => e.status === 'measured'),
+      unknown, estimated: n(events, e => e.status === 'estimated'), ...Object.fromEntries(fields.map(f => [f, unknown ? null : knownTokens[f]])),
       knownTokens, cost: unpricedRequests ? null : knownCost, knownCost, unpricedRequests };
   }
-  function query({ from, to, botId, model } = {}) {
+  // observed: 이 프로그램 밖에서 일한 봇(Claude 사무실·Hermes)의 기록에서 읽어 온 사건. 원장에는 저장하지 않는다.
+  // 응답에는 최근 사건만 싣는다(합계는 전체로 계산). 사무실 기록은 몇 주면 수천 건이 된다.
+  function query({ from, to, botId, model } = {}, observed = [], { eventsLimit = 300 } = {}) {
     for (const date of [from, to]) need(!date || Number.isFinite(Date.parse(date)), '기간 날짜가 올바르지 않습니다.');
     const p = pricing();
-    const events = readLedger().events.filter(e => (!from || Date.parse(e.at) >= Date.parse(from)) && (!to || Date.parse(e.at) <= Date.parse(to)) && (!botId || e.botId === botId) && (!model || e.model === model))
-      .map(e => ({ ...e, cost: cost(e, p) }));
+    const events = [...readLedger().events, ...observed].filter(e => (!from || Date.parse(e.at) >= Date.parse(from)) && (!to || Date.parse(e.at) <= Date.parse(to)) && (!botId || e.botId === botId) && (!model || e.model === model))
+      .map(e => ({ ...e, cost: cost(e, p) })).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const grouped = key => { const map = new Map(); for (const e of events) { const k = key(e); if (!map.has(k)) map.set(k, []); map.get(k).push(e); } return [...map.values()]; };
     return { totals: aggregate(events), bots: grouped(e => e.botId).map(es => ({ botId: es[0].botId, botName: es[0].botName, ...aggregate(es) })),
-      models: grouped(e => `${e.provider}\0${e.model}`).map(es => ({ provider: es[0].provider, model: es[0].model, ...aggregate(es) })), events, pricing: p };
+      models: grouped(e => `${e.provider}\0${e.model}`).map(es => ({ provider: es[0].provider, model: es[0].model, ...aggregate(es) })), events: events.slice(-eventsLimit), pricing: p };
   }
   return { record, query, setPricing, pricing };
 }

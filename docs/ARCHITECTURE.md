@@ -19,6 +19,7 @@ src/
   telegram.mjs           토큰 저장, 페어링, 수신 프로세스 진단, 전역 플러그인 끄기
   skills.mjs             SKILL.md·에이전트 머리말 읽기, 스킬트리·변경 이력 수집 (읽기 전용)
   status.mjs             실시간 상태(status.json) 읽기
+  observed.mjs           봇이 실제로 남긴 기록으로 상태·사용량 판정(읽기 전용, 아래 「봇 상태와 실측 사용량」)
   hooks/status-hook.mjs  Claude Code 훅: 팀 시작·완료를 status.json 에 기록
 templates/office/        새 사무실 견본 (CLAUDE.md, .claude/settings.json, 스킬, 업무데이터)
 web/                     대시보드 화면
@@ -90,6 +91,21 @@ Claude Code는 에이전트를 세션 시작 때 읽으므로 변경은 다시 �
 예외는 스킬 마켓 **설치**뿐입니다(`server.mjs`의 `hermesTargets()`): 사용자가 누른 설치·업데이트·제거만 그 봇의 `skills/<이름>/` 안에 쓰고, 백업은 `<데이터>\market\backup\<봇>` 에 둡니다. 게시 대상(`marketOffices()`)에는 Hermes 가 들어가지 않습니다.
 
 두 번째 예외는 봇 스튜디오의 **🔌 커넥터**와 **🧰 기능 · 활용범위**입니다(`connectors.mjs`, `hermes-config.mjs`). 사용자가 화면에서 저장한 것만 `config.yaml` 의 정해진 곳(`platform_toolsets.telegram`, `agent.max_turns`, `memory.memory_enabled`, 표식 사이의 `mcp_servers`)을 줄 단위로 고치고, 알아볼 수 없는 모양이면 건드리지 않습니다. 기존 순서·주석·다른 블록은 그대로 두고, 쓰기 전 원본은 `<데이터>\connectors\backup\<봇>` 에 남깁니다(최근 10개).
+
+## 봇 상태와 실측 사용량
+
+「근무 중」은 프로세스가 살아 있다는 뜻일 뿐, 봇이 답하고 있다는 뜻이 아닙니다(사용 한도 초과·모델 서버 혼잡이어도 근무 중으로 보입니다).
+그래서 `observed.mjs` 가 봇이 실제로 남긴 기록을 **읽기만** 해서 판정합니다. 어떤 파일도 고치지 않습니다.
+
+| 봇 | 읽는 곳 | 얻는 것 |
+|---|---|---|
+| Claude 사무실 | `<CLAUDE_HOME>/projects/<폴더 이름>/*.jsonl`(+ `subagents/`) | 응답별 토큰(같은 응답의 여러 줄은 하나로), 한도 초과·API 오류 메시지, 텔레그램 수신·답장 시각, 지금 대화 길이 |
+| Hermes | 프로필의 `state.db`(`node:sqlite`, 읽기 전용) · `logs/errors.log` 끝 512KB · `gateway_state.json` | 세션·모델별 호출 수·토큰·Hermes 추정 비용, 응답 실패(재시도 끝난 것만 1건), 텔레그램 연결 시간 초과, 허용 안 된 발신자 |
+| LAPIS 봇 | 사용량 원장(`usage/ledger.json`) | 응답 성공·실패 |
+
+- `GET /api/health/bots`: 봇마다 `state`(ok·warn·bad·off), 한 줄 요약(`headline`), 근거(`reasons`), 마지막 지시·답 시각, 오늘·7일 사용량. 한 번의 실패는 「확인 필요」, 마지막 답 이후 3번 연속 실패·지금도 걸린 한도·텔레그램 끊김만 「응답 못 함」입니다.
+- `GET /api/usage` 는 원장에 이 기록을 더해 계산합니다(원장에 저장하지는 않음). 응답에는 최근 사건 300건만 싣고 합계는 전체로 냅니다. Hermes 기록 한 줄은 여러 번의 호출(`calls`)을 담습니다.
+- Claude 대화 기록은 파일마다 읽은 위치를 기억해 새로 붙은 줄만 읽고, 결과는 15초 동안 재사용합니다(40일보다 오래된 파일은 읽지 않음).
 
 ## 보안 경계
 

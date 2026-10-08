@@ -413,6 +413,18 @@
   },
   {
     "method": "GET",
+    "path": "/api/usage"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/usage/pricing"
+  },
+  {
+    "method": "GET",
+    "path": "/api/health/bots"
+  },
+  {
+    "method": "GET",
     "path": "/api/offices/:id/connectors"
   },
   {
