@@ -12,6 +12,7 @@ import {createCalendarStore,createGoogleCalendar} from './calendar.mjs';
 import {createExtraRoutes} from './extra-routes.mjs';
 import {createConnectorGateway} from './connector-gateway.mjs';
 import {createTaskStore} from './tasks.mjs';
+import {createTelegramSync} from './telegram-sync.mjs';
 import {createAccounts} from './accounts.mjs';
 import {rentalUrl as configuredRentalUrl,cloudBase} from './config.mjs';
 import {createFileServerManager} from './file-server/manager.mjs';
@@ -108,6 +109,10 @@ export function createDashboardServer(options={}){
   const fileRoutes=createFileServerRoutes({manager:fileManager,cloud,auditDir:join(fileData,'audit')});
   const sessions=new RentalSessions();
   const getTelegram=options.telegramSnapshot||(()=>import('./telegram.mjs').then(m=>m.telegramSnapshot()));
+  // 텔레그램 대화에서 일정·할 일을 찾아 캘린더와 할 일에 자동으로 반영한다(읽기만 한다). 기록은 계정마다 따로 둔다.
+  const telegramSync=options.telegramSync||createTelegramSync({tasks:taskStore,calendar:calendarStore,snapshot:()=>getTelegram(),
+    stateFile:async()=>join(accounts?(await accounts.current()).dir:dataDir,'telegram-sync.json')});
+  const syncQuietly=snapshot=>telegramSync.run(snapshot).catch(()=>null);   // 로그인 전이거나 저장소를 못 읽어도 화면은 계속 보여 준다
   let overviewCache=null,overviewPending=null;
   const server=http.createServer(async(req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');
@@ -141,7 +146,14 @@ export function createDashboardServer(options={}){
           await overviewPending;
         }return json(res,200,overviewCache.value);
       }
-      if(url.pathname==='/api/telegram'&&req.method==='GET')return json(res,200,await getTelegram());
+      if(url.pathname==='/api/telegram'&&req.method==='GET'){
+        const snapshot=await getTelegram();
+        const sync=await syncQuietly(snapshot);
+        return json(res,200,sync?{...snapshot,sync:{enabled:sync.enabled,makeTasks:sync.makeTasks,lastRunAt:sync.lastRunAt,changes:sync.changes,added:sync.added,recent:sync.recent}}:snapshot);
+      }
+      if(url.pathname==='/api/telegram/sync'&&req.method==='GET')return json(res,200,await telegramSync.status());
+      if(url.pathname==='/api/telegram/sync'&&req.method==='PUT'){const b=await readJson(req);return json(res,200,await telegramSync.configure({enabled:b.enabled,makeTasks:b.makeTasks}));}
+      if(url.pathname==='/api/telegram/sync'&&req.method==='POST'){const result=await telegramSync.run();return json(res,200,result);}
       if(url.pathname==='/api/drives'&&req.method==='GET')return json(res,200,{drives:await getDrives()});
       // 개인용 연결(물품 대여 등)은 주소가 설정돼 있을 때만 화면에 보인다.
       if(url.pathname==='/api/features'&&req.method==='GET')return json(res,200,{rental:Boolean(rentalUrl),cloud:true});
@@ -203,6 +215,7 @@ export function createDashboardServer(options={}){
     }
   });
   server.fileServer={manager:fileManager,cloud};
+  server.telegramSync=telegramSync;
   return server;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
@@ -213,5 +226,8 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
     console.log('LAPIS Office: http://127.0.0.1:'+port);
     startAutoResume({...server.fileServer,log:m=>console.log(m)});
   });
+  // 화면이 닫혀 있어도 1분마다 텔레그램에서 새 일정·할 일을 찾아 반영한다. (로그인 전에는 건너뜀)
+  const syncTimer=setInterval(()=>server.telegramSync.run().catch(()=>undefined),60000);
+  syncTimer.unref();server.on('close',()=>clearInterval(syncTimer));
   server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'지정한 포트가 이미 사용 중입니다.':'대시보드 시작 실패');process.exitCode=1;});
 }

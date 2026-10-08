@@ -67,11 +67,11 @@ test('setDefaultTask', () => {
   rmSync(d, { recursive: true });
 });
 
-test('connectRoom: 허용된 계정을 방 발언자로, 기본 업무 적용, 다른 설정 보존', () => {
+test('connectRoom: 허용된 계정을 방 발언자로(멘션 없이 응답), 기본 업무 적용, 다른 설정 보존', () => {
   const d = setup({ allowFrom: ['111', '222'], rooms: { '-1002': room('-1002') }, defaultTask: '기본' });
   tg.connectRoom(d, '-1002');
   const a = readAccess(d);
-  assert.deepEqual(a.groups['-1002'], { requireMention: true, allowFrom: ['111', '222'] });
+  assert.deepEqual(a.groups['-1002'], { requireMention: false, allowFrom: ['111', '222'] });
   assert.equal(a.ackReaction, '👀');
   assert.equal(readRooms(d).rooms['-1002'].task, '기본');
   tg.connectRoom(d, '-1002');   // 두 번 눌러도 안전
@@ -136,5 +136,19 @@ test('refreshRooms: 텔레그램 응답으로 이름·상태 갱신, 나감/강�
 test('refreshRooms: 토큰이 없으면 거부', async () => {
   const d = mkdtempSync(join(tmpdir(), 'aio-rooms-'));
   await assert.rejects(() => tg.refreshRooms(d, async () => ({ ok: true })), /토큰/);
+  rmSync(d, { recursive: true });
+});
+
+test('setRoomMention: 연결된 방의 응답 방식을 바꾸고, 발언자 제한·다른 설정은 그대로 둔다', () => {
+  const d = setup({ allowFrom: ['111', '222'], rooms: { '-1002': room('-1002') } });
+  assert.throws(() => tg.setRoomMention(d, '-1002', true), /연결된 방이 아닙니다/);
+  tg.connectRoom(d, '-1002');
+  assert.equal(tg.setRoomMention(d, '-1002', true).requireMention, true);
+  assert.deepEqual(readAccess(d).groups['-1002'], { requireMention: true, allowFrom: ['111', '222'] });
+  assert.equal(tg.roomsInfo(d).rooms.find((r) => r.id === '-1002').requireMention, true);
+  tg.setRoomMention(d, '-1002', false);
+  assert.equal(readAccess(d).groups['-1002'].requireMention, false);
+  assert.equal(readAccess(d).ackReaction, '👀');
+  assert.throws(() => tg.setRoomMention(d, 'abc', false), /방 ID/);
   rmSync(d, { recursive: true });
 });

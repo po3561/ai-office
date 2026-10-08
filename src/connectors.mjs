@@ -136,16 +136,16 @@ function applyClaude(o, servers, prevNames) {
   writeJson(settingsFile(o.folder), cur);
 }
 
-function applyHermes(o, servers) {
+function applyHermes(o, servers, prevNames = []) {
   const text = H.readConfig(o);
-  const next = H.writeMcpServers(text, servers);
+  const next = H.writeMcpServers(text, servers, prevNames);
   if (next !== text.replace(/\r\n/g, '\n')) H.writeConfig(o, next);
 }
 
 function apply(o, entry) {
   const servers = serversOf(o.id, entry);
   if (entry.lapis?.enabled) ensureToken(o.id, entry);
-  if (o.kind === 'hermes') applyHermes(o, servers);
+  if (o.kind === 'hermes') applyHermes(o, servers, [...new Set([...(entry.applied || []), LAPIS, ...(entry.custom || []).map((c) => c.name)])]);
   else applyClaude(o, servers, entry.applied || []);
   entry.applied = Object.keys(servers);
 }

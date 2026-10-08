@@ -66,6 +66,23 @@ test('Hermes 설정: 커넥터 블록은 표식 사이만 바꾸고, 직접 적�
   assert.throws(() => H.writeMcpServers(HERMES_YAML + 'mcp_servers:\n  mine:\n    command: x\n', { lapis: {} }), /직접 적은 mcp_servers/);
 });
 
+test('Hermes 설정 화면이 YAML 을 다시 써서 표식이 지워져도, 우리가 넣은 서버만 있으면 우리 블록으로 알아본다', () => {
+  const one = H.writeMcpServers(HERMES_YAML, { lapis: { command: 'node', args: ['x.mjs'], env: { A: '1' } } });
+  // 설정 화면(PyYAML safe_dump)이 쓰는 모양: 주석 없음, 목록은 들여쓰기 없이
+  const dumped = ['  lapis:', '    command: node', '    args:', '    - x.mjs', '    env:', "      A: '1'"].join('\n');
+  const rewritten = one.split('\n').filter((l) => !l.startsWith('# >>> LAPIS') && !l.startsWith('# <<< LAPIS')).join('\n')
+    .replace(/^ {2}"lapis": .*$/m, dumped);
+  assert.ok(!rewritten.includes('LAPIS:CONNECTORS'));
+  assert.equal(H.hasForeignMcp(rewritten), true);                // 모르면 사용자가 적은 것으로 본다
+  assert.equal(H.hasForeignMcp(rewritten, ['lapis']), false);    // 우리가 넣은 이름이면 우리 것
+  const next = H.writeMcpServers(rewritten, { lapis: { command: 'node2' }, github: { url: 'https://x/mcp' } }, ['lapis']);
+  assert.equal((next.match(/^mcp_servers:/gm) || []).length, 1);
+  assert.ok(next.includes('"command":"node2"') && next.includes('"github"') && !next.includes('x.mjs'));
+  // 사용자가 직접 넣은 서버가 섞여 있으면 여전히 건드리지 않는다
+  const mixed = rewritten.replace(/\n*$/, '\n') + '  mine:\n    command: other\n';
+  assert.throws(() => H.writeMcpServers(mixed, { lapis: {} }, ['lapis']), /직접 적은 mcp_servers/);
+});
+
 test('Claude 사무실: LAPIS 커넥터를 켜면 .mcp.json·settings.local.json·호출 키가 생기고, 끄면 내가 넣은 것만 걷어낸다', () => {
   const office = O.createOffice({ name: 'Conn Office', honorific: '팀장님', presets: [] });
   // 사용자가 직접 넣은 서버와 규칙

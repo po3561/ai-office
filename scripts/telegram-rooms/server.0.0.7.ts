@@ -95,6 +95,8 @@ const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 const bot = new Bot(TOKEN)
 let botUsername = ''
 let botId = 0
+// BotFather의 Group Privacy가 켜져 있으면(false) 관리자가 아닌 방에서는 멘션·명령·답장만 받는다.
+let botCanReadAll = true
 
 type PendingEntry = {
   senderId: string
@@ -124,6 +126,8 @@ type Access = {
   textChunkLimit?: number
   /** Split on paragraph boundaries instead of hard char count. */
   chunkMode?: 'length' | 'newline'
+  /** 예전 기본값(멘션해야 응답)으로 연결된 방을 한 번 "멘션 없이 응답"으로 옮겼는지. */
+  mentionFreeMigrated?: boolean
 }
 
 function defaultAccess(): Access {
@@ -168,6 +172,7 @@ function readAccessFile(): Access {
       replyToMode: parsed.replyToMode,
       textChunkLimit: parsed.textChunkLimit,
       chunkMode: parsed.chunkMode,
+      mentionFreeMigrated: parsed.mentionFreeMigrated,
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
@@ -229,6 +234,25 @@ function pruneExpired(a: Access): boolean {
   return changed
 }
 
+// 예전 기본값(멘션해야 응답)으로 연결된 본인 전용 방을 한 번만 "멘션 없이 응답"으로 옮긴다.
+// 발언자가 본인(허용 목록)뿐인 방만 대상이고, 그 뒤에 다시 멘션을 켠 방은 건드리지 않는다.
+;(() => {
+  if (STATIC) return
+  const a = readAccessFile()
+  if (a.mentionFreeMigrated) return
+  let n = 0
+  for (const g of Object.values(a.groups)) {
+    const owners = g.allowFrom ?? []
+    if (g.requireMention !== false && owners.length > 0 && owners.every(id => a.allowFrom.includes(id))) {
+      g.requireMention = false
+      n++
+    }
+  }
+  a.mentionFreeMigrated = true
+  saveAccess(a)
+  if (n) process.stderr.write(`telegram channel: ${n} room(s) switched to mention-free replies\n`)
+})()
+
 // ── 방(그룹) 레지스트리 ──────────────────────────────────────────────────────
 // 봇이 초대된 방·주제와 방별 업무를 rooms.json에 기록한다. Bot API에는 "내가 들어간
 // 방 목록"이나 "주제 목록"을 돌려주는 호출이 없어서, 봇이 직접 본 이벤트
@@ -271,6 +295,24 @@ function readRooms(): RoomsDb {
 }
 
 let roomsDb: RoomsDb = readRooms()
+
+// 주제(포럼)방: 비서실장이 reply에 thread_id를 빠뜨리면 답장이 「일반」 주제로 가서 사용자는 답이
+// 없다고 느낀다. 받은 메시지의 주제를 기억해 두었다가 빠졌을 때 채운다.
+const threadOfMsg = new Map<string, number | undefined>()   // `${chat}:${message_id}` → 주제
+const lastThreadOfChat = new Map<string, number | undefined>()
+function rememberThread(chatId: string, msgId: number | undefined, threadId: number | undefined): void {
+  lastThreadOfChat.set(chatId, threadId)
+  if (msgId == null) return
+  threadOfMsg.set(`${chatId}:${msgId}`, threadId)
+  if (threadOfMsg.size > 2000) threadOfMsg.delete(threadOfMsg.keys().next().value!)
+}
+function inferThread(chatId: string, replyTo: number | undefined): number | undefined {
+  if (replyTo != null) {
+    const key = `${chatId}:${replyTo}`
+    if (threadOfMsg.has(key)) return threadOfMsg.get(key)
+  }
+  return lastThreadOfChat.get(chatId)
+}
 let roomsDirty = false
 
 // AI-Office 대시보드도 rooms.json(업무 지정·정리)을 고친다. 메모리 사본이 그걸 덮어쓰지
@@ -374,11 +416,17 @@ const nameOf = (u: { username?: string; first_name?: string; last_name?: string;
   u.username ? `@${u.username}` : [u.first_name, u.last_name].filter(Boolean).join(' ') || String(u.id)
 
 // 방을 허용 목록에 올리고 업무 기본값을 붙인다. by는 이미 허용 목록에 있는 본인(소유자).
-// 기본값은 보수적: 멘션해야 응답하고, 발언자도 by 한 명으로 제한한다. 다른 사람도 쓰게
-// 하려면 /telegram:access 로 allowFrom을 넓히면 된다.
+<<<<<<< HEAD
+// 기본값: 허용된 본인(by) 한 명의 모든 말에 응답한다(멘션 불필요). 다른 사람의 말은 무시한다.
+// 다른 사람도 쓰게 하려면 /telegram:access 로 allowFrom을 넓히고, 멘션이 있어야 응답하게
+// 바꾸려면 대시보드 「그룹방」 카드의 스위치를 쓴다.
+=======
+// 초대하면 바로 일하도록 멘션 없이도 응답한다. 발언자는 by 한 명(본인)으로만 제한해
+// 낯선 사람의 글이 업무 지시가 되지 않게 한다. 다른 사람도 쓰게 하려면 allowFrom을 넓히면 된다.
+>>>>>>> origin/claude/admiring-planck-pozxv5
 function enrollGroup(access: Access, chat: ChatLike, by: string, announce: boolean): GroupPolicy {
   const id = String(chat.id)
-  const policy: GroupPolicy = { requireMention: true, allowFrom: [by] }
+  const policy: GroupPolicy = { requireMention: false, allowFrom: [by] }
   access.groups[id] = policy
   saveAccess(access)
   const r = upsertRoom(chat)
@@ -388,11 +436,27 @@ function enrollGroup(access: Access, chat: ChatLike, by: string, announce: boole
   if (announce) {
     void bot.api.sendMessage(
       id,
-      `✅ 이 방이 연결되었습니다.\n호출: @${botUsername} 멘션 또는 제 메시지에 답장\n` +
+<<<<<<< HEAD
+      `✅ 이 방이 연결되었습니다.\n` +
+      ((bot as unknown as { botInfo?: { can_read_all_group_messages?: boolean } }).botInfo?.can_read_all_group_messages === false
+        ? `⚠️ 지금은 봇의 개인정보 보호 모드가 켜져 있어 @${botUsername} 멘션이나 답장만 전달됩니다. 멘션 없이 쓰려면 @BotFather → /setprivacy → Disable 후 저를 방에서 내보냈다가 다시 초대해 주세요.\n`
+        : `호출: 이 방에서 그냥 말씀하세요(멘션 불필요, 허용된 본인의 말에만 응답)\n`) +
       `업무: ${r.task ?? '(미지정) — "/task 업무내용"으로 지정하세요'}`,
+=======
+      `✅ 이 방이 연결되었습니다. 이제 이 방에서 하시는 말씀은 바로 처리합니다.\n` +
+      `업무: ${r.task ?? '(미지정) — "/task 업무내용"으로 지정하세요'}` + privacyHint(r),
+>>>>>>> origin/claude/admiring-planck-pozxv5
     ).catch(e => process.stderr.write(`telegram channel: enroll notice to ${id} failed: ${e}\n`))
   }
   return policy
+}
+
+// 멘션 없이 한 말을 봇이 못 받는 방이면 해결 방법을 알려 준다(관리자로 지정하면 바로 해결).
+function privacyHint(r: Room): string {
+  if (botCanReadAll || r.botStatus === 'administrator' || r.botStatus === 'creator') return ''
+  return '\n\n⚠️ 지금은 텔레그램 설정상 멘션 없이 한 말은 봇에게 전달되지 않습니다.\n' +
+    '해결: 이 방에서 봇을 관리자로 지정하세요(권한은 하나도 안 줘도 됩니다).\n' +
+    `또는 @BotFather → /setprivacy → @${botUsername} → Disable 후 봇을 방에서 내보냈다가 다시 초대하세요.`
 }
 
 const STATUS_KO: Record<string, string> = {
@@ -413,8 +477,7 @@ function renderRooms(): string {
   const head = `📋 봇이 아는 방: ${rooms.length}개` +
     (roomsDb.defaultTask ? `\n기본 업무(새 방 자동 적용): ${roomsDb.defaultTask}` : '')
   if (rooms.length === 0) {
-    return head + '\n\n아직 기록된 방이 없습니다. 봇을 방에 초대하거나, 방에서 본인이 @' + botUsername +
-      ' 를 멘션하면 기록됩니다.'
+    return head + '\n\n아직 기록된 방이 없습니다. 봇을 방에 초대하면 바로 기록·연결됩니다.'
   }
   const blocks = rooms.map((r, i) => {
     const policy = access.groups[r.id]
@@ -428,7 +491,7 @@ function renderRooms(): string {
         ? `   연결: ✅ 허용됨 (${policy.requireMention ?? true ? '멘션해야 응답' : '모든 메시지 응답'}, ` +
           `발언자 ${(policy.allowFrom ?? []).length ? `${policy.allowFrom.length}명 제한` : '제한 없음'})`
         : present
-          ? `   연결: ⏳ 미승인 — 본인이 방에서 @${botUsername} 를 멘션하거나 "/task 업무내용"을 보내면 자동 연결됩니다`
+          ? `   연결: ⏳ 미승인 — 본인이 방에서 아무 말이나 하거나 "/task 업무내용"을 보내면 자동 연결됩니다`
           : `   연결: ❌ 미승인`,
     ]
     if (r.invitedBy) lines.push(`   초대: ${r.invitedBy.name} · ${fmtTime(r.invitedAt)}`)
@@ -528,10 +591,9 @@ function gate(ctx: Context): GateResult {
     const groupId = String(ctx.chat!.id)
     let policy = access.groups[groupId]
     if (!policy) {
-      // 등록 안 된 방. 허용 목록에 있는 본인이 멘션으로 부르면 그 자리에서 자동 등록한다.
+      // 등록 안 된 방. 허용 목록에 있는 본인이 한마디라도 하면 그 자리에서 자동 등록한다.
       if (STATIC) { logDrop(groupId, '정적 모드라 미등록 방은 등록 불가'); return { action: 'drop' } }
       if (!access.allowFrom.includes(senderId)) { logDrop(groupId, '미등록 방이고 발신자가 허용 목록에 없음'); return { action: 'drop' } }
-      if (!isMentioned(ctx, access.mentionPatterns)) { logDrop(groupId, '미등록 방이고 멘션이 없음'); return { action: 'drop' } }
       policy = enrollGroup(access, ctx.chat as ChatLike, senderId, true)
     }
     const groupAllowFrom = policy.allowFrom ?? []
@@ -825,7 +887,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const chat_id = args.chat_id as string
         const text = args.text as string
         const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
-        const thread_id = args.thread_id != null && args.thread_id !== '' ? Number(args.thread_id) : undefined
+        const thread_id = args.thread_id != null && args.thread_id !== '' ? Number(args.thread_id) : inferThread(chat_id, reply_to)
         const threadOpt = thread_id != null && Number.isFinite(thread_id) ? { message_thread_id: thread_id } : {}
         const files = (args.files as string[] | undefined) ?? []
         const format = (args.format as string | undefined) ?? 'text'
@@ -1061,6 +1123,14 @@ bot.on('my_chat_member', async ctx => {
   if (access.groups[r.id]) return // 이미 연결된 방
   if (STATIC) {
     notifyOwners(`ℹ️ 방에 초대되었지만 정적 모드라 자동 연결할 수 없습니다: ${r.title} (${r.id})`)
+    return
+  }
+  if (access.allowFrom.length === 0) {
+    // 아직 페어링한 계정이 없어 승인을 물을 사람도 없다. 방에 다음 할 일을 알려 준다.
+    void bot.api.sendMessage(r.id,
+      `👋 초대 감사합니다. 아직 이 봇과 연결된 계정이 없습니다.\n` +
+      `봇(@${botUsername})에게 개인 메시지를 보내 받은 코드를 대시보드 「연결 · 계정」에 넣어 연결한 뒤, 이 방에서 아무 말이나 하시면 바로 연결됩니다.`,
+    ).catch(e => process.stderr.write(`telegram channel: unpaired notice to ${r.id} failed: ${e}\n`))
     return
   }
   if (access.allowFrom.includes(String(by.id))) {
@@ -1445,8 +1515,11 @@ async function handleInbound(
     return
   }
 
+  const inTopic = (ctx.chat!.type === 'supergroup' && ctx.message?.is_topic_message) ? ctx.message.message_thread_id : undefined
+  rememberThread(chat_id, msgId, inTopic)
+
   // Typing indicator — signals "processing" until we reply (or ~5s elapses).
-  void bot.api.sendChatAction(chat_id, 'typing').catch(() => {})
+  void bot.api.sendChatAction(chat_id, 'typing', inTopic != null ? { message_thread_id: inTopic } : {}).catch(() => {})
 
   // Ack reaction — lets the user know we're processing. Fire-and-forget.
   // Telegram only accepts a fixed emoji whitelist — if the user configures
@@ -1522,6 +1595,8 @@ void (async () => {
           attempt = 0
           botUsername = info.username
           botId = info.id
+          botCanReadAll = info.can_read_all_group_messages !== false
+          if (!botCanReadAll) process.stderr.write('telegram channel: group privacy mode is ON — non-admin groups only deliver mentions\n')
           process.stderr.write(`telegram channel: polling as @${info.username}\n`)
           void bot.api.setMyCommands(
             [
