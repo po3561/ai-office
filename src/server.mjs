@@ -33,6 +33,7 @@ import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
 import { createPublisher } from './publish.mjs';
 import { createStaleWatcher } from './engine-guard.mjs';
 import { createUsage } from './usage.mjs';
+import { getConnectors, setConnectors, forgetConnectors, repairConnectors, hermesTools, setHermesTools, readStore as readConnectorStore } from './connectors.mjs';
 import { createObserver, assess } from './observed.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
@@ -54,6 +55,7 @@ async function diagnostics(force = false) {
 const legitCount = (d) => (d.pollers || []).filter((p) => p.legit).length;
 
 // ── 사무실 요약·상세 ──
+const connectorNames = (id) => { try { return readConnectorStore().bots[id]?.applied || []; } catch { return []; } };
 const skillsDirOf = (o) => (o.kind === 'hermes' ? join(o.folder, 'skills') : join(o.folder, '.claude', 'skills'));
 
 function summary(o, d) {
@@ -62,6 +64,7 @@ function summary(o, d) {
     id: o.id, name: o.name, kind: o.kind, readonly: isReadonly(o), mode: o.kind === 'hermes' ? (isReadonly(o) ? 'readonly' : 'office') : 'office', managed: Boolean(o.managed),
     folder: o.folder, autoStart: Boolean(o.autoStart), running: rt.running, detail: rt.detail, exists: isDir(o.folder),
     closable: isClosable(o), removeKind: isClosable(o) ? 'close' : 'unregister', legacyLaunch: Boolean(o.launch), moveCandidates: moveCandidates(o), sharedTelegramState: Boolean(o.sharedTelegramState), note: o.note || '',
+    connectors: connectorNames(o.id),
   };
   if (!base.exists) return { ...base, running: false, detail: '폴더를 찾을 수 없음', teamsCount: 0, skillsCount: 0, workingTeams: 0, doneToday: 0, telegram: { set: false } };
   const skills = scanSkills(skillsDirOf(o));
@@ -191,6 +194,7 @@ route('POST', '/api/offices/:id/close', async ({ p, body }) => {
   await new Promise((r) => setTimeout(r, 1500));   // 창이 닫히며 폴더 잠금이 풀릴 시간을 준다
   const r = closeOffice(o.id, { confirmName: body.confirmName });
   forgetRuntime(o.id);
+  forgetConnectors(o.id);
   return r;
 });
 // 이름·항상 켜두기·사용 모드(Hermes). 읽기 전용 봇은 모드만 바꿀 수 있다(그 밖의 변경은 updateOffice 가 막는다).
@@ -205,6 +209,7 @@ route('POST', '/api/offices/:id/remove', async ({ p, body }) => {
   }
   const r = removeOffice(o.id, { confirmName: body.confirmName });
   forgetRuntime(o.id);
+  forgetConnectors(o.id);
   return r;
 });
 route('POST', '/api/offices/:id/start', async ({ p }) => startOffice(p.id, { legitPollers: legitCount(await diagnostics()) }));
@@ -230,6 +235,13 @@ route('DELETE', '/api/offices/:id/drives', async ({ p, body }) => {
   const r = removeDriveGrant(o.folder, body.path);
   return { ...r, needsRestart: runtime(o).running };
 });
+// 커넥터: 봇이 도구(MCP 서버)로 쓸 바깥 서비스. 사용자가 대시보드에서만 바꾼다. 봇은 다시 시작해야 새 커넥터를 읽는다.
+const restartInfo = async (id) => { const o = getOffice(id); return { running: runtime(o, { legitPollers: legitCount(await diagnostics()) }).running, canRestart: !isReadonly(o) }; };
+route('GET', '/api/offices/:id/connectors', async ({ p }) => ({ ...getConnectors(p.id), ...(await restartInfo(p.id)) }));
+route('PUT', '/api/offices/:id/connectors', async ({ p, body }) => ({ ...setConnectors(p.id, body), ...(await restartInfo(p.id)) }));
+// Hermes 기능(활용 범위): 텔레그램에서 쓸 기능 묶음과 한 번에 할 수 있는 단계 수. config.yaml 을 백업한 뒤 바꾼다.
+route('GET', '/api/offices/:id/hermes/tools', async ({ p }) => ({ ...hermesTools(p.id), ...(await restartInfo(p.id)) }));
+route('PUT', '/api/offices/:id/hermes/tools', async ({ p, body }) => ({ ...setHermesTools(p.id, body), ...(await restartInfo(p.id)) }));
 route('POST', '/api/open-data', async () => { openInExplorer(DATA_HOME); return { ok: true }; });
 
 route('POST', '/api/offices/:id/teams', async ({ p, body }) => { const o = mutable(p.id); const t = addTeam(o.folder, body); return { team: t, needsRestart: runtime(o).running }; });
@@ -529,6 +541,7 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
   relink();
   try { for (const o of listOffices()) if (o.kind === 'claude-office' && o.stateDir && lr.repairLegacy(o.stateDir)) console.log('[ai-office] 예전 방 설정(rooms.json)의 불필요한 항목을 정리했습니다.'); } catch (e) { console.error(e); }
   try { const fixed = repairOffices(); if (fixed.length) console.log(`[ai-office] 사무실 설정 경로를 다시 맞췄습니다: ${fixed.join(', ')}`); } catch (e) { console.error(e); }
+  try { if (repairConnectors()) console.log('[ai-office] 봇 커넥터 설정의 프로그램 경로를 다시 맞췄습니다.'); } catch (e) { console.error(e); }
   // 업데이트 등으로 디스크의 프로그램이 이 엔진보다 새 버전이 되면(옛 코드가 계속 도는 것을 막기 위해) 스스로 새 코드로 다시 시작한다.
   const staleCheck = createStaleWatcher({ loaded: pkg.version, restart: () => restartEngine(CLI, port), busy: () => updater.view().applying, log: (m) => console.log(m) });
   const timer = setInterval(async () => {

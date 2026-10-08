@@ -23,7 +23,8 @@ const DELETING_FLAG_RE = /\/(mir|purge|mov|move)(\s|\*|$)/i;
 
 const readSettings = readLocalSettings;
 // 드라이브 접근(대시보드에서 사용자가 부여)으로 들어간 규칙은 봇이 연 규칙이 아니므로 목록·개수에서 뺀다.
-const botRules = (folder, allow) => allow.filter((a) => !managedRules(folder).allow.includes(a));
+// 커넥터(mcp__…) 규칙도 대시보드의 「커넥터」 화면이 관리하므로 뺀다.
+const botRules = (folder, allow) => allow.filter((a) => !managedRules(folder).allow.includes(a) && !/^mcp__/.test(a));
 
 // 열어도 되는 규칙인지 검사하고, 다듬은 규칙 문자열을 돌려준다.
 export function validateRule(raw) {

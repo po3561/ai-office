@@ -90,6 +90,8 @@ Claude Code는 에이전트를 세션 시작 때 읽으므로 변경은 다시 �
 
 예외는 스킬 마켓 **설치**뿐입니다(`server.mjs`의 `hermesTargets()`): 사용자가 누른 설치·업데이트·제거만 그 봇의 `skills/<이름>/` 안에 쓰고, 백업은 `<데이터>\market\backup\<봇>` 에 둡니다. 게시 대상(`marketOffices()`)에는 Hermes 가 들어가지 않습니다.
 
+두 번째 예외는 봇 스튜디오의 **🔌 커넥터**와 **🧰 기능 · 활용범위**입니다(`connectors.mjs`, `hermes-config.mjs`). 사용자가 화면에서 저장한 것만 `config.yaml` 의 정해진 곳(`platform_toolsets.telegram`, `agent.max_turns`, `memory.memory_enabled`, 표식 사이의 `mcp_servers`)을 줄 단위로 고치고, 알아볼 수 없는 모양이면 건드리지 않습니다. 기존 순서·주석·다른 블록은 그대로 두고, 쓰기 전 원본은 `<데이터>\connectors\backup\<봇>` 에 남깁니다(최근 10개).
+
 ## 봇 상태와 실측 사용량
 
 「근무 중」은 프로세스가 살아 있다는 뜻일 뿐, 봇이 답하고 있다는 뜻이 아닙니다(사용 한도 초과·모델 서버 혼잡이어도 근무 중으로 보입니다).
@@ -123,3 +125,16 @@ LAPIS.exe       (scripts/Launcher.cs)  ─ 트레이 아이콘, `ai-office app` 
 - **런타임**(`runtime.mjs`): 봇마다 `getUpdates` 롱폴링 → 허용 확인(`bots.mjs` 페어링) → 방·주제·역할 결정(`agentlogic.mjs`) → 엔진 호출 → 답장. 대화 기록은 `bots/<id>/history`.
 - **웹 배포**(`publish.mjs`): 계정 확인 → KV 만들기 → Worker 모듈 업로드(`worker-bot.mjs` + `agentlogic.mjs`, 비밀은 secret 바인딩) → workers.dev 켜기 → 텔레그램 `setWebhook`. `LAPIS_CF_BASE` 환경 값으로 가짜 서버에 돌려 볼 수 있습니다.
 - **보안 경계**: 내려받기는 `download.mjs` 의 허용 호스트만, 설치·로그인·배포는 화면에서 사용자가 누를 때만, 비밀은 DPAPI 로 암호화해 API 응답·로그에 담지 않습니다.
+
+## 봇 커넥터 (MCP)
+
+```
+봇(Claude Code·Hermes) ─stdio─▶ src/connectors/lapis-mcp.mjs ─HTTP(127.0.0.1, Bearer 봇 키)─▶ 대시보드 /api/connector/call
+                                                                                        ├─▶ 라피스 클라우드(Google 드라이브·시트·문서·슬라이드)
+                                                                                        └─▶ LAPIS 일정·할 일(계정별 저장소)
+```
+
+- **설정**: 엔진의 `connectors.mjs` 가 `<데이터>\connectors.json`(봇별 사용 범위·키 해시)에 저장하고 봇에 적용합니다. Claude 사무실은 `.mcp.json` + `.claude/settings.local.json`(`enabledMcpjsonServers`, `permissions.allow` 의 `mcp__이름`), Hermes 는 `config.yaml` 의 `mcp_servers`. 이 모듈이 넣은 항목만 기억했다가 걷어내고, 사용자가 직접 넣은 서버·규칙은 그대로 둡니다. 봇은 다시 시작해야 새 커넥터를 읽습니다. 서버가 켜질 때 `repairConnectors()` 가 node·스크립트 경로를 다시 맞춥니다.
+- **키**: 봇마다 `<데이터>\connectors\<봇>.token`. 설정 파일에는 키 파일 위치만 적고, 대시보드는 해시로만 확인합니다. 커넥터를 끄거나 봇을 지우면 키도 지웁니다.
+- **관문**: `/api/connector/call` 은 Origin·`sec-fetch-*`·쿠키가 붙은 요청(브라우저)을 거절하고 봇 키가 있어야 합니다. 도구 목록과 설명도 관문이 줍니다(MCP 서버에는 비밀·규칙이 없습니다).
+- **Google 쓰기**: 클라우드의 미리보기 → 승인 토큰 → 적용 흐름을 그대로 쓰되, 승인 토큰은 봇에게 주지 않고 관문 메모리에만 둡니다. `chat` 은 봇이 채팅에서 확인받은 뒤 `apply_change`, `app` 은 사용자가 봇 스튜디오의 「승인 대기」에서 눌러야 적용됩니다. 시트 보기(`sheet_inspect`)는 클라우드에 읽기 경로가 없어, 적용하지 않는 값 바꾸기 미리보기로 탭 이름과 현재 값만 읽습니다.

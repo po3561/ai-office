@@ -25,10 +25,12 @@ export const UPDATE_DIR = join(DATA_HOME, 'update');   // 업데이트 내려받
 export const TOOLS_DIR = join(DATA_HOME, 'tools');     // 앱이 내려받아 둔 도구(Bun·Codex 등)
 export const BOTS_DIR = join(DATA_HOME, 'bots');       // LAPIS 런타임 봇(bot.json 한 폴더씩)
 export const MARKET_DIR = join(DATA_HOME, 'market');   // 스킬 마켓: 저장소 복제본(cache)과 설치 기록
+export const CONNECTORS_DIR = join(DATA_HOME, 'connectors');   // 커넥터: 봇마다 대시보드 호출 키(.token), Hermes 설정 백업
 export const FILES = {
   config: join(DATA_HOME, 'config.json'),
   offices: join(DATA_HOME, 'offices.json'),
   install: join(DATA_HOME, 'install.json'),
+  connectors: join(DATA_HOME, 'connectors.json'),   // 봇별 커넥터 설정(대시보드가 호출 키 확인에 읽는다)
 };
 
 export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');

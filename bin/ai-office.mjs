@@ -73,7 +73,7 @@ async function ensureDashboard(enginePort) {
   if (!existsSync(DASH_ENTRY)) return false;
   mkdirSync(LOG_DIR, { recursive: true });
   const out = openSync(join(LOG_DIR, 'dashboard.log'), 'a');
-  const env = { ...process.env, LAPIS_DASHBOARD_PORT: String(DASH_PORT), LAPIS_OFFICE_URL: `http://127.0.0.1:${enginePort}`, LAPIS_DATA_DIR: join(DATA_HOME, 'lapis'), LAPIS_CONFIG: process.env.LAPIS_CONFIG || join(DATA_HOME, 'lapis-config.json') };
+  const env = { ...process.env, LAPIS_DASHBOARD_PORT: String(DASH_PORT), LAPIS_OFFICE_URL: `http://127.0.0.1:${enginePort}`, LAPIS_DATA_DIR: join(DATA_HOME, 'lapis'), LAPIS_CONNECTORS_FILE: join(DATA_HOME, 'connectors.json'), LAPIS_CONFIG: process.env.LAPIS_CONFIG || join(DATA_HOME, 'lapis-config.json') };
   spawn(process.execPath, ['--no-warnings', DASH_ENTRY], { cwd: join(APP_HOME, 'dashboard'), env, detached: true, stdio: ['ignore', out, out], windowsHide: true }).unref();
   for (let i = 0; i < 40; i++) { await new Promise((r) => setTimeout(r, 300)); if (await pingDashboard()) return true; }
   return false;

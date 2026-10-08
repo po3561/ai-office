@@ -1,6 +1,7 @@
 // 봇 스튜디오: 봇을 하나든 여러 개든 만들고, 엔진·역할(에이전트)·텔레그램 방과 주제·스킬을 설정한다.
 // LAPIS 봇(런타임)과 기존 Claude 사무실·Hermes 를 한 목록에서 본다.
-import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,openDialog,input,textarea,field,select} from './ui.js';
+import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,openDialog,input,textarea,field,select,api,cloud,fmtDate} from './ui.js';
+import {waitForAuth,hasScope} from './account.js';
 import {eng,watchJob,progressBox} from './platform.js';
 
 const ENGINE_ORDER=['claude','codex','ollama','openai','anthropic','hermes'];
@@ -104,6 +105,10 @@ function officeCard(o){
         :button('출근시키기',function(){run(this,async()=>{await eng(`/api/offices/${o.id}/start`,{method:'POST',body:{}});toast('출근시켰어요. 잠시 뒤 켜져요.');});},'btn sm primary'),
       lab),node('p','small muted',hermes?'「출근」은 Hermes 를 켜고, 「항상 켜두기」는 꺼졌을 때 이 프로그램이 다시 켜 줘요.':'「출근」은 텔레그램 지시를 받기 시작해요. 「항상 켜두기」는 꺼졌을 때 이 프로그램이 다시 켜 줘요.'));
   }
+  const conns=o.connectors||[];
+  if(o.exists!==false&&(hermes||!ro))put(c,put(node('div','row wrap'),button('🔌 커넥터'+(conns.length?' · '+conns.length:''),()=>connectorDialog(o),'btn sm'+(conns.length?'':' primary')),
+    hermes?button('🧰 기능 · 활용범위',()=>hermesToolsDialog(o),'btn sm'):null,
+    conns.length?node('span','small muted','연결됨: '+conns.join(', ')):node('span','small muted','구글 시트·문서·일정 같은 바깥 서비스를 봇에 연결해요')));
   const links=put(node('div','row wrap'));
   if(!hermes)links.append(button('부서 관리 →',()=>openOffice(o.id,'#teams'),'btn sm'),button('텔레그램 설정 →',()=>openOffice(o.id,'#connect'),'btn sm'));
   links.append(button('설정 →',()=>openOffice(o.id,'#settings'),'btn sm'),button('스킬 보기 →',()=>openOffice(o.id,'#skills'),'btn sm'));
@@ -111,8 +116,209 @@ function officeCard(o){
   return c;
 }
 
+// ── 커넥터: 봇이 도구로 쓸 바깥 서비스(MCP) ──
+const GOOGLE_HELP={
+  off:'Google 기능을 쓰지 않아요.',
+  read:'드라이브 검색·파일 읽기·시트 보기만 해요. 아무것도 바꾸지 않아요.',
+  chat:'봇이 미리보기를 보여 주고, 채팅에서 "진행"이라고 하면 적용해요.',
+  app:'봇이 미리보기를 만들면, 이 앱 「봇 스튜디오」의 승인 대기에서 내가 「승인」을 눌러야 적용돼요(가장 안전해요).',
+};
+const MASK='********';
+// ── Google 권한: 커넥터 창에서 바로 켠다(「내 계정 → Google 연결」과 같은 연결을 쓴다) ──
+const G_SERVICES=[['drive','Google Drive','파일 찾기·읽기','drive'],['sheets','Google Sheets','시트 보기·쓰기','spreadsheets'],['docs','Google Docs','문서 만들기·고치기','documents'],['slides','Google Slides','슬라이드 만들기·추가','presentations']];
+const G_ALL=['drive','sheets','docs','slides'];
+const G_NEED={off:[],read:['drive','sheets'],chat:G_ALL,app:G_ALL};   // 시트 보기도 Sheets 권한이 필요해서 읽기에도 포함
+// 계정 화면(account.js)의 서비스 이름표와 같다. 다시 연결할 때 지금 갖고 있는 권한을 잃지 않도록 함께 요청한다.
+const G_KEEP=[['drive','drive'],['sheets','spreadsheets'],['docs','documents'],['slides','presentations'],['calendar','calendar'],['gmail','gmail'],['youtube','youtube']];
+
+function googlePermissions(getLevel){
+  const box=node('div','stack');
+  const status=node('p','small muted');
+  let state=null;
+  async function paint(){
+    const level=getLevel();
+    box.hidden=level==='off';
+    if(box.hidden)return;
+    box.replaceChildren(node('p','small muted','Google 연결 상태를 확인하고 있어요…'));
+    try{state=await cloud('GET','/integrations/google-drive/status');}
+    catch(e){box.replaceChildren(node('p','banner warn','Google 연결 상태를 읽지 못했어요: '+errorText(e)));return;}
+    const scopes=state.connection?.scopes||[],connected=state.connected===true;
+    const need=G_NEED[level]||[];
+    const missing=need.filter(id=>!connected||!hasScope(scopes,G_SERVICES.find(x=>x[0]===id)[3]));
+    const rows=node('div','row wrap');
+    for(const [id,name,desc,key] of G_SERVICES){
+      const on=connected&&hasScope(scopes,key),wanted=need.includes(id);
+      rows.append(pill((on?'✓ ':wanted?'⚠ ':'')+name,on?'ok':wanted?'warn':''));
+    }
+    const head=put(node('div','row between wrap'),node('b','small','Google 권한'+(connected&&state.connection?.account_label?' · '+state.connection.account_label:'')),
+      missing.length?pill('연결이 필요해요','warn'):pill('모두 켜져 있어요','ok'));
+    box.replaceChildren(head,rows);
+    if(state.configured===false)box.append(node('p','banner warn','서버에 Google 앱 설정이 아직 없어서 연결할 수 없어요. (누락: '+((state.configuration?.missing||[]).join(', ')||'알 수 없음')+')'));
+    if(missing.length&&state.configured!==false){
+      const label=missing.map(id=>G_SERVICES.find(x=>x[0]===id)[1].replace('Google ','')).join('·');
+      box.append(node('p','small muted',(connected?'지금 연결에 ':'Google 계정에 ')+label+' 권한이 없어요. 아래 버튼을 누르면 Google 인증 창이 열려요. 허용하면 이 화면이 자동으로 바뀌어요. (파일을 바꾸는 작업은 이 권한이 있어도 항상 미리보기와 승인을 거쳐요)'));
+      const go=button(connected?label+' 권한 추가하기':'Google 계정 연결하고 권한 켜기',async function(){
+        const keep=G_KEEP.filter(([,key])=>connected&&hasScope(scopes,key)).map(([id])=>id);
+        const services=[...new Set([...keep,...need])];
+        const tier=scopes.some(x=>/\/auth\/drive$/.test(String(x)))?'advanced':'standard';   // 드라이브 전체 권한이 있었다면 낮추지 않는다
+        await doing(this,async()=>{
+          const ok=await waitForAuth({start:()=>cloud('POST','/google/connect',{services,tier}),poll:id=>cloud('POST','/google/connect/poll',{attemptId:id}),status,onDone:async()=>toast('Google 권한을 켰어요.')});
+          if(ok)paint();
+        });
+      },'btn primary');
+      box.append(put(node('div','row'),go),status);
+    }
+  }
+  return {node:box,paint};
+}
+const linesToMap=(text,sep)=>Object.fromEntries(text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(l=>{const i=l.indexOf(sep);if(i<1)throw new Error('「이름'+sep+'값」 모양으로 적어 주세요: '+l);return [l.slice(0,i).trim(),l.slice(i+1).trim()];}));
+const mapToLines=(m,sep)=>Object.entries(m||{}).map(([k,v])=>k+sep+(sep===':'?' ':'')+v).join('\n');
+const CUSTOM_PRESETS=[
+  {label:'GitHub',name:'github',url:'https://api.githubcopilot.com/mcp/',headers:'Authorization: Bearer 여기에_GitHub_토큰',hint:'GitHub 설정 → Developer settings → Personal access tokens 에서 만든 토큰을 넣어요.'},
+  {label:'직접 입력 (주소)',name:'',url:'https://',headers:'',hint:'MCP 서버 주소와, 필요하면 인증 머리말을 적어요.'},
+  {label:'직접 입력 (명령)',name:'',command:'npx',args:'-y\n패키지이름',hint:'이 PC에서 실행할 MCP 서버 명령이에요. 봇과 같은 권한으로 실행돼요.'},
+];
+
+async function restartOffer(o,r,box){
+  box.replaceChildren();
+  const hermes=o.kind==='hermes';
+  if(!r.running){put(box,node('p','banner info','저장했어요. 다음에 '+(hermes?'Hermes 가 켜질':'출근할')+' 때부터 적용돼요.'));return;}
+  if(!r.canRestart){put(box,node('p','banner warn','저장했어요. 이 Hermes 는 읽기 전용 모드라 이 앱이 끄고 켜지 않아요. Hermes 를 직접 다시 시작해야 적용돼요.'));return;}
+  put(box,put(node('div','banner info'),node('span','','저장했어요. 봇이 지금 켜져 있어서 다시 시작해야 새 설정을 읽어요.'),
+    button('지금 다시 시작',async function(){await doing(this,async()=>{await eng(`/api/offices/${o.id}/restart`,{method:'POST',body:{}});toast('잠시 뒤 다시 시작해요.');this.disabled=true;});},'btn sm primary')));
+}
+
+function customEditor(c){
+  const box=node('div','mode-card');
+  const name=input({value:c.name||'',maxLength:32,placeholder:'예: github'});
+  const kind=select([['url','주소(URL)로 연결'],['command','이 PC에서 명령 실행']],c.command?'command':'url');
+  const url=input({value:c.url||'',placeholder:'https://…/mcp'});
+  const headers=textarea({rows:2,value:typeof c.headers==='string'?c.headers:mapToLines(c.headers,':'),placeholder:'Authorization: Bearer …'});
+  const command=input({value:c.command||'',placeholder:'npx'});
+  const args=textarea({rows:2,value:Array.isArray(c.args)?c.args.join('\n'):(c.args||''),placeholder:'한 줄에 하나씩'});
+  const env=textarea({rows:2,value:typeof c.env==='string'?c.env:mapToLines(c.env,'='),placeholder:'API_KEY=…'});
+  const urlBox=put(node('div','stack'),field('주소',url),field('머리말 (선택)',headers,'한 줄에 「이름: 값」. 저장된 값은 '+MASK+' 로 가려 보여요(그대로 두면 유지).'));
+  const cmdBox=put(node('div','stack'),field('명령',command),field('인자 (선택)',args,'한 줄에 하나씩'),field('환경 값 (선택)',env,'한 줄에 「이름=값」. 저장된 값은 '+MASK+' 로 가려 보여요.'));
+  const sync=()=>{urlBox.hidden=kind.value!=='url';cmdBox.hidden=kind.value!=='command';};
+  kind.addEventListener('change',sync);sync();
+  const remove=button('빼기',()=>box.remove(),'btn sm danger');
+  put(box,put(node('div','top-row'),node('b','',c.name?'🔌 '+c.name:'새 커넥터'),remove),c.hint?node('p','small muted',c.hint):null,put(node('div','stack'),field('이름',name,'영어 소문자로 시작하는 2~32자'),field('연결 방식',kind),urlBox,cmdBox));
+  box.read=()=>kind.value==='url'
+    ?{name:name.value.trim(),url:url.value.trim(),headers:linesToMap(headers.value,':')}
+    :{name:name.value.trim(),command:command.value.trim(),args:args.value.split(/\r?\n/).map(a=>a.trim()).filter(Boolean),env:linesToMap(env.value,'=')};
+  return box;
+}
+
+async function connectorDialog(o){
+  let d;
+  try{d=await eng(`/api/offices/${o.id}/connectors`);}catch(e){toast(errorText(e),true);return;}
+  openDialog((box,close)=>{
+    const hermes=o.kind==='hermes';
+    const on=node('input');on.type='checkbox';on.checked=d.lapis.enabled;
+    const google=select(Object.entries(d.googleLevels),d.lapis.google);
+    const ghelp=node('p','small muted',GOOGLE_HELP[google.value]);google.addEventListener('change',()=>{ghelp.textContent=GOOGLE_HELP[google.value];});
+    const cal=node('input');cal.type='checkbox';cal.checked=d.lapis.calendar;
+    const tasks=node('input');tasks.type='checkbox';tasks.checked=d.lapis.tasks;
+    const gperm=googlePermissions(()=>google.value);
+    google.addEventListener('change',()=>gperm.paint());
+    const lapisBody=put(node('div','stack'),field('Google (드라이브·시트·문서·슬라이드)',google),ghelp,
+      put(node('label','row nowrap small'),cal,node('span','','LAPIS 일정 보기·추가')),
+      put(node('label','row nowrap small'),tasks,node('span','','LAPIS 할 일 보기·추가·완료')),
+      gperm.node,
+      node('p','small muted','봇에게는 Google 키를 주지 않고, 이 앱이 라피스 계정으로 대신 호출해요. 같은 연결은 「내 계정」에서도 볼 수 있어요.'));
+    const card=node('div','mode-card'+(on.checked?' on':''));
+    const syncOn=()=>{lapisBody.hidden=!on.checked;card.classList.toggle('on',on.checked);if(on.checked)gperm.paint();};on.addEventListener('change',syncOn);syncOn();
+    const list=node('div','stack');
+    for(const c of d.custom)list.append(customEditor(c));
+    const addRow=put(node('div','row wrap'),node('span','small muted','추가:'),...CUSTOM_PRESETS.map(p=>button('＋ '+p.label,()=>list.append(customEditor(p)),'btn sm')));
+    const after=node('div');
+    const save=button('저장',async function(){
+      await doing(this,async()=>{
+        const custom=[...list.children].map(el=>el.read());
+        const r=await eng(`/api/offices/${o.id}/connectors`,{method:'PUT',body:{lapis:{enabled:on.checked,google:google.value,calendar:cal.checked,tasks:tasks.checked},custom}});
+        toast('커넥터를 저장했어요.');await restartOffer(o,r,after);refreshAll();
+      });
+    },'btn primary');
+    put(card,put(node('div','top-row'),put(node('label','row nowrap'),on,node('b','','LAPIS 커넥터 (기본 제공)')),pill('추천','accent')),
+      node('p','small muted','구글 시트에 직접 쓰기, 문서·슬라이드 만들기, 드라이브 찾기, 일정·할 일 등록을 봇이 텔레그램 지시로 할 수 있게 해요.'),lapisBody);
+    put(box,put(node('div','dlg-head'),node('h2','','🔌 '+o.name+' · 커넥터'),node('p','','봇이 도구로 쓸 바깥 서비스를 연결해요. 적용 위치: '+d.appliedTo+(hermes&&d.office.readonly?' (읽기 전용 모드여도 이 설정만은 여기서 직접 바꿔요. 바꾸기 전 원본은 백업해 둬요)':''))),
+      put(node('div','dlg-body'),put(node('div','stack'),card,
+        node('div','group-title','직접 추가한 커넥터 (MCP 서버)'),list,addRow,
+        node('p','small muted','바꾼 뒤에는 봇을 다시 시작해야 적용돼요. 직접 추가한 커넥터는 봇과 같은 권한으로 동작하니 믿을 수 있는 것만 넣으세요.'),
+        after,activityBox(o))),
+      put(node('div','dlg-foot'),button('닫기',close),save));
+  },{wide:true});
+}
+
+function activityBox(o){
+  const note=node('p','small muted','불러오는 중…');
+  const box=put(node('div'),node('div','group-title','최근 사용 기록'),note);
+  api('/api/connector/activity?bot='+encodeURIComponent(o.id)).then(r=>{
+    if(!r.items.length){note.textContent='아직 이 봇이 LAPIS 커넥터를 쓴 기록이 없어요. (이 앱을 다시 켜면 기록이 비워져요)';return;}
+    const ul=node('ul','guide');
+    for(const it of r.items.slice(0,12))ul.append(node('li','',`${fmtDate(it.at)} · ${it.ok?'✓':'✗'} ${it.tool} — ${it.note}`));
+    note.replaceWith(ul);
+  }).catch(()=>{note.textContent='기록을 불러오지 못했어요.';});
+  return box;
+}
+
+// ── Hermes 기능 · 활용범위: 텔레그램에서 쓸 기능 묶음과 한 번에 할 수 있는 단계 수 ──
+async function hermesToolsDialog(o){
+  let d;
+  try{d=await eng(`/api/offices/${o.id}/hermes/tools`);}catch(e){toast(errorText(e),true);return;}
+  openDialog((box,close)=>{
+    // 칩의 체크는 office.js 의 전역 처리기가 change 없이 바꾸므로, 저장할 때 체크 상태를 직접 읽는다.
+    const chips=node('div','chips');
+    for(const t of d.toolsets){
+      const l=node('label','chip'+(t.on?' on':''));const cb=node('input');cb.type='checkbox';cb.checked=t.on;cb.style.display='none';cb.dataset.key=t.key;
+      put(l,cb,put(node('span'),node('b','',(t.risk?'⚠ ':'')+t.label),node('span','',t.desc+(t.risk?' — '+t.risk:''))));chips.append(l);
+    }
+    const turns=input({type:'number',min:d.turnsRange.min,max:d.turnsRange.max,value:d.maxTurns??''});
+    const after=node('div');
+    const save=button('저장',async function(){
+      await doing(this,async()=>{
+        const picked=new Set([...chips.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.dataset.key));
+        const risky=d.toolsets.filter(t=>t.risk&&picked.has(t.key)&&!t.on);
+        let confirmRisk=false;
+        if(risky.length){confirmRisk=await confirmDialog({title:'정말 켤까요?',body:risky.map(t=>t.label+': '+t.risk).join(' / ')+' 텔레그램으로 들어온 지시로 실행되니, 믿을 수 있는 사람만 봇을 쓰는 경우에만 켜세요.',ok:'켜기',danger:true});if(!confirmRisk)return;}
+        const n=turns.value===''?undefined:Number(turns.value);
+        const r=await eng(`/api/offices/${o.id}/hermes/tools`,{method:'PUT',body:{toolsets:d.toolsets.map(t=>t.key).filter(k=>picked.has(k)),maxTurns:n,confirmRisk}});
+        if(!r.changed){toast('바뀐 것이 없어요.');return;}
+        toast('Hermes 기능을 저장했어요.');d=r;await restartOffer(o,r,after);
+      });
+    },'btn primary');
+    put(box,put(node('div','dlg-head'),node('h2','','🧰 '+o.name+' · 기능 · 활용범위'),node('p','','텔레그램에서 이 Hermes 가 쓸 수 있는 기능을 골라요. 바꾸기 전 config.yaml 원본은 이 앱의 데이터 폴더에 백업해 둬요.')),
+      put(node('div','dlg-body'),put(node('div','stack'),
+        d.explicit?null:node('p','banner info','지금은 Hermes 기본 기능 묶음을 쓰고 있어요. 여기서 저장하면 고른 기능만 쓰도록 바뀌어요.'),
+        chips,
+        field('한 번에 할 수 있는 단계 수',turns,`복잡한 일(시트 읽고 → 정리하고 → 쓰기)은 단계가 많이 필요해요. ${d.turnsRange.min}~${d.turnsRange.max}, 지금 ${d.maxTurns??'기본값'}. 늘리면 사용량도 늘어요.`),
+        d.others.length?node('p','small muted','그대로 두는 항목(플러그인 등): '+d.others.join(', ')):null,
+        node('p','small muted','구글 시트·문서·일정 같은 바깥 서비스는 「🔌 커넥터」에서 연결해요.'),
+        after)),
+      put(node('div','dlg-foot'),button('닫기',close),button('🔌 커넥터 열기',()=>connectorDialog(o),'btn'),save));
+  },{wide:true});
+}
+
+// ── 승인 대기: 「앱에서 승인」으로 둔 봇의 Google 변경 ──
+async function pendingCard(){
+  let items=[];
+  try{items=(await api('/api/connector/pending')).items;}catch{return null;}
+  if(!items.length)return null;
+  const card=put(node('section','card'),put(node('div','card-head'),put(node('div'),node('h2','','✋ 승인 대기 '+items.length+'건'),node('p','sub','봇이 Google 시트·문서를 바꾸려고 해요. 내용을 보고 승인하면 바로 적용돼요. 10분이 지나면 만료돼요.'))));
+  for(const it of items){
+    const row=put(node('div','mode-card'),put(node('div','top-row'),node('b','',it.botName+' · '+it.summary),node('span','small muted',fmtDate(it.createdAt)+' 요청')),node('pre','mk-pre',it.detail||''));
+    const done=(msg)=>{toast(msg);renderList();};
+    if(it.status==='waiting')put(row,put(node('div','row'),
+      button('승인하고 적용',async function(){await doing(this,async()=>{const r=await api(`/api/connector/pending/${it.id}/approve`,{method:'POST',body:{}});done('적용했어요.'+(r.item.result?.updatedCells!=null?' '+r.item.result.updatedCells+'칸':''));});},'btn sm primary'),
+      button('거절',async function(){await doing(this,async()=>{await api(`/api/connector/pending/${it.id}/reject`,{method:'POST',body:{}});done('거절했어요. 봇에게도 알려져요.');});},'btn sm danger')));
+    else put(row,node('p','small muted','적용하는 중이에요…'));
+    card.append(row);
+  }
+  return card;
+}
+
 async function renderList(){
-  const [d,ov]=await Promise.all([loadMeta(),eng('/api/overview').catch(()=>({offices:[]}))]);
+  const [d,ov,pend]=await Promise.all([loadMeta(),eng('/api/overview').catch(()=>({offices:[]})),pendingCard()]);
   const head=put(node('div','row between wrap'),node('p','view-intro','봇은 하나만 써도, 여러 개를 만들어 역할별로 나눠도 돼요. 봇마다 두뇌(AI)와 역할, 텔레그램 방을 따로 정해요.'),put(node('div','row'),button('Claude 사무실(고급) 만들기',()=>document.querySelector('#newOffice')?.click(),'btn'),link('＋ 새 봇 만들기','#studio/new','btn primary')));
   const grid=node('div','grid cols-2');
   for(const b of d.bots){
@@ -132,14 +338,15 @@ async function renderList(){
       node('li','','Claude 사무실 — Claude Code 로 돌아가는 사무실이에요. 부서와 텔레그램을 설정하고, 켜고 끌 수 있어요.'),
       node('li','','Hermes · 읽기 전용 — 스스로 일하는 별개의 봇이에요. 이 앱은 보기만 하고 스킬 설치만 도와요(가장 안전해요).'),
       node('li','','Hermes · 사무실용(단일 사용) — 이 앱이 그 봇 하나를 사무실처럼 맡아 켜고 끄고 항상 켜두기까지 해요. 같은 텔레그램 봇 토큰을 다른 곳에서 동시에 쓰지 마세요.'),
+      node('li','','🔌 커넥터 — Claude 사무실과 Hermes 에 구글 시트·문서·드라이브, LAPIS 일정·할 일, 직접 고른 MCP 서버를 도구로 연결해요. 🧰 기능 — Hermes 가 텔레그램에서 쓸 기능(웹·예약 작업·기억·사진 보기 등)을 골라요.'),
       node('li','','삭제 — 이 앱이 만든 봇은 폴더를 보관 위치로 옮기고, 불러온 봇은 파일을 그대로 두고 목록에서만 없애요. 이름을 입력해야 지워져요.')));
-  root().replaceChildren(head,grid,legend);
+  root().replaceChildren(...[head,pend,grid,legend].filter(Boolean));
 }
 
 // ── 새 봇 ──
 async function renderNew(){
   await loadMeta();
-  const st={name:'',engine:'',presets:new Set(),persona:''};
+  const st={name:'',engine:'',persona:''};
   const name=input({placeholder:'예: 내 비서, 우리 동아리 봇',maxLength:40});name.setAttribute('aria-label','봇 이름');
   const engineBox=node('div','engine-grid');
   let picker=null;const modelBox=node('div');
@@ -158,14 +365,15 @@ async function renderNew(){
   await pickEngine(firstReady);
   const chips=node('div','chips');
   for(const p of meta.agentPresets.slice(0,12)){
-    const l=node('label','chip');const cb=node('input');cb.type='checkbox';cb.style.display='none';
-    cb.addEventListener('change',()=>{cb.checked?st.presets.add(p.key):st.presets.delete(p.key);l.classList.toggle('on',cb.checked);});
+    const l=node('label','chip');const cb=node('input');cb.type='checkbox';cb.style.display='none';cb.dataset.key=p.key;
     put(l,cb,put(node('span'),node('b','',p.emoji+' '+p.name),node('span','',p.role)));chips.append(l);
   }
   const persona=textarea({rows:3,maxLength:4000,placeholder:'비워 두면 기본 비서 지침을 써요. 예: 친근한 말투로, 항상 한 줄 요약부터.'});persona.setAttribute('aria-label','봇 성격과 지침');
   const make=button('봇 만들기',async function(){
     await doing(this,async()=>{
-      const body={name:name.value.trim(),engine:{type:st.engine,model:picker.get()},presets:[...st.presets],persona:persona.value.trim()||undefined};
+      // 체크 상태는 office.js 의 전역 처리기가 change 없이 바꾸므로 여기서 직접 읽는다.
+      const presets=[...chips.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.dataset.key);
+      const body={name:name.value.trim(),engine:{type:st.engine,model:picker.get()},presets,persona:persona.value.trim()||undefined};
       const b=await eng('/api/bots',{method:'POST',body});
       toast('봇을 만들었어요. 이어서 텔레그램을 연결해 보세요.');tab='telegram';go('#studio/'+b.id);
     });

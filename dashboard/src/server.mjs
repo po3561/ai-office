@@ -10,6 +10,7 @@ import {createVault,dpapi} from './vault.mjs';
 import {createCloud} from './lapis-cloud.mjs';
 import {createCalendarStore,createGoogleCalendar} from './calendar.mjs';
 import {createExtraRoutes} from './extra-routes.mjs';
+import {createConnectorGateway} from './connector-gateway.mjs';
 import {createTaskStore} from './tasks.mjs';
 import {createAccounts} from './accounts.mjs';
 import {rentalUrl as configuredRentalUrl,cloudBase} from './config.mjs';
@@ -97,6 +98,8 @@ export function createDashboardServer(options={}){
     return (detail.drives||[]).map(g=>g.path);
   });
   const extra=createExtraRoutes({cloud,calendar:calendarStore,gcal,tasks:taskStore,getGrants,listLocal:options.listLocal,reveal:options.reveal});
+  // 봇 커넥터: 봇이 띄운 LAPIS 커넥터(MCP)가 이 서버를 거쳐 Google·일정·할 일을 쓴다. 봇별 키와 사용 범위는 Office 엔진이 connectors.json 에 쓴다.
+  const connectors=createConnectorGateway({cloud,calendar:calendarStore,tasks:taskStore,connectorsFile:options.connectorsFile||process.env.LAPIS_CONNECTORS_FILE||join(dataDir,'..','connectors.json')});
   // 파일 서버: 이 PC 의 고른 폴더를 라피스 계정·초대 코드로 읽기 전용 공유한다(클라우드 중계, 받는 포트 없음).
   const fileData=join(dataDir,'file-server');
   const fileHost=options.fileHost||createFileHost({baseUrl:options.cloudBase||cloudBase(),dataDir:join(fileData,'audit'),fetchImpl:options.cloudFetch});
@@ -121,10 +124,14 @@ export function createDashboardServer(options={}){
       if(!oauthReturn&&((origin&&!hosts.has(origin.replace(/^http:\/\//,'')))||req.headers['sec-fetch-site']==='cross-site'))throw new RequestError(403,'대시보드 화면에서 접속해 주세요.');
       if(/%2f|%5c|%00/i.test(url.pathname))throw new RequestError(400,'잘못된 경로입니다.');
       const write=!['GET','HEAD'].includes(req.method);
-      if(write&&req.headers['x-lapis-request']!=='1')throw new RequestError(403,'대시보드 화면에서만 조작할 수 있습니다.');
+      // 봇 커넥터 호출은 화면이 아니라 이 PC 의 봇 프로세스가 키를 들고 부른다. 브라우저에서 온 요청은 받지 않는다.
+      const connectorCall=url.pathname==='/api/connector/call';
+      if(connectorCall&&(origin||req.headers['sec-fetch-site']||req.headers['sec-fetch-mode']||req.headers.cookie))throw new RequestError(403,'봇 커넥터 전용 주소입니다.');
+      if(write&&!connectorCall&&req.headers['x-lapis-request']!=='1')throw new RequestError(403,'대시보드 화면에서만 조작할 수 있습니다.');
       // 회원제 게이트: 화면 파일을 뺀 모든 기능은 로그인한 뒤에만 쓸 수 있다.
       if(requireLogin&&needsLogin(req.method,url.pathname)&&!(await signedIn(cloud)))throw new RequestError(401,'로그인이 필요해요.');
       if(await extra(req,res,url,{json,readJson,readRaw:(request,limit)=>readLimited(request,limit),port}))return;
+      if(await connectors(req,res,url,{json,readJson}))return;
       if(await fileRoutes(req,res,url,{json,readJson}))return;
       if(url.pathname==='/api/overview'&&req.method==='GET'){
         if(!overviewCache||Date.now()-overviewCache.at>5000){
