@@ -4,7 +4,7 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { join, extname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { WEB, APP_HOME, CLI, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR } from './paths.mjs';
+import { WEB, APP_HOME, CLI, DATA_HOME, OFFICES_DIR, SHARED_SKILLS, TEMPLATES, MARKET_DIR, CLAUDE_HOME } from './paths.mjs';
 import { getConfig, setConfig } from './config.mjs';
 import { readJson, HttpError, need, isDir, isWindows, run } from './util.mjs';
 import { PRESETS } from './presets.mjs';
@@ -33,6 +33,7 @@ import { createRuntime, buildSystem, pickAgent } from './runtime.mjs';
 import { createPublisher } from './publish.mjs';
 import { createStaleWatcher } from './engine-guard.mjs';
 import { createUsage } from './usage.mjs';
+import { createObserver, assess } from './observed.mjs';
 
 const pkg = readJson(join(APP_HOME, 'package.json'), { version: '0.0.0' });
 let updater = createUpdater({ current: pkg.version });
@@ -380,7 +381,15 @@ route('GET', '/api/connections/models/:provider', async ({ p }) => connections.m
 // 엔진은 봇·에이전트마다 고른다(로컬 AI·GPT·Claude·Hermes). 텔레그램 허용(페어링)은 이 화면에서만 바뀐다.
 export const tgApi = createTgApi();
 export const usage = createUsage({ home: DATA_HOME });
-route('GET', '/api/usage', async ({ url }) => usage.query(Object.fromEntries(url.searchParams)));
+// 이 프로그램 밖에서 일하는 봇(Claude 사무실·Hermes)은 그 봇이 남긴 기록에서 실제 사용량과 상태를 읽는다.
+const observer = createObserver({ claudeHome: CLAUDE_HOME });
+async function observe(o) {
+  try { return await observer.office(o); }
+  catch (e) { console.error('[ai-office] 봇 기록을 읽지 못했습니다:', o.id, e.message); return { available: false, events: [], incidents: [], error: '이 봇의 기록을 읽지 못했어요.' }; }
+}
+const observedOffices = () => listOffices().filter((o) => isDir(o.folder));
+async function observedEvents() { const all = []; for (const o of observedOffices()) all.push(...(await observe(o)).events); return all; }
+route('GET', '/api/usage', async ({ url }) => usage.query(Object.fromEntries(url.searchParams), await observedEvents()));
 route('PUT', '/api/usage/pricing', async ({ body }) => usage.setPricing(body));
 export const engines = createEngines({ ollama, secrets, components, usage, runImpl: run,
   onAccountingError: failure => console.warn(`[ai-office] 사용량 기록 실패 (${failure.sources.join(', ')}). 원장 저장 상태를 확인해 주세요.`) });
@@ -405,6 +414,30 @@ route('POST', '/api/bots/:id/telegram/policy', async ({ p, body }) => { bots.set
 route('POST', '/api/bots/:id/telegram/rooms/:chat', async ({ p, body }) => bots.setRoom(p.id, p.chat, body));
 route('DELETE', '/api/bots/:id/telegram/rooms/:chat', async ({ p }) => { bots.forgetRoom(p.id, p.chat); return { ok: true }; });
 route('POST', '/api/bots/:id/telegram/rooms/:chat/topics/:thread', async ({ p, body }) => bots.setTopic(p.id, p.chat, p.thread, body));
+// 봇 상태: 켜져 있다는 것만이 아니라 실제로 답하고 있는지(한도·오류·지연)를 기록으로 판정한다.
+route('GET', '/api/health/bots', async () => {
+  const d = await diagnostics(), nowMs = Date.now(), out = [];
+  // 같은 방에 있는 이 PC 의 다른 봇을 번호 대신 이름으로 보여 준다(토큰 앞부분이 봇 번호).
+  const names = {};
+  for (const o of listOffices()) { const id = String(summary(o, d).telegram?.masked || '').split(':')[0]; if (/^\d+$/.test(id)) names[id] = `${o.name} 봇`; }
+  for (const o of listOffices()) {
+    const s = summary(o, d);
+    if (!s.exists) { out.push({ id: o.id, name: o.name, kind: o.kind, running: false, state: 'bad', headline: '폴더를 찾을 수 없어요', reasons: [{ tone: 'bad', text: '등록된 폴더에 연결할 수 없어요. 외장 드라이브·폴더 경로를 확인해 주세요.' }], usage: null }); continue; }
+    const tgState = o.kind === 'hermes' ? ((readJson(join(o.folder, 'gateway_state.json'), {}).platforms || {}).telegram || {}).state : '';
+    out.push(assess({ office: o, runtime: { running: s.running, detail: s.detail, telegram: s.running ? tgState : '' }, observed: await observe(o), nowMs, names }));
+  }
+  const ledger = usage.query({ from: new Date(nowMs - 7 * 86400000).toISOString() }, [], { eventsLimit: Infinity }).events;
+  for (const b of bots.list()) {
+    const rt = runtimeBots.view(b.id);
+    const mine = ledger.filter((e) => e.botId === b.id);
+    const failures = mine.filter((e) => !e.success && Date.parse(e.at) >= nowMs - 86400000).map((e) => ({ kind: 'reply-failed', at: e.at }));
+    const answered = mine.filter((e) => e.success).map((e) => e.at).at(-1) || '';
+    const r = assess({ office: { id: b.id, name: b.name, kind: 'lapis' }, runtime: { running: rt.running, detail: rt.running ? '' : '꺼짐' }, observed: { source: 'ledger', available: true, events: mine, incidents: failures, replyAt: answered }, nowMs });
+    if (rt.error) { r.reasons.unshift({ tone: 'bad', text: rt.error }); if (r.running) { r.state = 'bad'; r.headline = rt.error; } }
+    out.push(r);
+  }
+  return { at: new Date(nowMs).toISOString(), bots: out };
+});
 // LAPIS_CF_BASE 는 개발·시험용(가짜 Cloudflare 서버로 돌려 볼 때)이다.
 export const publisher = createPublisher({ bots, secrets, tg: tgApi, stopLocal: (id) => runtimeBots.stop(id), cfBase: process.env.LAPIS_CF_BASE || undefined });
 // 웹 배포(Cloudflare Workers): 올리기는 화면에서 사용자가 누를 때만. 비밀번호는 보기 요청(POST)으로만 돌려준다.
