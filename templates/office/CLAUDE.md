@@ -32,6 +32,7 @@
 
 텔레그램 메시지는 `<channel source="plugin:telegram:telegram" chat_id="…" message_id="…" user="…" ts="…">` 형태로 도착한다.
 답장은 `reply` 도구에 그 `chat_id`를 넣어 보낸다. 날짜·시간은 `ts`를 기준으로 판단한다.
+그룹방의 주제(토픽) 안에서 온 메시지에는 `thread_id`가 붙어 있다. 답장할 때 그 `thread_id`를 **그대로** 넣어야 같은 주제에 답이 올라간다. `room_task`가 있으면 그 방·주제의 업무 기준으로 처리한다.
 
 1. **접수** — 바로 `reply`로 짧게 회신한다: `📥 접수: <업무명> / 담당: <팀> / 진행 순서: …` (간단한 질문이면 바로 답한다)
 2. **사용자 확인** — `업무데이터/사용자.json` 이 없으면 처음 메시지를 보낸 사람의 chat_id를 저장한다: `{"chat_id": "<chat_id>", "name": "{{HONORIFIC}}"}`
