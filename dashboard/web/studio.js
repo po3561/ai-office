@@ -1,6 +1,7 @@
 // 봇 스튜디오: 봇을 하나든 여러 개든 만들고, 엔진·역할(에이전트)·텔레그램 방과 주제·스킬을 설정한다.
 // LAPIS 봇(런타임)과 기존 Claude 사무실·Hermes 를 한 목록에서 본다.
-import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,openDialog,input,textarea,field,select,api,fmtDate} from './ui.js';
+import {q,node,put,button,pill,link,registerPage,toast,errorText,doing,confirmDialog,openDialog,input,textarea,field,select,api,cloud,fmtDate} from './ui.js';
+import {waitForAuth,hasScope} from './account.js';
 import {eng,watchJob,progressBox} from './platform.js';
 
 const ENGINE_ORDER=['claude','codex','ollama','openai','anthropic','hermes'];
@@ -123,6 +124,53 @@ const GOOGLE_HELP={
   app:'봇이 미리보기를 만들면, 이 앱 「봇 스튜디오」의 승인 대기에서 내가 「승인」을 눌러야 적용돼요(가장 안전해요).',
 };
 const MASK='********';
+// ── Google 권한: 커넥터 창에서 바로 켠다(「내 계정 → Google 연결」과 같은 연결을 쓴다) ──
+const G_SERVICES=[['drive','Google Drive','파일 찾기·읽기','drive'],['sheets','Google Sheets','시트 보기·쓰기','spreadsheets'],['docs','Google Docs','문서 만들기·고치기','documents'],['slides','Google Slides','슬라이드 만들기·추가','presentations']];
+const G_ALL=['drive','sheets','docs','slides'];
+const G_NEED={off:[],read:['drive','sheets'],chat:G_ALL,app:G_ALL};   // 시트 보기도 Sheets 권한이 필요해서 읽기에도 포함
+// 계정 화면(account.js)의 서비스 이름표와 같다. 다시 연결할 때 지금 갖고 있는 권한을 잃지 않도록 함께 요청한다.
+const G_KEEP=[['drive','drive'],['sheets','spreadsheets'],['docs','documents'],['slides','presentations'],['calendar','calendar'],['gmail','gmail'],['youtube','youtube']];
+
+function googlePermissions(getLevel){
+  const box=node('div','stack');
+  const status=node('p','small muted');
+  let state=null;
+  async function paint(){
+    const level=getLevel();
+    box.hidden=level==='off';
+    if(box.hidden)return;
+    box.replaceChildren(node('p','small muted','Google 연결 상태를 확인하고 있어요…'));
+    try{state=await cloud('GET','/integrations/google-drive/status');}
+    catch(e){box.replaceChildren(node('p','banner warn','Google 연결 상태를 읽지 못했어요: '+errorText(e)));return;}
+    const scopes=state.connection?.scopes||[],connected=state.connected===true;
+    const need=G_NEED[level]||[];
+    const missing=need.filter(id=>!connected||!hasScope(scopes,G_SERVICES.find(x=>x[0]===id)[3]));
+    const rows=node('div','row wrap');
+    for(const [id,name,desc,key] of G_SERVICES){
+      const on=connected&&hasScope(scopes,key),wanted=need.includes(id);
+      rows.append(pill((on?'✓ ':wanted?'⚠ ':'')+name,on?'ok':wanted?'warn':''));
+    }
+    const head=put(node('div','row between wrap'),node('b','small','Google 권한'+(connected&&state.connection?.account_label?' · '+state.connection.account_label:'')),
+      missing.length?pill('연결이 필요해요','warn'):pill('모두 켜져 있어요','ok'));
+    box.replaceChildren(head,rows);
+    if(state.configured===false)box.append(node('p','banner warn','서버에 Google 앱 설정이 아직 없어서 연결할 수 없어요. (누락: '+((state.configuration?.missing||[]).join(', ')||'알 수 없음')+')'));
+    if(missing.length&&state.configured!==false){
+      const label=missing.map(id=>G_SERVICES.find(x=>x[0]===id)[1].replace('Google ','')).join('·');
+      box.append(node('p','small muted',(connected?'지금 연결에 ':'Google 계정에 ')+label+' 권한이 없어요. 아래 버튼을 누르면 Google 인증 창이 열려요. 허용하면 이 화면이 자동으로 바뀌어요. (파일을 바꾸는 작업은 이 권한이 있어도 항상 미리보기와 승인을 거쳐요)'));
+      const go=button(connected?label+' 권한 추가하기':'Google 계정 연결하고 권한 켜기',async function(){
+        const keep=G_KEEP.filter(([,key])=>connected&&hasScope(scopes,key)).map(([id])=>id);
+        const services=[...new Set([...keep,...need])];
+        const tier=scopes.some(x=>/\/auth\/drive$/.test(String(x)))?'advanced':'standard';   // 드라이브 전체 권한이 있었다면 낮추지 않는다
+        await doing(this,async()=>{
+          const ok=await waitForAuth({start:()=>cloud('POST','/google/connect',{services,tier}),poll:id=>cloud('POST','/google/connect/poll',{attemptId:id}),status,onDone:async()=>toast('Google 권한을 켰어요.')});
+          if(ok)paint();
+        });
+      },'btn primary');
+      box.append(put(node('div','row'),go),status);
+    }
+  }
+  return {node:box,paint};
+}
 const linesToMap=(text,sep)=>Object.fromEntries(text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(l=>{const i=l.indexOf(sep);if(i<1)throw new Error('「이름'+sep+'값」 모양으로 적어 주세요: '+l);return [l.slice(0,i).trim(),l.slice(i+1).trim()];}));
 const mapToLines=(m,sep)=>Object.entries(m||{}).map(([k,v])=>k+sep+(sep===':'?' ':'')+v).join('\n');
 const CUSTOM_PRESETS=[
@@ -171,12 +219,15 @@ async function connectorDialog(o){
     const ghelp=node('p','small muted',GOOGLE_HELP[google.value]);google.addEventListener('change',()=>{ghelp.textContent=GOOGLE_HELP[google.value];});
     const cal=node('input');cal.type='checkbox';cal.checked=d.lapis.calendar;
     const tasks=node('input');tasks.type='checkbox';tasks.checked=d.lapis.tasks;
+    const gperm=googlePermissions(()=>google.value);
+    google.addEventListener('change',()=>gperm.paint());
     const lapisBody=put(node('div','stack'),field('Google (드라이브·시트·문서·슬라이드)',google),ghelp,
       put(node('label','row nowrap small'),cal,node('span','','LAPIS 일정 보기·추가')),
       put(node('label','row nowrap small'),tasks,node('span','','LAPIS 할 일 보기·추가·완료')),
-      put(node('p','small muted'),'Google 기능은 이 앱이 라피스 계정에 로그인되어 있고 ',link('「내 계정 → Google 연결」','#account'),'에서 Drive·Sheets·Docs 를 켜 둬야 동작해요. 봇에게는 키를 주지 않고, 이 앱이 대신 호출해요.'));
+      gperm.node,
+      node('p','small muted','봇에게는 Google 키를 주지 않고, 이 앱이 라피스 계정으로 대신 호출해요. 같은 연결은 「내 계정」에서도 볼 수 있어요.'));
     const card=node('div','mode-card'+(on.checked?' on':''));
-    const syncOn=()=>{lapisBody.hidden=!on.checked;card.classList.toggle('on',on.checked);};on.addEventListener('change',syncOn);syncOn();
+    const syncOn=()=>{lapisBody.hidden=!on.checked;card.classList.toggle('on',on.checked);if(on.checked)gperm.paint();};on.addEventListener('change',syncOn);syncOn();
     const list=node('div','stack');
     for(const c of d.custom)list.append(customEditor(c));
     const addRow=put(node('div','row wrap'),node('span','small muted','추가:'),...CUSTOM_PRESETS.map(p=>button('＋ '+p.label,()=>list.append(customEditor(p)),'btn sm')));

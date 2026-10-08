@@ -45,7 +45,20 @@ export async function startFakeCloud() {
     if (path === '/me/avatar' && req.method === 'DELETE') { u.avatar = null; return send(res, 200, { ok: true }); }
     if (path === '/dashboard-sync' && req.method === 'GET') return send(res, 200, { ok: true, revision: u.syncRev, updatedAt: u.sync ? new Date().toISOString() : null, snapshot: u.sync });
     if (path === '/dashboard-sync' && req.method === 'PUT') { u.sync = json().snapshot; u.syncRev += 1; return send(res, 200, { ok: true, revision: u.syncRev, updatedAt: new Date().toISOString() }); }
-    if (path === '/integrations/google-drive/status') return send(res, 200, { ok: true, connected: false, configured: true });
+    // Google 연결(권한 선택 → 인증 → 완료)을 흉내 낸다: 첫 확인은 대기, 두 번째 확인부터 완료. 허용한 서비스가 상태의 scopes 에 반영된다.
+    const SCOPE = { drive: 'https://www.googleapis.com/auth/drive.file', sheets: 'https://www.googleapis.com/auth/spreadsheets', docs: 'https://www.googleapis.com/auth/documents', slides: 'https://www.googleapis.com/auth/presentations', calendar: 'https://www.googleapis.com/auth/calendar', gmail: 'https://www.googleapis.com/auth/gmail.readonly', youtube: 'https://www.googleapis.com/auth/youtube.readonly' };
+    if (path === '/integrations/google-drive/authorize' && req.method === 'POST') {
+      const b = json(); u.googleAttempt = { id: randomUUID(), poll: randomUUID(), services: b.services || ['drive'], polls: 0 };
+      return send(res, 200, { ok: true, attempt_id: u.googleAttempt.id, poll_token: u.googleAttempt.poll, authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth?dev=1', expires_at: new Date(Date.now() + 600000).toISOString() });
+    }
+    if (path === '/integrations/google-drive/authorize/complete' && req.method === 'POST') {
+      const a = u.googleAttempt;
+      if (!a || a.id !== json().attempt_id) return send(res, 404, { error: 'not found' });
+      if (++a.polls < 2) return send(res, 200, { ok: true, status: 'pending' });
+      u.google = { scopes: [...new Set([...(u.google?.scopes || []), ...a.services.map((x) => SCOPE[x]).filter(Boolean)])], at: new Date().toISOString() };
+      return send(res, 200, { ok: true, status: 'completed' });
+    }
+    if (path === '/integrations/google-drive/status') return send(res, 200, u.google ? { ok: true, configured: true, connected: true, connection: { account_label: 'dev@example.test', scopes: u.google.scopes, status: 'CONNECTED', connected_at: u.google.at } } : { ok: true, connected: false, configured: true });
     return send(res, 404, { error: 'not found' });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));

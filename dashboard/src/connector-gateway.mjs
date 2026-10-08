@@ -59,9 +59,9 @@ const SCOPE_OFF={'google.read':'Google 읽기','google.write':'Google 쓰기',ca
 // 라피스 클라우드의 영어 오류를 봇이 사용자에게 바로 전할 수 있는 말로 바꾼다.
 function cloudMessage(status,raw){
   const m=String(raw||'');
-  if(/Sheets editing permission/i.test(m))return '라피스 계정의 Google 연결에 시트 편집 권한이 없어요. LAPIS 앱 「내 계정 → Google 연결」에서 Google Sheets 를 켜 주세요.';
-  if(/permission.*(docs|slides|workspace)|Docs|Slides/i.test(m)&&status===409)return '라피스 계정의 Google 연결에 문서·슬라이드 권한이 없어요. LAPIS 앱 「내 계정 → Google 연결」에서 켜 주세요.';
-  if(/not connected|reconnect/i.test(m)||status===409&&/drive/i.test(m))return 'Google 드라이브가 라피스 계정에 연결되어 있지 않거나 다시 연결이 필요해요. LAPIS 앱 「내 계정 → Google 연결」에서 연결해 주세요.';
+  if(/Sheets editing permission/i.test(m))return '라피스 계정의 Google 연결에 시트 편집 권한이 없어요. LAPIS 앱 「봇 스튜디오 → 커넥터」의 Google 권한에서 Sheets 를 켜 주세요.';
+  if(/permission.*(docs|slides|workspace)|Docs|Slides/i.test(m)&&status===409)return '라피스 계정의 Google 연결에 문서·슬라이드 권한이 없어요. LAPIS 앱 「봇 스튜디오 → 커넥터」의 Google 권한에서 켜 주세요.';
+  if(/not connected|reconnect/i.test(m)||status===409&&/drive/i.test(m))return 'Google 드라이브가 라피스 계정에 연결되어 있지 않거나 다시 연결이 필요해요. LAPIS 앱 「봇 스튜디오 → 커넥터」의 Google 권한에서 연결해 주세요.';
   if(/No permission/i.test(m)||status===403)return '이 파일에 접근할 권한이 없어요. 연결한 Google 계정으로 열 수 있는 파일인지 확인해 주세요.';
   if(/not found/i.test(m)||status===404)return '파일이나 대상을 찾지 못했어요. 링크를 다시 확인해 주세요.';
   if(/expired/i.test(m)||status===410)return '미리보기 유효 시간(10분)이 지났어요. 다시 미리보기를 만들어 주세요.';
@@ -244,7 +244,7 @@ export function createConnectorGateway({cloud,calendar,tasks,connectorsFile,now=
   function statusText(bot){
     const l=bot.lapis||{};
     const on=TOOLS.filter(t=>allowed(bot,t.scope)).map(t=>t.name);
-    return [`LAPIS 커넥터 연결됨 (봇: ${bot.name||bot.id})`,`Google: ${{off:'끔',read:'읽기만',chat:'읽기·쓰기(채팅에서 확인 후 적용)',app:'읽기·쓰기(앱에서 승인 후 적용)'}[l.google]||'끔'}`,`일정: ${l.calendar?'켜짐':'꺼짐'} · 할 일: ${l.tasks?'켜짐':'꺼짐'}`,`쓸 수 있는 도구: ${on.join(', ')||'없음'}`,'Google 기능은 PC의 LAPIS 앱이 라피스 계정에 로그인되어 있고, 「내 계정 → Google 연결」에서 Drive·Sheets·Docs 를 켜 둬야 동작해요.'].join('\n');
+    return [`LAPIS 커넥터 연결됨 (봇: ${bot.name||bot.id})`,`Google: ${{off:'끔',read:'읽기만',chat:'읽기·쓰기(채팅에서 확인 후 적용)',app:'읽기·쓰기(앱에서 승인 후 적용)'}[l.google]||'끔'}`,`일정: ${l.calendar?'켜짐':'꺼짐'} · 할 일: ${l.tasks?'켜짐':'꺼짐'}`,`쓸 수 있는 도구: ${on.join(', ')||'없음'}`,'Google 기능은 PC의 LAPIS 앱이 라피스 계정에 로그인되어 있고, 「봇 스튜디오 → 커넥터」의 Google 권한에서 Drive·Sheets·Docs 를 켜 둬야 동작해요.'].join('\n');
   }
 
   return async function handle(req,res,url,{json,readJson}){
