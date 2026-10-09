@@ -3,6 +3,7 @@
 //   ai-office serve [--port N]        대시보드 서버 실행(창 없이)
 //   ai-office open                    서버가 없으면 켜고, 대시보드 창을 연다
 //   ai-office app [--tray]            앱 실행: 엔진과 LAPIS 대시보드를 창 없이 켜고 앱 창을 연다(--tray 는 창 없이 켜기만)
+//                                     LAPIS 에디터가 설치돼 있으면 엔진만 켜고 창은 에디터를 연다(4310 은 에디터 실행본이 쓴다)
 //   ai-office stop                    서버 끄기(엔진·대시보드)
 //   ai-office office list|create|import|remove|restart …
 //   ai-office team   list|add|update|remove|presets --office <id> …   (비서실장 봇도 이 명령으로 부서를 관리한다)
@@ -67,6 +68,12 @@ async function pingDashboard() {
   } catch { return false; }
 }
 
+// LAPIS 에디터(Electron)가 설치돼 있으면 화면은 에디터 하나다. 이 앱이 4310 에 자기 대시보드를 띄우면
+// 에디터가 그것을 자기 실행본으로 알고 써서 Hermes 화면 등이 404 가 된다(2026-10-09). 그래서 엔진만 켠다.
+const editorExe = (env = process.env) => env.LAPIS_EDITOR_EXE || (env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'LAPIS AI', 'LAPIS AI.exe') : '');
+const editorInstalled = () => isWindows && Boolean(editorExe()) && existsSync(editorExe());
+function openEditor() { spawn(editorExe(), [], { detached: true, stdio: 'ignore' }).unref(); }
+
 // LAPIS 대시보드(화면)를 창 없이 켠다. 엔진 주소와 데이터 폴더는 환경 값으로 넘긴다.
 async function ensureDashboard(enginePort) {
   if (await pingDashboard()) return true;
@@ -120,6 +127,7 @@ async function main() {
     case 'app': {
       const f = flags([sub, ...rest].filter(Boolean));
       if (!(await ensureServer(cfg.port))) fail('엔진을 시작하지 못했습니다. 로그: ' + join(LOG_DIR, 'server.log'));
+      if (editorInstalled()) { if (!f.tray) openEditor(); return; }
       const dash = await ensureDashboard(cfg.port);
       if (!dash) { line('LAPIS 화면 파일이 없어 기본 대시보드를 엽니다.'); if (!f.tray) openWindow(`http://127.0.0.1:${cfg.port}/`); return; }
       if (!f.tray) openWindow(`http://127.0.0.1:${DASH_PORT}/`);
@@ -129,7 +137,7 @@ async function main() {
       // 우리 서버로 확인된 포트만 끈다(다른 프로그램이 쓰는 포트는 건드리지 않는다).
       const ports = [];
       if (await ping(cfg.port)) ports.push(cfg.port);
-      if (await pingDashboard()) ports.push(DASH_PORT);
+      if (!editorInstalled() && (await pingDashboard())) ports.push(DASH_PORT);   // 에디터가 있으면 4310 은 에디터 것이라 두고 간다
       if (!ports.length) { line('실행 중인 서버가 없습니다.'); return; }
       if (isWindows) {
         const r = await run('powershell.exe', ['-NoProfile', '-Command', `Get-NetTCPConnection -LocalPort ${ports.join(',')} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`]);

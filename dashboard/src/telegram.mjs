@@ -79,7 +79,7 @@ async function readHermes(home) {
         chatId: row.chat_id == null ? null : String(row.chat_id), threadId: row.thread_id == null ? null : String(row.thread_id), source: 'hermes-state-recorded' }] : [];
     });
   } finally { db.close(); }
-  return { messages, bot: summarize({ id: 'lapis', name: '라피스 · Hermes', username: '@promisr9907_bot', running,
+  return { messages, bot: summarize({ id: 'lapis', name: '라피스 · Hermes', username: botUsername('lapis'), running,
     sourceUpdatedAt: iso(state?.updated_at), status: running === false ? 'stopped' : running === true && connected ? 'running' : 'unknown',
     detail: 'Hermes Telegram 세션 기록. 응답은 저장된 모델 출력이며 전송 확인이 아닙니다. 실행 상태는 저장된 PID의 생존 여부이며 새 수신 증거가 아닙니다.' }, messages) };
 }

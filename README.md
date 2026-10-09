@@ -4,6 +4,9 @@
 
 > 소개 페이지: <https://ciel-worker-api.ej210651392.workers.dev> · 설치 파일(약 1MB): [Releases](../../releases/latest)의 `LAPIS-Setup.exe`
 
+> **화면은 LAPIS 에디터 하나 (v0.5.8~).** 소개 페이지의 「Windows용 다운로드」는 LAPIS 에디터입니다. 이 저장소는 봇과 사무실을 돌리는 **엔진**(127.0.0.1:5000)이고, `LAPIS-Setup.exe` 는 에디터 다음에 설치하는 2단계입니다.
+> 에디터(`%LOCALAPPDATA%\Programs\LAPIS AI`)가 설치돼 있으면 이 앱은 엔진만 켭니다. 4310 대시보드와 창은 에디터에 맡기고, 「LAPIS 열기」를 누르면 에디터가 열립니다.
+
 아래 「AI-Office」 설명은 Claude Code 로 돌아가는 **Claude 사무실**(비서실장 봇과 여러 부서)에 대한 것이며, LAPIS 앱 안의 「사무실」 메뉴에서 그대로 쓸 수 있습니다.
 
 > 휴대폰에서 "행사 기획안 만들어줘" → 비서실장이 접수 → 기획팀·리서치팀·검수팀이 나눠 작업 → 결과 파일이 텔레그램으로 도착.

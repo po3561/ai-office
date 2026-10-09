@@ -73,13 +73,13 @@ test('Hermes log lines become one failure per exhausted retry, network notes and
     'Traceback (most recent call last):',
     '2026-10-08 11:44:31,112 ERROR [s1] agent.conversation_loop: API call failed after 3 retries. Gemini HTTP 503 (UNAVAILABLE): This model is currently experiencing high demand.',
     '2026-10-08 10:13:43,241 ERROR telegram.ext: Network Retry Loop (Bootstrap delete Webhook): Timed out: Timed out.',
-    '2026-10-08 12:38:42,203 WARNING hermes_plugins.telegram_platform.adapter: [Telegram] Blocked unauthorized user 8626716113 in chat -100389',
+    '2026-10-08 12:38:42,203 WARNING hermes_plugins.telegram_platform.adapter: [Telegram] Blocked unauthorized user 5550001111 in chat -100389',
     '2026-10-01 12:38:42,203 ERROR old: ignored because it is older than since',
   ].join('\n');
   const list = O.hermesIncidents(log, { since: Date.parse('2026-10-07T00:00:00') });
   assert.deepEqual(list.map((i) => i.kind), ['provider-busy', 'network', 'blocked']);
   assert.match(list[0].text, /^Gemini HTTP 503/);
-  assert.equal(list[2].user, '8626716113');
+  assert.equal(list[2].user, '5550001111');
 });
 
 test('a single provider failure warns, three in a row after the last reply means the bot cannot answer', () => {
