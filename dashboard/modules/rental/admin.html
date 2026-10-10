@@ -128,26 +128,43 @@
   // 물품 사진 촬영(카메라)·이미지 업로드(갤러리/PC 파일)를 함께 제공하는 위젯.
   // "빠른 등록"과 물품 수정 화면에서 공용으로 쓴다. initialKey가 있으면 시작 사진으로 보여주고,
   // 새로 고르지 않으면 그대로(기존 사진 key) 유지된다.
+  // 사진을 올리는 동안 저장을 누르면 사진 없이 저장되던 문제: ready()가 올리기가 끝날 때까지 기다린다.
   function photoPicker(host, initialKey) {
     let photoKey = initialKey || null;
+    let pending = Promise.resolve();
     const thumb = el('div', { class: 'photos' });
     if (initialKey) thumb.replaceChildren(photos([initialKey]));
+    const state = el('span', { class: 'mut small', role: 'status' });
     const capture = el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true });
     const upload = el('input', { type: 'file', accept: 'image/*', hidden: true });
-    async function handle(fl) {
+    function handle(fl) {
       if (!fl) return;
-      try { const b = await toJpeg(fl); const r = await api('/photo', b, true); photoKey = r.key; thumb.replaceChildren(photos([r.key])); }
-      catch (e) { flash(host, 'err', e.message); }
+      state.textContent = '사진 올리는 중...';
+      pending = (async () => {
+        try { const b = await toJpeg(fl); const r = await api('/photo', b, true); photoKey = r.key; thumb.replaceChildren(photos([r.key])); state.textContent = ''; }
+        catch (e) { state.textContent = ''; flash(host, 'err', '사진을 올리지 못했습니다: ' + e.message); }
+      })();
+      return pending;
     }
-    capture.addEventListener('change', async () => { const f = capture.files[0]; capture.value = ''; await handle(f); });
-    upload.addEventListener('change', async () => { const f = upload.files[0]; upload.value = ''; await handle(f); });
+    capture.addEventListener('change', () => { const f = capture.files[0]; capture.value = ''; handle(f); });
+    upload.addEventListener('change', () => { const f = upload.files[0]; upload.value = ''; handle(f); });
     const node = el('div', {}, thumb,
-      el('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' },
+      el('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center' },
         el('button', { type: 'button', class: 'sec', onclick: () => capture.click() }, '📷 사진 촬영'),
-        el('button', { type: 'button', class: 'sec', onclick: () => upload.click() }, '🖼️ 이미지 업로드')),
+        el('button', { type: 'button', class: 'sec', onclick: () => upload.click() }, '🖼️ 이미지 업로드'), state),
       capture, upload);
-    return { node, getKey: () => photoKey };
+    return { node, getKey: () => photoKey, ready: () => pending };
   }
+  // 저장 버튼: 누르는 동안 막아 두 번 눌러 같은 물품이 두 개 생기지 않게 한다.
+  function busyButton(label, attrs, fn) {
+    const b = el('button', { ...attrs, onclick: async () => {
+      if (b.disabled) return;
+      b.disabled = true; b.textContent = '저장 중...';
+      try { await fn(); } finally { if (b.isConnected) { b.disabled = false; b.textContent = label; } }
+    } }, label);
+    return b;
+  }
+  const digitsOf = (s) => String(s || '').replace(/\D/g, '');
 
   /* ---------- 로그인 ---------- */
   function loginView() {
@@ -178,7 +195,7 @@
   const sidebar = el('aside', { class: 'sidebar', id: 'sidebar' },
     el('div', { class: 'side-head' }, el('b', {}, '무인 창고 운영시스템', el('br'), '관리자'), el('button', { class: 'sec side-close', onclick: () => closeSidebar() }, '✕')),
     sideNav,
-    el('div', { class: 'side-foot' }, el('button', { class: 'sec', onclick: async () => { await api('/logout', {}); loginView(); } }, '로그아웃')));
+    el('div', { class: 'side-foot' }, el('button', { class: 'sec', onclick: async () => { try { await api('/logout', {}); } catch {} loginView(); } }, '로그아웃')));
   const overlay = el('div', { class: 'overlay', id: 'overlay', onclick: () => closeSidebar() });
   function openSidebar() { sidebar.classList.add('open'); overlay.classList.add('show'); }
   function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('show'); }
@@ -194,20 +211,22 @@
     const mc = /^#item=([A-Za-z0-9_-]+)$/.exec(location.hash);
     if (mr) rentalDetail(mr[1]); else if (mc) catalogDetail(mc[1]); else go(tab);
   }
-  function go(k) {
+  function go(k, arg) {
     tab = k; history.replaceState(null, '', location.pathname);
     [...sideNav.children].forEach((b, i) => b.classList.toggle('on', TABS[i][0] === k));
     topbarTitle.textContent = (TABS.find((t) => t[0] === k) || [, , k])[2];
     main.replaceChildren(el('p', { class: 'mut' }, '불러오는 중...'));
-    ({ home: homeView, rentals: rentalsView, events: eventsView, collected: collectedView, catalog: catalogView, settings: settingsView })[k]().catch((e) => main.replaceChildren(msg('err', e.message)));
+    ({ home: homeView, rentals: rentalsView, events: eventsView, collected: collectedView, catalog: catalogView, settings: settingsView })[k](arg).catch((e) => main.replaceChildren(msg('err', e.message)));
   }
 
   /* ---------- 현황 ---------- */
   async function homeView() {
     const s = await api('/summary');
     const c = s.counts;
+    // 숫자 칸을 누르면 그 상태만 걸러 낸 대여 기록으로 간다.
+    const jump = (node, where, filter) => { node.style.cursor = 'pointer'; node.title = '눌러서 보기'; node.addEventListener('click', () => go(where, filter)); return node; };
     const nodes = [
-      el('div', { class: 'stats' }, stat(c.pending, '출고 대기(신청)'), stat(c.out, '대여중'), stat(c.overdue, '연체'), stat(c.dueToday, '오늘 반납 예정'), stat(c.catalog, '등록 물품 종류'), stat(c.photos, '보관 사진')),
+      el('div', { class: 'stats' }, jump(stat(c.pending, '출고 대기(신청)'), 'rentals', '신청'), jump(stat(c.out, '대여중'), 'rentals', '대여중'), jump(stat(c.overdue, '연체'), 'rentals', '연체'), stat(c.dueToday, '오늘 반납 예정'), jump(stat(c.catalog, '등록 물품 종류'), 'catalog'), stat(c.photos, '보관 사진')),
     ];
     if (!s.passwordSet) nodes.unshift(el('div', { class: 'msg err' }, '창고 비밀번호가 아직 없습니다. "설정·내려받기" 탭에서 입력해야 대여자에게 비밀번호가 표시됩니다.'));
     if (!s.telegram) nodes.unshift(el('div', { class: 'msg warn' }, '텔레그램 알림이 설정되지 않았습니다.'));
@@ -225,14 +244,16 @@
   }
 
   /* ---------- 대여 기록 / 상세 ---------- */
-  async function rentalsView() {
+  async function rentalsView(filter) {
     const d = await api('/rentals');
-    const q = el('input', { placeholder: '이름·번호·물품 검색', style: 'width:100%;max-width:320px' });
-    const st = el('select', {}, ['전체', '신청', '대여중', '연체', '반납완료', '취소'].map((s) => el('option', {}, s)));
+    const q = el('input', { placeholder: '이름·전화번호·물품·대여번호 검색', style: 'width:100%;max-width:320px' });
+    const st = el('select', {}, ['전체', '신청', '대여중', '연체', '반납완료', '취소'].map((s) => el('option', { selected: s === filter }, s)));
     const box = el('div');
     const draw = () => {
       const t = q.value.trim().toLowerCase();
-      const rows = d.rentals.filter((r) => (st.value === '전체' || r.status === st.value) && (!t || `${r.name} ${r.rental_no} ${r.items} ${r.region} ${r.phone}`.toLowerCase().includes(t)));
+      // 전화번호는 하이픈 없이 숫자만 넣어도 찾는다.
+      const td = digitsOf(t);
+      const rows = d.rentals.filter((r) => (st.value === '전체' || r.status === st.value) && (!t || `${r.name} ${r.rental_no} ${r.items} ${r.region} ${r.phone}`.toLowerCase().includes(t) || (td.length >= 4 && digitsOf(r.phone).includes(td))));
       box.replaceChildren(rentalTable(rows, '조건에 맞는 기록이 없습니다.'));
     };
     q.addEventListener('input', draw); st.addEventListener('change', draw); draw();
@@ -254,7 +275,7 @@
           el('p', { class: 'mut' }, `목적: ${r.purpose || '-'}`),
           el('p', { class: 'mut small' }, `신청 ${r.created_at} · 수령 ${r.pickup_at} · 반납예정 ${r.return_at} · 출고 ${r.checkout_at || '-'} · 반납 ${r.returned_at || '-'}`),
           r.warn_short_notice ? msg('warn', '수령일 3일 미만으로 신청됨') : null, r.warn_multi_day ? msg('warn', '당일 반납이 아닌 신청') : null,
-          r.note ? el('p', {}, '메모: ' + r.note) : null,
+          noteEditor(no, r.note, host),
           el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
             r.raw_status === '신청' ? act('cancel', '신청 취소', 'danger', '취소 사유를 입력하세요') : null,
             r.raw_status === '대여중' ? act('force-return', '수동 반납 처리', 'sec', '수동 반납 사유를 입력하세요') : null)),
@@ -266,6 +287,14 @@
           i.photos_back.length ? el('div', {}, el('div', { class: 'mut small' }, '반납 사진'), photos(i.photos_back)) : null)),
         el('div', { class: 'card' }, el('h2', {}, '이 건의 기록'), eventTable(d.events)));
     } catch (e) { main.replaceChildren(msg('err', e.message)); }
+  }
+  // 관리자 메모: 이 건에 남길 말(예: 파손 확인, 연락 완료). 서버 경로는 있었지만 화면에 입력칸이 없었다.
+  function noteEditor(no, note, host) {
+    const input = el('input', { value: note || '', maxlength: 500, placeholder: '이 건에 남길 메모', style: 'flex:1;min-width:200px' });
+    const save = busyButton('메모 저장', { class: 'sec' }, async () => {
+      try { await api(`/rentals/${no}/note`, { note: input.value.trim() }); flash(host, 'ok', '메모를 저장했습니다.'); } catch (e) { flash(host, 'err', e.message); }
+    });
+    return el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0' }, el('span', { class: 'mut small' }, '메모'), input, save);
   }
   function eventTable(rows) {
     if (!rows.length) return el('p', { class: 'mut' }, '기록이 없습니다.');
@@ -283,19 +312,31 @@
   async function collectedView() {
     const d = await api('/collected');
     const host = el('div');
-    const rows = d.items.map((i) => el('div', { class: 'card' },
-      el('div', { style: 'display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap' },
-        el('h3', { style: 'margin:0' }, i.name, ' ', el('span', { class: 'mut small' }, `기록 ${i.count}회 · 최근 수량 ${i.lastQty ?? '-'} · ${i.lastCond || ''}`)),
-        i.catalog_code ? el('button', { class: 'sec', onclick: () => catalogDetail(i.catalog_code) }, '물품목록에서 상세보기 (' + i.catalog_code + ')') : el('button', { onclick: () => registerFrom(i, host) }, '물품목록에 등록')),
-      photos(i.photos)));
+    const rows = d.items.map((i) => {
+      const card = el('div', { class: 'card' });
+      card.append(
+        el('div', { style: 'display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap' },
+          el('h3', { style: 'margin:0' }, i.name, ' ', el('span', { class: 'mut small' }, `기록 ${i.count}회 · 최근 수량 ${i.lastQty ?? '-'} · ${i.lastCond || ''}`)),
+          i.catalog_code ? el('button', { class: 'sec', onclick: () => catalogDetail(i.catalog_code) }, '물품목록에서 상세보기 (' + i.catalog_code + ')') : el('button', { onclick: () => registerFrom(i, host, card) }, '물품목록에 등록')),
+        photos(i.photos));
+      return card;
+    });
     main.replaceChildren(host, el('div', { class: 'card' }, el('h2', {}, `사진으로 모은 물품 (${d.items.length}종)`), el('p', { class: 'mut small' }, '대여자가 촬영·입력한 물품이 이름별로 모입니다. 정리되면 "물품목록에 등록"을 눌러 주세요.')), ...rows,
       d.items.length ? null : el('p', { class: 'mut' }, '아직 모인 물품이 없습니다. 첫 대여가 이루어지거나 "물품목록" 탭의 빠른 등록으로 촬영하면 쌓입니다.'));
   }
-  async function registerFrom(i, host) {
-    const cat = prompt('분류를 입력하세요 (예: 음향, 텐트, 의자)', '') ; if (cat === null) return;
-    const qty = prompt('창고에 있는 총수량', String(i.lastQty || 1)); if (qty === null) return;
-    const loc = prompt('보관 위치 (예: A선반)', ''); if (loc === null) return;
-    try { await api('/catalog', { name: i.name, category: cat, total_qty: qty, location: loc, photo: null }); collectedView(); } catch (e) { flash(host, 'err', e.message); }
+  // 물품목록 등록: 예전에는 입력 창(prompt)이 세 번 연달아 떴다. 한 번에 적는 작은 칸으로 바꿨다.
+  function registerFrom(i, host, card) {
+    if (card.querySelector('.reg-form')) return;
+    const f = { cat: el('input', { placeholder: '예: 음향, 텐트, 의자' }), qty: el('input', { type: 'number', min: 0, value: String(i.lastQty || 1) }), loc: el('input', { placeholder: '예: A선반' }) };
+    const form = el('div', { class: 'reg-form', style: 'margin-top:10px;border-top:1px solid var(--line);padding-top:10px' },
+      el('div', { class: 'grid' }, el('div', {}, el('label', {}, '분류'), f.cat), el('div', {}, el('label', {}, '총수량'), f.qty), el('div', {}, el('label', {}, '보관위치'), f.loc)),
+      el('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' },
+        busyButton('물품목록에 등록', {}, async () => {
+          try { await api('/catalog', { name: i.name, category: f.cat.value, total_qty: f.qty.value, location: f.loc.value, photo: null }); await collectedView(); flash(main.firstChild || main, 'ok', `「${i.name}」을(를) 물품목록에 등록했습니다.`); } catch (e) { flash(host, 'err', e.message); }
+        }),
+        el('button', { type: 'button', class: 'sec', onclick: () => form.remove() }, '닫기')));
+    card.append(form);
+    f.cat.focus();
   }
 
   /* ---------- 물품목록 ---------- */
@@ -308,12 +349,15 @@
     const quick = el('div', { class: 'card' }, el('h2', {}, '빠른 등록 (창고에서 사진 찍으며 등록)'),
       el('div', { class: 'grid' }, el('div', {}, el('label', {}, '물품명'), f.name), el('div', {}, el('label', {}, '분류'), f.cat), el('div', {}, el('label', {}, '총수량'), f.qty), el('div', {}, el('label', {}, '보관위치'), f.loc), el('div', {}, el('label', {}, '비고'), f.note)),
       pp.node,
-      el('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, el('button', { onclick: async () => {
+      el('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, busyButton('등록', {}, async () => {
+        if (!f.name.value.trim()) { f.name.focus(); return flash(host, 'err', '물품명을 입력해 주세요.'); }
         try {
+          await pp.ready();
           await api('/catalog', { name: f.name.value, category: f.cat.value, total_qty: f.qty.value, location: f.loc.value, note: f.note.value, photo: pp.getKey() });
-          catalogView();
+          await catalogView();
+          flash(main.querySelector('div') || main, 'ok', `「${f.name.value.trim()}」을(를) 등록했습니다.`);
         } catch (e) { flash(host, 'err', e.message); }
-      } }, '등록')));
+      })));
     const rows = d.items.map((c) => el('tr', { class: 'click', onclick: () => catalogDetail(c.code) },
       el('td', {}, c.photo ? photos([c.photo]) : ''), el('td', { class: 'hide-m' }, c.code), el('td', {}, c.name, c.is_new ? el('span', { class: 'pill', style: 'background:#ffe08a;color:#5c4400;margin-left:6px', title: '출고 시 자동 등록됨. 총수량·분류·위치를 확인하고 비고의 "자동등록" 문구를 지우면 배지가 사라집니다.' }, '신규') : '', c.active ? '' : el('span', { class: 'pill' }, '사용안함')), el('td', { class: 'hide-m' }, c.category || ''),
       el('td', {}, `${c.available}/${c.total_qty}`), el('td', {}, pill(c.status)), el('td', { class: 'hide-m' }, c.location || ''),
@@ -404,15 +448,16 @@
       el('option', { value: '', selected: !c.status_manual }, `자동 (지금은 "${c.status_auto}")`),
       ...CATALOG_STATUSES.map((s) => el('option', { value: s, selected: c.status_manual === s }, s)));
     const pp = photoPicker(host, c.photo);
-    const save = el('button', { onclick: async () => {
+    const save = busyButton('저장', {}, async () => {
       try {
+        await pp.ready();
         await api('/catalog/' + encodeURIComponent(c.code), {
           name: f.name.value, category: f.cat.value, total_qty: f.qty.value, location: f.loc.value, note: f.note.value,
           active: Number(activeSel.value), status: statusSel.value, photo: pp.getKey(),
         });
         catalogDetail(c.code);
       } catch (e) { err.replaceChildren(msg('err', e.message)); }
-    } }, '저장');
+    });
     const cancel = el('button', { class: 'sec', onclick: () => catalogDetail(c.code) }, '취소');
     main.replaceChildren(host,
       el('button', { class: 'sec', onclick: () => go('catalog') }, '← 물품목록'),
@@ -509,6 +554,8 @@
   (async () => {
     try { await api('/summary'); start(); } catch (e) { loginView(); }
   })();
+  // 크게 본 사진은 Esc 로도 닫는다.
+  document.addEventListener('keydown', (e) => { const z = document.getElementById('zoom'); if (e.key === 'Escape' && z.style.display === 'grid') z.style.display = 'none'; });
   window.addEventListener('hashchange', () => {
     if (!root.querySelector('.sidebar')) return;
     const mr = /^#rental=(R-\d{8}-\d+)$/.exec(location.hash); if (mr) return rentalDetail(mr[1]);
