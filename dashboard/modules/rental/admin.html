@@ -165,6 +165,9 @@
     return b;
   }
   const digitsOf = (s) => String(s || '').replace(/\D/g, '');
+  // 반납 예정 시각이 지났지만 날짜가 바뀌지 않아 아직 「연체」가 아닌 대여중 건(연체는 날짜 단위로 정해진다).
+  const pastDue = (r) => r.raw_status === '대여중' && r.status !== '연체' && String(r.return_at) < new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' ');
+  const pastDuePill = (r) => (pastDue(r) ? el('span', { class: 'pill 신청', style: 'margin-left:4px', title: '반납 예정 시각이 지났어요. 내일부터 연체로 바뀝니다.' }, '반납 시간 지남') : null);
 
   /* ---------- 로그인 ---------- */
   function loginView() {
@@ -240,7 +243,7 @@
       el('tbody', {}, rows.map((r) => el('tr', { class: 'click', onclick: () => rentalDetail(r.rental_no) },
         el('td', {}, r.rental_no), el('td', {}, pill(r.status)), el('td', {}, `${r.name}${r.region ? ' (' + r.region + ')' : ''}`), el('td', { class: 'hide-m' }, r.phone),
         el('td', {}, r.items || ''), el('td', { class: 'hide-m' }, r.pickup_at), el('td', {}, r.return_at),
-        el('td', {}, [r.issue ? pill('부족') : null, r.warn_short_notice ? el('span', { class: 'pill', title: '3일 미만 신청' }, '3일미만') : null]))))));
+        el('td', {}, [r.issue ? pill('부족') : null, r.warn_short_notice ? el('span', { class: 'pill', title: '3일 미만 신청' }, '3일미만') : null, pastDuePill(r)]))))));
   }
 
   /* ---------- 대여 기록 / 상세 ---------- */
@@ -264,21 +267,30 @@
     try {
       const d = await api('/rentals/' + no); const r = d.rental;
       const host = el('div');
-      const act = (path, label, cls, ask) => el('button', { class: cls || 'sec', onclick: async () => {
-        const reason = ask ? prompt(ask) : ''; if (ask && reason === null) return;
-        try { await api(`/rentals/${no}/${path}`, { reason }); rentalDetail(no); } catch (e) { flash(host, 'err', e.message); }
+      // 사유는 브라우저 입력창(prompt) 대신 화면 안의 작은 칸에서 받는다.
+      const reasonBox = el('div');
+      const act = (path, label, cls, ask, placeholder) => el('button', { class: cls || 'sec', onclick: () => {
+        const input = el('input', { maxlength: 200, placeholder, style: 'flex:1;min-width:220px' });
+        const go = busyButton(label, { class: cls || '' }, async () => {
+          try { await api(`/rentals/${no}/${path}`, { reason: input.value.trim() }); rentalDetail(no); } catch (e) { flash(host, 'err', e.message); }
+        });
+        reasonBox.replaceChildren(el('div', { class: 'card', style: 'margin:10px 0 0' },
+          el('label', {}, ask),
+          el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' }, input, go, el('button', { type: 'button', class: 'sec', onclick: () => reasonBox.replaceChildren() }, '돌아가기'))));
+        input.focus();
       } }, label);
       main.replaceChildren(host,
         el('button', { class: 'sec', onclick: () => go(tab) }, '← 목록'),
-        el('div', { class: 'card' }, el('h2', {}, r.rental_no, ' ', pill(r.status)),
+        el('div', { class: 'card' }, el('h2', {}, r.rental_no, ' ', pill(r.status), pastDuePill(r)),
           el('p', {}, `${r.name} (${r.region || '-'}) · ${r.phone}`),
           el('p', { class: 'mut' }, `목적: ${r.purpose || '-'}`),
           el('p', { class: 'mut small' }, `신청 ${r.created_at} · 수령 ${r.pickup_at} · 반납예정 ${r.return_at} · 출고 ${r.checkout_at || '-'} · 반납 ${r.returned_at || '-'}`),
           r.warn_short_notice ? msg('warn', '수령일 3일 미만으로 신청됨') : null, r.warn_multi_day ? msg('warn', '당일 반납이 아닌 신청') : null,
           noteEditor(no, r.note, host),
           el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
-            r.raw_status === '신청' ? act('cancel', '신청 취소', 'danger', '취소 사유를 입력하세요') : null,
-            r.raw_status === '대여중' ? act('force-return', '수동 반납 처리', 'sec', '수동 반납 사유를 입력하세요') : null)),
+            r.raw_status === '신청' ? act('cancel', '신청 취소', 'danger', '취소 사유 (기록에 남아요)', '예: 대여자 요청으로 취소') : null,
+            r.raw_status === '대여중' ? act('force-return', '수동 반납 처리', 'sec', '수동 반납 사유 (기록에 남아요. 모자란 물품이 있으면 메모에도 적어 주세요)', '예: 사진 없이 직접 반납 확인') : null),
+          reasonBox),
         ...d.items.map((i) => el('div', { class: 'card' },
           el('h3', {}, i.name, i.extra ? el('span', { class: 'pill' }, '신청 외 추가') : null),
           el('p', { class: 'mut small' }, `신청 ${i.qty_req}개 · 출고 ${i.qty_out ?? '-'}개 (${i.cond_out || '-'}) · 반납 ${i.qty_back ?? '-'}개 (${i.cond_back || '-'})`),
