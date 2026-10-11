@@ -86,6 +86,18 @@ function ensureSaved(folder) {
   return office;
 }
 
+// 화면의 「이 목록으로 확정」: 조직 설정 파일이 없거나(부서 파일에서 읽음) 직전 유효본으로 복원된 사무실을
+// 지금 보이는 부서 목록으로 저장한다. 에이전트 파일·CLAUDE.md 는 건드리지 않는다. 손상된 파일은 덮어쓰지 않는다.
+export function confirmOffice(folder) {
+  need(isDir(folder), '사무실 폴더를 찾을 수 없습니다.', 404);
+  const office = loadOffice(folder);
+  need(office.recovery?.status !== 'damaged', '조직 설정 파일이 손상되어 있어 덮어쓰지 않습니다. 보관함의 백업으로 먼저 복구해 주세요.', 409);
+  const { imported, recovery, ...rest } = office;
+  saveOffice(folder, rest);
+  logChange(folder, '조직 확정', `부서 ${rest.teams.length}개`, '부서 파일에서 읽은 목록을 조직 설정으로 저장');
+  return { teams: rest.teams.length, recovery: loadOffice(folder).recovery };
+}
+
 // ── 변경 이력 ──
 export function logChange(folder, type, name, summary, request = '') {
   const dir = join(folder, '업무데이터', '맞춤설정');

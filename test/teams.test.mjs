@@ -57,3 +57,16 @@ test('직접 쓴 에이전트 파일의 본문을 고치면 원본을 백업한�
   assert.match(body, /새 지침/);
   assert.ok(readdirSync(join(dir, '보관함', '맞춤설정_백업')).some((f) => f.endsWith('_developer.md')));
 });
+
+test('부서 파일에서 읽은 목록을 확정하면 조직 설정 파일이 생기고 경고가 사라진다', () => {
+  const dir = fakeLegacyOffice(join(root, 'confirm'));
+  const claudeFile = join(dir, 'CLAUDE.md');
+  const claude = existsSync(claudeFile) ? readFileSync(claudeFile, 'utf8') : null;
+  assert.equal(T.loadOffice(dir).recovery.status, 'missing');
+  const r = T.confirmOffice(dir);
+  assert.equal(r.teams, 1);
+  assert.notEqual(r.recovery.status, 'missing');
+  assert.deepEqual(r.recovery.recoveredKeys, []);
+  assert.ok(existsSync(join(dir, '.ai-office', 'office.json')));
+  assert.equal(existsSync(claudeFile) ? readFileSync(claudeFile, 'utf8') : null, claude);
+});

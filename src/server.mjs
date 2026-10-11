@@ -11,7 +11,7 @@ import { PRESETS } from './presets.mjs';
 import { claudeInfo, claudeDiagnose, startLogin, logout, startInstall } from './claude.mjs';
 import { listGrants as listDriveGrants, setGrant as setDriveGrant, removeGrant as removeDriveGrant } from './drives.mjs';
 import { listOffices, getOffice, mutable, controllable, isReadonly, removeOffice, createOffice, importOffice, unregisterOffice, closeOffice, checkClosable, isClosable, updateOffice, discover, repairOffices, migrateOffice, relocateOffice, moveCandidates, autoRelink } from './offices.mjs';
-import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, loadOffice, logChange } from './teams.mjs';
+import { listTeams, getTeamDetail, addTeam, updateTeam, removeTeam, confirmOffice, loadOffice, logChange } from './teams.mjs';
 import { createMarket, findSkillDirs, resolveRequest } from './market.mjs';
 import { scanSkills, readChanges } from './skills.mjs';
 import { readStatus, summarize } from './status.mjs';
@@ -247,6 +247,7 @@ route('POST', '/api/open-data', async () => { openInExplorer(DATA_HOME); return 
 route('POST', '/api/offices/:id/teams', async ({ p, body }) => { const o = mutable(p.id); const t = addTeam(o.folder, body); return { team: t, needsRestart: runtime(o).running }; });
 route('PATCH', '/api/offices/:id/teams/:key', async ({ p, body }) => { const o = mutable(p.id); const t = updateTeam(o.folder, p.key, body); return { team: t, needsRestart: runtime(o).running }; });
 route('DELETE', '/api/offices/:id/teams/:key', async ({ p }) => { const o = mutable(p.id); const t = removeTeam(o.folder, p.key); return { team: t, needsRestart: runtime(o).running }; });
+route('POST', '/api/offices/:id/organization/confirm', async ({ p }) => confirmOffice(mutable(p.id).folder));
 
 route('POST', '/api/offices/:id/telegram/token', async ({ p, body }) => tg.saveToken(mutable(p.id).stateDir, body.token));
 route('DELETE', '/api/offices/:id/telegram/token', async ({ p }) => { tg.clearToken(mutable(p.id).stateDir); return { ok: true }; });
