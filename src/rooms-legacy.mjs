@@ -1,7 +1,8 @@
 // 예전 AI-Office 사무실의 텔레그램 방·주제 / 정기 보고 설정을 그대로 읽고 쓴다.
 // 예전 사무실의 텔레그램 플러그인은 이 파일들을 직접 읽는다(형식이 이 프로그램의 새 방식과 다르다).
 //   chats.json     플러그인이 기록: 봇이 본 방과 주제
-//   rooms.json     방 별칭, 주제별 담당 팀(team), 호출어(trigger), 올리기 전 승인(confirmPosts), 마지막 확인 결과(live)
+//   rooms.json     방 별칭, 주제별 담당 팀(team), 호출어(trigger), 올리기 전 승인(confirmPosts),
+//                  누구나 호출(openTrigger: 허용 목록 밖의 사람·봇도 호출어를 붙이면 지시로 받음), 마지막 확인 결과(live)
 //   access.json    groups = 연결된 업무방(requireMention 등)
 //   routines.json  정기 보고(아침·저녁) 받을 곳과 시각,  routines-state.json  마지막 발송 기록
 // 형식이 다르면 아무것도 건드리지 않도록 isLegacy() 로 먼저 구분한다. 담당 팀 이름은 사무실의 부서 목록에서 가져온다.
@@ -117,7 +118,7 @@ export function listRooms(dir, teams = []) {
       botStatus: status, isAdmin: status === 'administrator', canManageTopics: Boolean(live.can_manage_topics ?? c.can_manage_topics),
       memberCount: live.member_count ?? null, linked: Boolean(policy),
       requireMention: policy ? Boolean(policy.requireMention) : null,
-      confirmPosts: Boolean(r.confirmPosts),
+      confirmPosts: Boolean(r.confirmPosts), openTrigger: r.openTrigger === true,
       trigger: typeof r.trigger === 'string' ? r.trigger : DEFAULT_TRIGGER,
       lastSeen: c.last_seen || null, checkedAt: live.at || null, error: live.error || null, topics,
     });
@@ -240,8 +241,10 @@ export function setLinked(dir, teams, roomQ, linked) {
   });
 }
 
+// openTrigger 는 연결된 방에서만 켤 수 있다(플러그인은 연결 안 된 방의 글을 아예 받지 않는다). 끄기는 언제든 된다.
 export function setRoomOptions(dir, teams, roomQ, opts = {}) {
   const room = findRoom(dir, teams, roomQ);
+  if (opts.openTrigger === true) need(room.linked, '먼저 방을 연결하세요.', 409);
   if ('requireMention' in opts) {
     withLock(dir, () => {
       const a = readJson(f(dir).access, null);
@@ -253,6 +256,7 @@ export function setRoomOptions(dir, teams, roomQ, opts = {}) {
   updateRoom(dir, room.id, (x) => ({
     ...x,
     ...('confirmPosts' in opts ? { confirmPosts: Boolean(opts.confirmPosts) } : {}),
+    ...('openTrigger' in opts ? { openTrigger: opts.openTrigger === true } : {}),
     ...('trigger' in opts ? { trigger: String(opts.trigger ?? '').trim().slice(0, 10) } : {}),
     ...('alias' in opts ? { alias: String(opts.alias || '').slice(0, 40) } : {}),
   }));

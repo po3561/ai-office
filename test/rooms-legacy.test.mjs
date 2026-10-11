@@ -68,6 +68,21 @@ test('옵션: 멘션·승인·호출어는 각각 access.json / rooms.json 에 �
   assert.equal('trigger' in json(d, 'rooms.json')[ROOM].topics['149'], false);
 });
 
+test('누구나 호출: rooms.json 의 openTrigger 로 저장되고 허용 목록(access.json)은 그대로다', () => {
+  const d = legacyDir('t3b');
+  assert.equal(L.listRooms(d, TEAMS)[0].openTrigger, false);
+  const r = L.setRoomOptions(d, TEAMS, ROOM, { openTrigger: true });
+  assert.equal(r.openTrigger, true);
+  assert.equal(json(d, 'rooms.json')[ROOM].openTrigger, true);
+  assert.deepEqual(json(d, 'access.json').groups[ROOM].allowFrom, ['5550002222'], '허용 목록을 넓히지 않는다');
+  assert.equal(json(d, 'rooms.json')[ROOM].live.title, '기획부');
+  L.setRoomOptions(d, TEAMS, ROOM, { openTrigger: false });
+  assert.equal(json(d, 'rooms.json')[ROOM].openTrigger, false);
+  L.setLinked(d, TEAMS, ROOM, false);
+  assert.throws(() => L.setRoomOptions(d, TEAMS, ROOM, { openTrigger: true }), /먼저 방을 연결/);
+  L.setRoomOptions(d, TEAMS, ROOM, { openTrigger: false });   // 끄기는 연결이 없어도 된다
+});
+
 test('방 연결·해제는 허용된 계정이 있어야 하고 허용 목록을 복사한다', () => {
   const d = legacyDir('t4');
   L.setLinked(d, TEAMS, ROOM, false);

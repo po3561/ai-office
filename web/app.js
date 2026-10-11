@@ -660,7 +660,8 @@ function legacyRoomsCard(o, d) {
     const newTopic = r.linked && r.isForum ? `<div class="row" style="margin-top:6px"><input type="text" data-new="${esc(r.id)}" maxlength="128" placeholder="새 주제 이름 (예: 물품 대여 신청)" style="flex:1;min-width:160px"><select data-newteam="${esc(r.id)}" style="max-width:200px">${teamOpts(lg.teams, null)}</select><button class="btn sm primary" data-act="lr-topic" data-room="${esc(r.id)}">주제 만들기</button></div>` : '';
     const opts = r.linked ? `<div class="row" style="margin-top:8px">
         <label class="row small" style="gap:6px"><span class="switch"><input type="checkbox" data-change="lr-mention" data-room="${esc(r.id)}"${r.requireMention ? ' checked' : ''}><i></i></span>봇을 부를 때만 응답(@멘션·답장)</label>
-        <label class="row small" style="gap:6px"><span class="switch"><input type="checkbox" data-change="lr-confirm" data-room="${esc(r.id)}"${r.confirmPosts ? ' checked' : ''}><i></i></span>올리기 전 승인 받기</label></div>
+        <label class="row small" style="gap:6px"><span class="switch"><input type="checkbox" data-change="lr-confirm" data-room="${esc(r.id)}"${r.confirmPosts ? ' checked' : ''}><i></i></span>올리기 전 승인 받기</label>
+        <label class="row small" style="gap:6px" title="허용 목록에 없는 방 사람·다른 봇도 호출어를 메시지 맨 앞에 붙이면 지시로 받습니다"><span class="switch"><input type="checkbox" data-change="lr-open" data-room="${esc(r.id)}"${r.openTrigger ? ' checked' : ''}><i></i></span>누구나 호출어로 부를 수 있음</label></div>
       <div class="row" style="margin-top:6px"><span class="small muted">비서실장 호출어(메시지 맨 앞)</span><input type="text" id="lr-trg-${esc(r.id)}" maxlength="10" value="${esc(r.trigger)}" placeholder="없음" style="max-width:90px;text-align:center"><button class="btn sm" data-act="lr-trigger" data-room="${esc(r.id)}">저장</button>
         <span class="small muted">${r.trigger ? `예: ${esc(r.trigger)} 오늘 대여 현황 알려줘` : '기호 없이 내 메시지를 모두 받습니다'}</span></div>` : '';
     return `<div class="room" style="padding:14px 0;border-top:1px solid var(--line)">
@@ -964,6 +965,7 @@ document.addEventListener('change', async (e) => {
   }
   if (el.dataset.change === 'lr-assign') { const r = await doing(null, () => lg('assign', { room: el.dataset.room, topic: el.dataset.topic, team: el.value })); if (r) toast('"' + r.result.name + '" 담당: ' + (r.result.teamName || '없음')); else refresh(); return; }
   if (el.dataset.change === 'lr-mention') { const ok = await doing(null, () => lg('options', { room: el.dataset.room, options: { requireMention: el.checked } })); if (!ok) el.checked = !el.checked; return; }
+  if (el.dataset.change === 'lr-open') { const ok = await doing(null, () => lg('options', { room: el.dataset.room, options: { openTrigger: el.checked } })); if (ok) toast(el.checked ? '이제 방의 누구나 "' + (ok.result.trigger || '카오') + '"로 부르면 받습니다.' : '허용된 계정만 부를 수 있습니다.'); else el.checked = !el.checked; return; }
   if (el.dataset.change === 'lr-confirm') { const ok = await doing(null, () => lg('options', { room: el.dataset.room, options: { confirmPosts: el.checked } })); if (!ok) el.checked = !el.checked; return; }
   if (el.dataset.change === 'lr-rt-target') { if (!el.value) return; const r = await doing(null, () => lg('routinetarget', JSON.parse(el.value))); if (r) { toast('정기 보고를 "' + r.result.room + (r.result.topic ? ' › ' + r.result.topic : '') + '"로 받습니다.'); refresh(); } return; }
   if (el.dataset.change === 'lr-rt-time') { const r = await doing(null, () => lg('routinetime', { id: el.dataset.id, time: el.value })); if (r) { toast('시각을 ' + el.value + '로 바꿨습니다.'); refresh(); } return; }
