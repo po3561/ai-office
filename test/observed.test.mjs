@@ -66,6 +66,22 @@ test('Claude transcripts count each response once, read only appended lines, and
   assert.match(recovered.headline, /다시 답하는 중/);
 });
 
+test('observer reuses a read for a few seconds but fresh:true always rereads', async () => {
+  const c = claudeOffice();
+  const file = join(c.dir, 'main.jsonl');
+  writeFileSync(file, inbound('2026-10-08T00:00:00Z'));
+  let clock = Date.parse('2026-10-08T01:00:00Z');
+  const obs = O.createObserver({ claudeHome: c.claudeHome, now: () => clock });
+  assert.equal((await obs.office(c.office)).inboundAt, '2026-10-08T00:00:00Z');
+  appendFileSync(file, inbound('2026-10-08T00:30:00Z'));
+  clock += 1000;
+  assert.equal((await obs.office(c.office)).inboundAt, '2026-10-08T00:00:00Z');   // 5초 안: 이전 읽기 재사용
+  assert.equal((await obs.office(c.office, { fresh: true })).inboundAt, '2026-10-08T00:30:00Z');
+  appendFileSync(file, inbound('2026-10-08T00:45:00Z'));
+  clock += 6000;
+  assert.equal((await obs.office(c.office)).inboundAt, '2026-10-08T00:45:00Z');   // 5초가 지나면 저절로 다시 읽는다
+});
+
 test('Hermes log lines become one failure per exhausted retry, network notes and blocked senders', () => {
   const log = [
     '2026-10-08 11:43:55,532 ERROR agent.chat_completion_helpers: Streaming failed before delivery: Gemini HTTP 503 (UNAVAILABLE): high demand',

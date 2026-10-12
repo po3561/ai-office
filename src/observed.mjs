@@ -180,7 +180,7 @@ function readHermesDb(Db, file, office) {
 }
 
 // 같은 시점의 결과를 몇 초 동안 다시 쓰고, Claude 대화 기록은 이어 읽기 상태를 기억한다.
-export function createObserver({ claudeHome, now = () => Date.now(), ttlMs = 15000 } = {}) {
+export function createObserver({ claudeHome, now = () => Date.now(), ttlMs = 5000 } = {}) {
   const claudeFiles = new Map();   // 파일 경로 → 이어 읽기 상태
   const memo = new Map();          // 사무실 키 → { at, value }
 
@@ -232,10 +232,11 @@ export function createObserver({ claudeHome, now = () => Date.now(), ttlMs = 150
     return result;
   }
 
-  async function office(o) {
+  // fresh: 「지금 확인」·조작 직후처럼 방금 상태가 필요할 때 재사용을 건너뛴다(이어 읽기 상태는 그대로라 비용은 새로 붙은 줄만큼).
+  async function office(o, { fresh = false } = {}) {
     const key = `${o.kind}:${o.id}:${o.folder}`;
     const hit = memo.get(key);
-    if (hit && now() - hit.at < ttlMs) return hit.value;
+    if (!fresh && hit && now() - hit.at < ttlMs) return hit.value;
     const value = o.kind === 'hermes' ? await hermesOffice(o) : claudeOffice(o);
     for (const e of value.events) { e.botId = o.id; e.botName = o.name; e.success = true; e.modelSource = 'provider'; e.billing ||= 'subscription'; }
     memo.set(key, { at: now(), value });

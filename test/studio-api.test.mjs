@@ -150,4 +150,9 @@ test('bot health API judges every registered office from its records instead of 
   assert.equal(office.running, false);
   assert.ok(office.reasons.some((r) => r.text.startsWith('꺼져 있어요')));
   assert.deepEqual(Object.keys(office.usage).sort(), ['today', 'week']);
+  // 「지금 확인」: 재사용을 건너뛰고 다시 읽어도 같은 모양으로 답한다
+  const fresh = await get('/api/health/bots?fresh=1');
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.json.bots.find((b) => b.id === created.json.id).state, 'off');
+  assert.equal((await get('/api/overview?fresh=1')).status, 200);
 });
