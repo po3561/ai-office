@@ -25,6 +25,8 @@ const DATE_RULES=[
   [new RegExp(`(\\d{4})\\s*[-./년]\\s*(\\d{1,2})\\s*[-./월]\\s*(\\d{1,2})\\s*일?${SFX}`),(m)=>ymd(+m[1],+m[2],+m[3]),4],
   [new RegExp(`(?<![\\d:/.])(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일${SFX}`),(m,b)=>monthDay(+m[1],+m[2],b),3],
   [new RegExp(`(?<![\\d:/.])(\\d{1,2})\\s*[/.]\\s*(\\d{1,2})(?![\\d:/.]|\\s*(?:시|분|%|개|명|원|만|번))${SFX}`),(m,b)=>monthDay(+m[1],+m[2],b),3],
+  // 공문서식 "10. 13.(화)" — 끝에 점이 붙는 꼴.
+  [new RegExp(`(?<![\\d.])(\\d{1,2})\\s*\\.\\s*(\\d{1,2})\\s*\\.(?!\\d)${SFX}`),(m,b)=>monthDay(+m[1],+m[2],b),3],
   [new RegExp(`(?<![가-힣])(내일모레|글피|모레|내일|명일|오늘|금일|당일)${SFX}`),(m,b)=>shift(b,{내일모레:2,글피:3,모레:2,내일:1,명일:1}[m[1]]??0),2],
   [new RegExp(`(다다음\\s*주|다음\\s*주|담주|차주|이번\\s*주)?\\s*([월화수목금토일])\\s*(?:요일|욜)${SFX}`),(m,b)=>{
     const target=WEEK[m[2]],prefix=(m[1]||'').replace(/\s/g,'');
@@ -65,7 +67,8 @@ function takeTime(line){
     const colon=m[3]!==undefined,min=colon?+m[3]:m[5]?30:m[4]?+m[4]:0;
     const hour=hourOf(+m[2],m[1]||lineMer,colon);
     if(hour===null||min>59||(hour===24&&min>0))continue;
-    found.push({index:m.index,len:m[0].length,hour:hour%24,min,suffix:m[6]||''});
+    // "24시 마감"·"자정" 은 그날이 끝나는 때다. 0시로 바꾸면 그날 새벽 일정이 된다.
+    found.push({index:m.index,len:m[0].length,hour:hour===24?23:hour,min:hour===24?59:min,suffix:m[6]||''});
     if(found.length===2)break;
   }
   if(!found.length)return {time:null,text:line};
@@ -83,8 +86,18 @@ const TASKY=/(까지|마감|제출|해야|하기|준비|보내|작성|확인|정
 const EVENTY=/(회의|미팅|약속|생일|휴가|출장|방문|면접|행사|예약|점검|수업|강의|모임|파티|여행|시험|세미나|워크숍|워크샵|검진|진료|병원|치과|수술|발표|공연|결혼|기념일|휴무|연차|반차|당직|회식|상담|인터뷰|교육|훈련|납품|입고|출고|견학|촬영|대여|반납)/;
 const ASKING=/(알려\s?줘|알려\s?주세요|알려\s?줄래|가르쳐\s?줘|보여\s?줘|뭐야|뭐예요|뭐지|언제야|언제예요|검색)/;
 const TAIL=/\s+(있어요?|있음|있습니다|있대|있네|잡혔[다어요]*|예정(?:이야|입니다|이에요)?|이야|입니다|이에요|이다)\s*[.!~]*$/;
-const BULLET=/^(?:[-*•·▪▫◦‣▶▷➤>→]\s*|\d{1,2}[.)]\s+|[①-⑩]\s*|\d{1,2}️?⃣\s*)/;
+const BULLET=/^(?:[-*•·▪▫◦‣▶▷➤>→]\s*|\d{1,2}[.)]\s+(?!\d{1,2}\s*\.(?!\d))|[①-⑩]\s*|\d{1,2}️?⃣\s*)/;
 const NEGATIVE=/(없음|없습니다|없어요|해당\s?없|0\s?건)\s*[.!]*$/;
+// 물음표 뒤에 !·ㅋ 가 붙은 글, "~아닌가요/~할까요" 같은 물음도 질문이다.
+const QUESTION=/([?？][\s!！.~ㅋㅎ]*$)|((아닌가|인가)[요영]?|[할을갈될]까[요영]?|가영|나영)[\s!！.~ㅋㅎ]*$/;
+// 사람마다 가능한 시간을 모으는 글·명단·투표는 일정이 아니다.
+const POLL=/(취합|투표|가능\s?(?:한\s?)?시간|명단|참석\s?여부|설문|신청자)/;
+// 단체방에서 남에게 부탁·호출하는 말은 내 일정이 아니다.
+const REQUEST=/(주세요|주세용|주실\s?수|부탁|해\s?줘|해\s?줄래|드려요|드릴게요|드립니다|할게요|하겠습니다|할래요)/;
+// 시각이 있어도 마감·제출은 할 일이다.
+const DUE=/(마감|제출|납부)/;
+const MAX_TITLE=80;
+const timeCount=line=>[...line.matchAll(TIME_RE)].length;
 const FORCE=/^\[?(?:(일정|약속|스케줄|캘린더)|(할\s?일|todo|to-?do|해야\s?할\s?일))\]?(?=\s|[:：\-–]|$)\s*[:：\-–]?\s*/i;
 
 const norm=s=>String(s).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
@@ -99,7 +112,8 @@ const segment=text=>/\n/.test(text)?text:text.replace(/\s+(?=(?:\d️?⃣|•|\p
 // 메시지 한 통에서 일정·할 일 후보를 뽑는다.
 //  · 날짜나 시각이 있는 줄, "일정/할일" 머리말이 붙은 줄, 목록 머리말(📅 오늘 일정, 📋 할 일) 아래의 목록 줄만 본다. 일반 대화는 건드리지 않는다.
 //  · 봇이 쓴 글(role=assistant)은 일정·할 일 목록처럼 보일 때만 읽는다.
-export function extractItems(text,{at=new Date(),role='user'}={}){
+//  · group=true(단체방의 사람 글): 남의 대화가 섞이므로 그 줄에 날짜가 직접 적혀 있고 회의·마감 같은 말이 있을 때만 본다.
+export function extractItems(text,{at=new Date(),role='user',group=false}={}){
   const base=new Date(at);if(Number.isNaN(base.getTime()))return [];
   const lines=segment(String(text??'').replace(/\r/g,'')).split('\n').map(s=>s.trim()).filter(Boolean).slice(0,60);
   const items=[];let ctx={date:null,mode:null},listed=false;
@@ -113,15 +127,19 @@ export function extractItems(text,{at=new Date(),role='user'}={}){
       const c=/^\[([ xX]?)\]\s*/.exec(line);if(c){bullet=true;if(/x/i.test(c[1]))done=true;line=line.slice(c[0].length);}
       if(line===before)break;
     }
-    line=line.replace(/^\/(?=일정|할)/,'');
+    line=line.replace(/^\/(?=일정|할)/,'').replace(/자정/g,'24시');
     let forced=null;
     const f=FORCE.exec(line);
     if(f){forced=f[1]?'event':'task';line=line.slice(f[0].length);}
-    const question=/[?？]\s*$/.test(line)||ASKING.test(line);
+    const question=QUESTION.test(line)||ASKING.test(line);
     if(question&&!forced)continue;
+    // 표처럼 이어 붙인 글(/ 가 여럿, 시각이 셋 이상)·취합·명단은 건너뛴다.
+    if(!forced&&(POLL.test(line)||(line.match(/\//g)||[]).length>=3||timeCount(line)>=3))continue;
+    if(group&&!forced&&(/@[A-Za-z0-9_]{3,}/.test(line)||REQUEST.test(line)))continue;
 
     const d=takeDate(line,base),t=takeTime(d.text);
-    const title=tidy(t.text);
+    // "준비 일정: …" 처럼 앞에 붙은 짧은 이름표는 뗀다.
+    const title=tidy(t.text).replace(/^[^:：\d]{1,10}[:：]\s*(?=\S{2})/,'');
     const wordOnly=title.replace(HEADER_WORD,'').replace(/(오늘의|오늘|내일|모레|이번|다음|주간|일간|금일)/g,'').replace(/[의은는입니다이에요]/g,'').replace(/[\s\p{P}]+/gu,'');
     // 머리말: "📅 오늘 일정", "할 일:", "일정" … 아래 목록 줄의 기본 날짜·종류가 된다.
     if(!t.time&&((forced&&!title)||(HEADER_WORD.test(title)&&wordOnly.length<=2)||(HEADER_WORD.test(raw)&&/[:：]\s*$/.test(line)&&title.length<=14))){
@@ -136,12 +154,15 @@ export function extractItems(text,{at=new Date(),role='user'}={}){
 
     const inList=listed&&bullet;
     if(!d.date&&!t.time&&!forced&&!inList)continue;
+    if(title.length>MAX_TITLE&&!forced)continue;   // 일정 이름이 아니라 붙여 넣은 글이다
+    if(group&&!forced&&(!d.date||!(EVENTY.test(title)||TASKY.test(title))))continue;
     if(role==='assistant'&&!d.date&&!t.time&&!inList)continue;
     const date=d.date??ctx.date??shift(base,0);
     const deadline=d.deadline||Boolean(t.time?.deadline);
     let kind;
     if(forced)kind=forced;
     else if(deadline)kind='task';
+    else if(DUE.test(title))kind='task';
     else if(t.time)kind='event';
     else if(inList)kind=ctx.mode==='task'?'task':'event';
     else if(TASKY.test(title))kind='task';
@@ -161,10 +182,31 @@ export function extractItems(text,{at=new Date(),role='user'}={}){
   }
   // 봇이 쓴 글은 목록·머리말이 있는 것만 일정으로 본다. ("내일 3시에 알려드릴게요" 같은 대화 한 줄은 제외)
   if(role==='assistant'&&!(listed||items.length>=2))return [];
-  return items;
+  return group?items.slice(0,2):items;
 }
 
 const keyOf=(kind,date,time,title)=>`${kind}|${date}|${time||''}|${norm(title)}`;
+// 같은 날 비슷한 이름("각 부서별 업무보고 마감"·"부서별 업무보고 마감", 고쳐 다시 올린 글)은 같은 일로 본다.
+const bareTitle=t=>String(t||'').replace(/^\d{1,2}:\d{2}\s+/,'');
+const grams=s=>{const out=new Set();for(let i=0;i<s.length-1;i++)out.add(s.slice(i,i+2));return out;};
+// loose: 같은 시각으로 잡힌 것끼리는 짧은 이름("팀 회의" ⊂ "팀 회의 (본관)")도 같은 일로 본다.
+const timeOf=t=>/^(\d{1,2}:\d{2})\s/.exec(String(t||''))?.[1]||'';
+export function similarTitle(a,b,{loose=false}={}){
+  const x=norm(bareTitle(a)),y=norm(bareTitle(b));
+  if(!x||!y)return false;
+  if(x===y)return true;
+  const [short,long]=x.length<=y.length?[x,y]:[y,x];
+  if(short.length>=(loose?2:4)&&long.includes(short))return true;
+  const gs=grams(short),gl=grams(long);
+  if(gs.size<3)return false;
+  let hit=0;for(const g of gs)if(gl.has(g))hit++;
+  return hit/gs.size>=0.7;
+}
+// 자동 등록된 항목이 지금 규칙으로는 잡음인지(정리할 때 쓴다).
+export function isNoiseLine(line){
+  const text=String(line||'');
+  return POLL.test(text)||QUESTION.test(text)||(text.match(/\//g)||[]).length>=3||timeCount(text)>=3||/@[A-Za-z0-9_]{3,}/.test(text)||tidy(text).length>MAX_TITLE;
+}
 const fingerprint=(...parts)=>createHash('sha1').update(keyOf(...parts)).digest('hex').slice(0,20);
 const MAX_PROCESSED=3000,MAX_CREATED=3000,MAX_LOG=30,FIRST_RUN_LOOKBACK_MS=24*3600000;
 
@@ -191,12 +233,30 @@ export function createTelegramSync({tasks,calendar,snapshot,stateFile,now=()=>Da
   const view=state=>({enabled:state.enabled,makeTasks:state.makeTasks,lastRunAt:state.lastRunAt,lastError:state.lastError,changes:state.changes,recent:state.log.slice(0,8)});
 
   async function existingKeys(){
-    const keys=new Set();
+    const keys=new Set(),entries=[];
     try{
-      for(const e of await calendar.all())keys.add(e.allDay?keyOf('event',e.start,'',e.title):keyOf('event',dayKey(new Date(e.start)),clock(new Date(e.start)),e.title));
+      for(const e of await calendar.all()){
+        const date=e.allDay?e.start:dayKey(new Date(e.start)),time=e.allDay?'':clock(new Date(e.start));
+        keys.add(keyOf('event',date,time,e.title));entries.push({type:'event',date,time,title:e.title});
+      }
     }catch{ /* 일정을 못 읽어도 기록된 지문으로 중복을 막는다 */ }
-    try{for(const t of await tasks.list()){if(t.due)keys.add(keyOf('task',t.due,'',t.title));if(!t.done)keys.add(keyOf('open','','',t.title));}}catch{ /* 위와 같다 */ }
+    try{for(const t of await tasks.list()){
+      if(t.due)keys.add(keyOf('task',t.due,'',t.title));if(!t.done)keys.add(keyOf('open','','',t.title));
+      entries.push({type:'task',date:t.due||'',time:'',title:t.title,open:!t.done});
+    }}catch{ /* 위와 같다 */ }
+    keys.entries=entries;
     return keys;
+  }
+  // 이미 있는 것과 같은 일인가: 같은 종류·같은 날(일정은 시각이 겹치면)·비슷한 이름. 아직 안 끝난 비슷한 할 일도 같은 일로 본다.
+  function duplicateOf(entries,w){
+    const time=w.type==='event'&&!w.item.allDay?w.item.time:'';
+    const title=w.title??w.item.title;
+    return entries.some(e=>{
+      if(e.type!==w.type)return false;
+      const sameDay=e.date===w.item.date&&(!time||!e.time||e.time===time);
+      const sameClock=sameDay&&(w.type==='event'?Boolean(time&&e.time===time):Boolean(timeOf(title)&&timeOf(title)===timeOf(e.title)));
+      return similarTitle(e.title,title,{loose:sameClock})&&(sameDay||(w.type==='task'&&e.open));
+    });
   }
 
   async function execute(source){
@@ -216,8 +276,10 @@ export function createTelegramSync({tasks,calendar,snapshot,stateFile,now=()=>Da
       if(m.at<state.since)continue;
       if(m.role!=='user'&&m.role!=='assistant')continue;
       result.scanned++;
-      const who=m.role==='user'?'내 메시지':botName(m.botId)+' 메시지';
-      for(const item of extractItems(m.text,{at:new Date(m.at),role:m.role})){
+      // 단체방(텔레그램 방 ID 가 음수)의 사람 글은 나 말고 다른 사람의 대화도 섞여 있다.
+      const group=m.role==='user'&&/^-\d+$/.test(String(m.chatId??''));
+      const who=m.role==='user'?(group?'텔레그램 방 대화':'내 메시지'):botName(m.botId)+' 메시지';
+      for(const item of extractItems(m.text,{at:new Date(m.at),role:m.role,group})){
         const wants=[];
         if(item.kind==='event'){
           wants.push({type:'event',fp:fingerprint('event',item.date,item.allDay?'':item.time,item.title),key:keyOf('event',item.date,item.allDay?'':item.time,item.title),item});
@@ -227,7 +289,7 @@ export function createTelegramSync({tasks,calendar,snapshot,stateFile,now=()=>Da
           if(known.has(w.fp))continue;
           existing??=await existingKeys();
           // 같은 이름의 할 일이 아직 안 끝나 있으면 매일 새로 만들지 않는다(봇이 "이어서 진행 중" 일을 날마다 올려도 한 개로 유지).
-          if(existing.has(w.key)||(w.type==='task'&&existing.has(keyOf('open','','',w.title)))){known.add(w.fp);continue;}
+          if(existing.has(w.key)||(w.type==='task'&&existing.has(keyOf('open','','',w.title)))||duplicateOf(existing.entries,w)){known.add(w.fp);result.skippedSimilar=(result.skippedSimilar||0)+1;continue;}
           const note=`텔레그램에서 자동 등록 · ${who}`;
           let created;
           try{
@@ -236,6 +298,7 @@ export function createTelegramSync({tasks,calendar,snapshot,stateFile,now=()=>Da
               :await tasks.create({title:w.title,due:w.item.date,owner:'me',notes:w.item.kind==='event'?`${note} · 일정`:`${note}${w.item.time?' · '+w.item.time:''}`,done:w.item.done});
           }catch{continue;}   // 한도 초과 등으로 못 만든 항목은 건너뛰고 다음 항목을 계속 본다
           known.add(w.fp);existing.add(w.key);if(w.type==='task'&&!w.item.done)existing.add(keyOf('open','','',w.title));
+          existing.entries.push({type:w.type,date:w.item.date,time:w.type==='event'&&!w.item.allDay?w.item.time:'',title:w.type==='event'?w.item.title:w.title,open:w.type==='task'&&!w.item.done});
           state.created[w.fp]={type:w.type,id:created.id,at:new Date(now()).toISOString()};
           result.added[w.type==='event'?'events':'tasks']++;state.changes++;
           if(w.type==='event'||w.item.kind==='task')state.log.unshift({at:new Date(now()).toISOString(),kind:w.item.kind,title:w.item.title,date:w.item.date,time:w.item.time||'',from:who});
@@ -251,7 +314,43 @@ export function createTelegramSync({tasks,calendar,snapshot,stateFile,now=()=>Da
     return {...result,...view(state)};
   }
 
+  // 예전 규칙으로 자동 등록된 것 중 잡음(취합 글·질문 등)과 같은 날 비슷한 이름으로 여러 번 들어간 것을 지운다.
+  // 자동 등록한 항목(기록된 ID)만 본다. 사람이 만든 일정·할 일은 건드리지 않는다. dryRun 이면 목록만 돌려준다.
+  async function cleanup({dryRun=true}={}){
+    const state=await load();
+    const mine=new Map(Object.values(state.created).map(c=>[c.type+':'+c.id,c]));
+    const events=(await calendar.all()).filter(e=>mine.has('event:'+e.id));
+    const taskList=(await tasks.list()).filter(t=>mine.has('task:'+t.id));
+    const remove=[];
+    const kept=[];
+    const order=(a,b)=>String(mine.get(a.key)?.at||'').localeCompare(String(mine.get(b.key)?.at||''));
+    const rows=[
+      ...events.map(e=>({key:'event:'+e.id,type:'event',id:e.id,title:e.title,date:e.allDay?e.start:dayKey(new Date(e.start)),time:e.allDay?'':clock(new Date(e.start)),line:/원문: (.*)$/m.exec(e.notes||'')?.[1]||''})),
+      ...taskList.map(t=>({key:'task:'+t.id,type:'task',id:t.id,title:t.title,date:t.due||'',time:'',line:'',done:t.done})),
+    ].sort(order);
+    // 일정과 함께 만든 할 일("23:00 줌회의 …")은 일정이 잡음이면 같이 지운다.
+    const noisyEvents=[];
+    for(const row of rows){
+      const noise=row.type==='event'?isNoiseLine(row.line)||isNoiseLine(row.title):isNoiseLine(row.title)||noisyEvents.some(e=>e.date===row.date&&similarTitle(e.title,row.title));
+      const dup=kept.find(k=>{
+        if(k.type!==row.type||k.date!==row.date||(row.time&&k.time&&k.time!==row.time))return false;
+        const sameClock=row.type==='event'?Boolean(row.time&&k.time===row.time):Boolean(timeOf(row.title)&&timeOf(row.title)===timeOf(k.title));
+        return similarTitle(k.title,row.title,{loose:sameClock});
+      });
+      if(noise||dup){remove.push({type:row.type,id:row.id,title:row.title,date:row.date,time:row.time,reason:noise?'잡음':'비슷한 항목 중복'});if(noise&&row.type==='event')noisyEvents.push(row);}
+      else kept.push(row);
+    }
+    if(!dryRun){
+      for(const r of remove){
+        try{await (r.type==='event'?calendar.remove(r.id):tasks.remove(r.id));}catch{ /* 이미 지워졌거나 읽기 전용이면 넘어간다 */ }
+      }
+    }
+    return {dryRun,removed:remove,kept:kept.length};
+  }
+
   return {
+    // 반영이 돌고 있으면 끝난 뒤에 정리한다.
+    cleanup:options=>(running?running.catch(()=>{}):Promise.resolve()).then(()=>cleanup(options)),
     // 한 번에 하나만 돈다. 동시에 불리면 돌고 있는 결과를 함께 받는다.
     run(source){
       running??=execute(source).finally(()=>{running=null;});
