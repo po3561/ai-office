@@ -93,7 +93,7 @@ test('a single provider failure warns, three in a row after the last reply means
   assert.equal(stuck.state, 'bad');
   const blocked = O.assess({ office, runtime: { running: true }, nowMs, names: { 111: 'AI-Office 봇' }, observed: { replyAt: at(1), incidents: [{ kind: 'blocked', at: at(2), user: '111' }, { kind: 'blocked', at: at(3), user: '222' }] } });
   assert.equal(blocked.state, 'ok');
-  assert.match(blocked.reasons[0].text, /^AI-Office 봇 · 허용 목록에 없는 사용자 1명\(222\)의 메시지를 24시간 2번 무시했어요/);
+  assert.match(blocked.reasons[0].text, /^24시간 동안 AI-Office 봇의 메시지 1번\(다른 봇이라 무시\), 허용 목록에 없는 사용자 1명\(222\)의 메시지 1번을 무시했어요/);
   const off = O.assess({ office, runtime: { running: false, detail: '게이트웨이 꺼짐' }, nowMs, observed: { incidents: [{ kind: 'provider-busy', at: at(3) }] } });
   assert.equal(off.state, 'off');
   const disconnected = O.assess({ office, runtime: { running: true, telegram: 'disconnected' }, nowMs, observed: {} });
@@ -138,4 +138,44 @@ test('Hermes state.db sessions are read as measured usage with call counts and p
   assert.equal(q.bots[0].botName, 'lapis-pilot');
   usage.setPricing({ currency: 'USD', models: [{ provider: 'gemini', model: 'gemini-3.1-flash-lite', inputPerMillion: 1, outputPerMillion: 1, cacheReadPerMillion: 1 }] });
   assert.notEqual(usage.query({}, r.events).totals.cost, 0.0636);   // 직접 정한 단가가 우선
+});
+
+test('an internet outage is one recovered note, not dozens of errors; shutdown noise is ignored', () => {
+  const log = [
+    '2026-10-10 23:03:00,100 ERROR hermes_plugins.telegram_platform.adapter: [Telegram] Failed to connect to Telegram: httpx.ConnectError: All connection attempts failed',
+    '2026-10-10 23:09:00,100 ERROR hermes_plugins.telegram_platform.adapter: [Telegram] Failed to connect to Telegram: httpx.ConnectError: All connection attempts failed',
+    '2026-10-11 01:00:00,100 ERROR telegram.ext: Network Retry Loop (Bootstrap delete Webhook): Failed run number 0 of 0. Aborting.',
+    '2026-10-11 09:00:00,100 ERROR telegram.ext.Updater: Error while calling `get_updates` one more time to mark all fetched updates. Suppressing error to ensure graceful shutdown.',
+    '2026-10-11 09:10:00,100 ERROR gateway.platforms.base: [Telegram] Failed to deliver response after 2 retries: send_path_degraded',
+    '2026-10-11 09:20:00,100 ERROR asyncio: Task exception was never retrieved',
+    "future: <Task finished name='Task-8' coro=<MCPServerTask.run() done> exception=UnicodeEncodeError('ascii', 'Bearer x', 7, 10, 'ordinal not in range(128)')>",
+    'Traceback (most recent call last):',
+    "UnicodeEncodeError: 'ascii' codec can't encode characters in position 7-9: ordinal not in range(128)",
+  ].join('\n');
+  const list = O.hermesIncidents(log, { since: Date.parse('2026-10-10T00:00:00') });
+  assert.deepEqual(list.map((i) => i.kind), ['network', 'network', 'network', 'deliver-failed', 'connector']);
+  assert.match(list[4].text, /영어가 아닌 글자/);
+  const office = { id: 'h', name: 'Hermes', kind: 'hermes' };
+  const nowMs = Date.parse('2026-10-11T12:00:00');
+  const replyAt = new Date(Date.parse('2026-10-11T10:00:00')).toISOString();
+  const r = O.assess({ office, runtime: { running: true, telegram: 'connected' }, nowMs, observed: { replyAt, incidents: list.slice(0, 4), startedAt: '' } });
+  assert.equal(r.state, 'ok');
+  assert.match(r.reasons[0].text, /인터넷 연결이 끊겼던 적이 있어요 · 24시간 2번 · 가장 길게 10월 10일 오후 11:03~10월 10일 오후 11:09\(약 6분\)|인터넷 연결이 끊겼던 적이 있어요 · 24시간 2번/);
+  assert.ok(r.reasons.some((x) => x.tone === 'info' && /텔레그램으로 보내지 못했어요 · 24시간 1번 \(그 뒤로는 정상 전송\)/.test(x.text)));
+  // 커넥터 오류는 마지막 시작 뒤에 났으면 지금 문제, 그 전이면 이미 고쳐진 것
+  const broken = O.assess({ office, runtime: { running: true, telegram: 'connected' }, nowMs, observed: { replyAt, incidents: list, startedAt: new Date(Date.parse('2026-10-11T09:19:00')).toISOString() } });
+  assert.equal(broken.state, 'warn');
+  assert.match(broken.headline, /커넥터\(MCP\) 하나가 시작하지 못해/);
+  const fixed = O.assess({ office, runtime: { running: true, telegram: 'connected' }, nowMs, observed: { replyAt, incidents: list, startedAt: new Date(Date.parse('2026-10-11T11:00:00')).toISOString() } });
+  assert.equal(fixed.state, 'ok');
+});
+
+test('Claude cannot-reach-API messages count as an internet outage, and one recovered failure is only a note', () => {
+  const office = { id: 'o', name: 'Office', kind: 'claude-office' };
+  const nowMs = Date.parse('2026-10-11T06:00:00Z');
+  const net = O.assess({ office, runtime: { running: true }, nowMs, observed: { replyAt: '2026-10-11T05:00:00Z', incidents: [{ kind: 'network', at: '2026-10-10T23:03:00Z', text: "API Error: Can't reach the API server (ENOTFOUND)" }] } });
+  assert.equal(net.state, 'ok');
+  const once = O.assess({ office, runtime: { running: true }, nowMs, observed: { replyAt: '2026-10-11T05:00:00Z', incidents: [{ kind: 'api-error', at: '2026-10-11T01:00:00Z', text: 'API Error: 500' }] } });
+  assert.equal(once.state, 'ok');
+  assert.match(once.reasons[0].text, /그 뒤로는 정상 응답/);
 });

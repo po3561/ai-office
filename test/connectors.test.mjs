@@ -157,3 +157,10 @@ test('서버 시작 때 프로그램 경로가 바뀌었으면 커넥터 설정�
   assert.equal(JSON.parse(readFileSync(f, 'utf8')).mcpServers.lapis.command, process.execPath);
   assert.equal(C.repairConnectors(), false);
 });
+
+test('헤더에 안내 문구(한글)나 빈 토큰을 넣은 커넥터는 거부한다', () => {
+  assert.throws(() => C.cleanCustom({ name: 'github', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer 여기에_GitHub_토큰' } }), /영어가 아닌 글자/);
+  assert.throws(() => C.cleanCustom({ name: 'github', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer ' } }), /토큰이 비어 있어요/);
+  assert.equal(C.cleanCustom({ name: 'github', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer ghp_abc123' } }).headers.Authorization, 'Bearer ghp_abc123');
+  assert.equal(C.headerProblem({ Authorization: 'Bearer 여기에' }) !== '', true);
+});

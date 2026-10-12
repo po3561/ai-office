@@ -9,7 +9,7 @@ import { officeProjectDirs } from './roomlog.mjs';
 
 const DAY = 86400000;
 const KEEP_DAYS = 40;          // 이보다 오래된 대화 기록 파일은 읽지 않는다
-const TAIL_BYTES = 512 * 1024; // 오류 로그는 끝부분만 읽는다
+const TAIL_BYTES = 2 * 1024 * 1024; // 오류 로그는 끝부분만 읽는다(Traceback 이 길어 하루치를 덮으려면 이 정도가 필요하다)
 const CONTEXT_WARN = 150000;   // 한 번 답할 때 다시 읽는 대화 길이(토큰)가 이보다 크면 알린다
 
 const clip = (s, n = 200) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -30,6 +30,8 @@ export function limitText(text) {
 }
 
 const isLimit = (text) => /\blimit\b/i.test(text) && /\breset/i.test(text);
+// 인터넷·DNS 가 안 될 때 남는 기록(텔레그램·AI 서버 공통). 봇 잘못이 아니라 이 PC 의 연결 문제다.
+const NETWORK_RE = /Network Retry Loop|Timed out|ConnectTimeout|ReadTimeout|NetworkError|ConnectError|All connection attempts failed|ENOTFOUND|EAI_AGAIN|getaddrinfo|Can't reach the API server|Network is unreachable|ECONNRESET|ETIMEDOUT/i;
 const channelText = (content) => {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) return content.filter((c) => c && c.type === 'text').map((c) => c.text || '').join('');
@@ -54,7 +56,7 @@ function readClaudeLine(state, line) {
   const m = j.message;
   const text = channelText(m.content);
   if (j.isApiErrorMessage || m.model === '<synthetic>') {
-    if (text) state.incidents.push({ kind: isLimit(text) ? 'limit' : 'api-error', at, text: clip(redact(text)) });
+    if (text) state.incidents.push({ kind: isLimit(text) ? 'limit' : NETWORK_RE.test(text) ? 'network' : 'api-error', at, text: clip(redact(text)) });
     return;
   }
   for (const c of Array.isArray(m.content) ? m.content : []) {
@@ -106,11 +108,17 @@ function tail(file, bytes = TAIL_BYTES) {
 }
 
 // 같은 PC 의 지역 시각으로 남은 "2026-10-08 11:44:31,088 ERROR …" 줄을 사건으로 바꾼다.
+// 줄 아래에 붙는 Traceback·future 줄도 함께 보고 종류를 정한다(커넥터 시작 실패 등은 그 안에만 이유가 있다).
 export function hermesIncidents(text, { since = 0 } = {}) {
-  const out = [];
+  const entries = [];
   for (const line of String(text || '').split(/\r?\n/)) {
     const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),\d+ (ERROR|CRITICAL|WARNING) (.*)$/.exec(line);
-    if (!m) continue;
+    if (m) { entries.push({ m, more: '' }); continue; }
+    const last = entries.at(-1);
+    if (last && last.more.length < 2000) last.more += '\n' + line;
+  }
+  const out = [];
+  for (const { m, more } of entries) {
     const ms = Date.parse(`${m[1]}T${m[2]}`);
     if (!Number.isFinite(ms) || ms < since) continue;
     const at = new Date(ms).toISOString(), msg = m[4];
@@ -121,12 +129,20 @@ export function hermesIncidents(text, { since = 0 } = {}) {
       const http = /HTTP (\d{3})(?: \(([A-Z_]+)\))?/.exec(msg);
       const busy = http && (http[1] === '503' || http[1] === '529' || /high demand|overloaded/i.test(msg));
       const quota = http && http[1] === '429' || /RESOURCE_EXHAUSTED|quota/i.test(msg);
-      out.push({ kind: quota ? 'quota' : busy ? 'provider-busy' : 'reply-failed', at, text: clip(redact(msg.replace(/^.*?API call failed after \d+ retries\.?\s*/i, ''))) });
+      out.push({ kind: quota ? 'quota' : busy ? 'provider-busy' : NETWORK_RE.test(msg) ? 'network' : 'reply-failed', at, text: clip(redact(msg.replace(/^.*?API call failed after \d+ retries\.?\s*/i, ''))) });
       continue;
     }
     // 재시도 중간 기록과 같은 실패의 뒷이야기(스트리밍 실패 등)는 마지막 "failed after" 한 줄로 센다.
     if (/API call failed \(attempt/i.test(msg) || /HTTP (?:5\d\d|429)|high demand|overloaded|RESOURCE_EXHAUSTED/i.test(msg)) continue;
-    if (/telegram\.ext: Network Retry Loop|Timed out|ConnectTimeout|NetworkError/i.test(msg)) { out.push({ kind: 'network', at, text: clip(redact(msg)) }); continue; }
+    // 게이트웨이를 끄거나 다시 켤 때 남는 정리 기록. 받은 지시를 잃지 않는다(다음 시작 때 다시 받는다).
+    if (/graceful shutdown/i.test(msg)) continue;
+    if (/Failed to deliver response|send_path_degraded/i.test(msg)) { out.push({ kind: 'deliver-failed', at, text: clip(redact(msg)) }); continue; }
+    if (/MCPServerTask|mcp_tool/i.test(msg + more)) {
+      const bad = /UnicodeEncodeError|ordinal not in range/i.test(more) ? '헤더·환경 값에 영어가 아닌 글자(예: 「여기에_토큰」 같은 안내 문구)가 들어 있어요' : clip(redact((/\n(\w+(?:Error|Exception)[^\n]*)/.exec(more) || [])[1] || msg), 160);
+      out.push({ kind: 'connector', at, text: bad });
+      continue;
+    }
+    if (NETWORK_RE.test(msg)) { out.push({ kind: 'network', at, text: clip(redact(msg)) }); continue; }
     out.push({ kind: 'error', at, text: clip(redact(msg)) });
   }
   return out;
@@ -211,6 +227,8 @@ export function createObserver({ claudeHome, now = () => Date.now(), ttlMs = 150
       }
     }
     result.incidents = hermesIncidents(tail(join(office.folder, 'logs', 'errors.log')), { since: now() - 8 * DAY });
+    const starts = tail(join(office.folder, 'gateway-starts.log'), 4096).trim().split(/\r?\n/);
+    result.startedAt = iso(Number(starts.at(-1)));
     return result;
   }
 
@@ -239,6 +257,9 @@ const sum = (events, since) => {
 };
 const KIND_TEXT = { 'provider-busy': 'AI 모델 서버가 혼잡해 답을 못 했어요', quota: 'AI 모델 사용 한도에 걸려 답을 못 했어요', 'reply-failed': 'AI 호출이 실패해 답을 못 했어요', 'api-error': 'Claude API 오류로 답을 못 했어요', error: '오류가 기록됐어요' };
 const man = (n) => (n >= 10000 ? `${Math.round(n / 1000) / 10}만` : n.toLocaleString('ko-KR'));
+// 이 PC 의 시각으로 "10월 10일 오후 11:03"
+const clock = (ms) => { const d = new Date(ms), h = d.getHours(); return `${d.getMonth() + 1}월 ${d.getDate()}일 ${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const duration = (ms) => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}시간${m % 60 ? ` ${m % 60}분` : ''}` : `${m}분`; };
 
 // names: 텔레그램 사용자 번호 → 이름(이 PC 의 다른 봇 등). 모르는 번호는 그대로 보여 준다.
 export function assess({ office, runtime = {}, observed = {}, nowMs = Date.now(), names = {} }) {
@@ -263,33 +284,68 @@ export function assess({ office, runtime = {}, observed = {}, nowMs = Date.now()
   }
 
   // 한 번의 실패는 일시적일 수 있다. 마지막 답 이후 연달아 3번 넘게 실패해야 "응답 불가"로 본다.
+  // 그 뒤로 다시 답했고 하루 3번 미만이면 지나간 일이라 알림으로만 둔다(「확인 필요」를 하루 내내 띄우지 않는다).
   const failures = incidents.filter((i) => KIND_TEXT[i.kind] && i.kind !== 'error');
   const afterReply = failures.filter((i) => Date.parse(i.at) > lastReply);
   for (const kind of ['provider-busy', 'quota', 'reply-failed', 'api-error']) {
     const list = failures.filter((i) => i.kind === kind);
     if (!list.length) continue;
     const stuck = afterReply.filter((i) => i.kind === kind).length;
-    const tone = stuck >= 3 ? 'bad' : 'warn';
-    bump(runtime.running ? tone : 'warn');
+    const tone = stuck >= 3 ? 'bad' : stuck || list.length >= 3 ? 'warn' : 'info';
+    if (tone !== 'info') bump(runtime.running ? tone : 'warn');
     const tailText = stuck >= 3 ? ` (마지막 답 이후 연달아 ${stuck}회 — 지금 답하지 못하는 상태)` : stuck ? ' (가장 최근 지시에는 답하지 못했어요)' : ' (그 뒤로는 정상 응답)';
     const hint = kind === 'provider-busy' ? ' · 자주 반복되면 예비 모델을 지정하세요' : kind === 'quota' ? ' · 결제·한도를 확인하세요' : '';
     reasons.push({ tone, at: list.at(-1).at, text: `${KIND_TEXT[kind]} · 24시간 ${list.length}회${tailText}${hint}`, detail: list.at(-1).text || '' });
   }
+  // 인터넷 끊김: 30분 넘게 떨어진 기록은 다른 사건으로 보고, 끊겼던 구간으로 묶어 보여 준다.
   const network = incidents.filter((i) => i.kind === 'network');
   if (network.length) {
+    const spans = [];
+    for (const i of network) {
+      const t = Date.parse(i.at), last = spans.at(-1);
+      if (last && t - last.to <= 30 * 60000) { last.to = t; last.n += 1; } else spans.push({ from: t, to: t, n: 1 });
+    }
     const recent = Date.parse(network.at(-1).at) > lastReply;   // 그 뒤로 답한 적이 있으면 이미 회복된 것
     if (recent) bump('warn');
-    reasons.push({ tone: recent ? 'warn' : 'info', at: network.at(-1).at, text: `텔레그램 서버 연결 시간 초과 24시간 ${network.length}회${recent ? '' : '(그 뒤 회복)'} — 인터넷이 느리거나 끊겼을 때 생겨요`, detail: network.at(-1).text });
+    const longest = spans.reduce((a, b) => (b.to - b.from > a.to - a.from ? b : a));
+    const span = longest.to - longest.from >= 10 * 60000 ? ` · 가장 길게 ${clock(longest.from)}~${clock(longest.to)}(약 ${duration(longest.to - longest.from)})` : '';
+    reasons.push({ tone: recent ? 'warn' : 'info', at: network.at(-1).at,
+      text: recent ? `인터넷(텔레그램·AI 서버) 연결이 안 되고 있어요 — 마지막 기록 ${clock(Date.parse(network.at(-1).at))}${span}`
+        : `인터넷 연결이 끊겼던 적이 있어요 · 24시간 ${spans.length}번${span} — 그 뒤 회복했어요`, detail: network.at(-1).text });
+  }
+  // 답을 만들었지만 텔레그램으로 보내지 못한 경우: 그 답은 사용자에게 가지 않았다.
+  const lost = incidents.filter((i) => i.kind === 'deliver-failed');
+  if (lost.length) {
+    const recent = Date.parse(lost.at(-1).at) > lastReply;
+    if (recent) bump('warn');
+    reasons.push({ tone: recent ? 'warn' : 'info', at: lost.at(-1).at, text: `답을 만들었지만 텔레그램으로 보내지 못했어요 · 24시간 ${lost.length}번${recent ? '' : ' (그 뒤로는 정상 전송)'} — 그 지시는 다시 보내 주세요`, detail: lost.at(-1).text });
+  }
+  // 커넥터(MCP) 시작 실패: 마지막으로 게이트웨이가 켜진 뒤에도 실패했을 때만 지금 문제다.
+  const started = Date.parse(observed.startedAt) || 0;
+  const connector = (observed.incidents || []).filter((i) => i.kind === 'connector' && Date.parse(i.at) >= Math.max(nowMs - 7 * DAY, started - 60000));
+  if (connector.length) {
+    bump('warn');
+    reasons.push({ tone: 'warn', at: connector.at(-1).at, text: `커넥터(MCP) 하나가 시작하지 못해 그 도구를 못 쓰고 있어요 — ${connector.at(-1).text}. 「봇 → 커넥터」에서 값을 고치거나 끄세요`, detail: connector.at(-1).text });
   }
   const errors = incidents.filter((i) => i.kind === 'error');
-  if (errors.length) { bump('warn'); reasons.push({ tone: 'warn', at: errors.at(-1).at, text: `오류 기록 24시간 ${errors.length}건`, detail: errors.at(-1).text }); }
+  if (errors.length) {
+    const recent = errors.filter((i) => Date.parse(i.at) > lastReply).length;
+    if (recent) bump('warn');
+    reasons.push({ tone: recent ? 'warn' : 'info', at: errors.at(-1).at, text: `기타 오류 기록 24시간 ${errors.length}건${recent ? '' : ' (그 뒤로는 정상 응답)'}`, detail: errors.at(-1).text });
+  }
 
   const blocked = incidents.filter((i) => i.kind === 'blocked');
   if (blocked.length) {
     const users = [...new Set(blocked.map((b) => b.user))];
     const strangers = users.filter((u) => !names[u]);
-    const who = [...users.filter((u) => names[u]).map((u) => names[u]), ...(strangers.length ? [`허용 목록에 없는 사용자 ${strangers.length}명(${strangers.join(', ')})`] : [])].join(' · ');
-    reasons.push({ tone: 'info', at: blocked.at(-1).at, text: `${who}의 메시지를 24시간 ${blocked.length}번 무시했어요${strangers.length ? ' — 함께 일할 사람이면 허용 목록에 추가하세요' : ''}`, users });
+    // 이 PC 의 다른 봇(이름을 아는 번호)은 일부러 무시하는 것이라 따로 적는다. 모르는 사람만 허용 목록 안내를 붙인다.
+    const times = (list) => blocked.filter((b) => list.includes(b.user)).length;
+    const known = users.filter((u) => names[u]);
+    const parts = [
+      ...(known.length ? [`${known.map((u) => names[u]).join(', ')}의 메시지 ${times(known)}번(다른 봇이라 무시)`] : []),
+      ...(strangers.length ? [`허용 목록에 없는 사용자 ${strangers.length}명(${strangers.join(', ')})의 메시지 ${times(strangers)}번`] : []),
+    ];
+    reasons.push({ tone: 'info', at: blocked.at(-1).at, text: `24시간 동안 ${parts.join(', ')}을 무시했어요${strangers.length ? ' — 함께 일할 사람이면 허용 목록에 추가하세요' : ''}`, users });
   }
 
   if (runtime.telegram && runtime.telegram !== 'connected') { bump('bad'); reasons.push({ tone: 'bad', text: `텔레그램 연결 상태: ${runtime.telegram}` }); }

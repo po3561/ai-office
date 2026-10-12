@@ -438,5 +438,9 @@
   {
     "method": "PUT",
     "path": "/api/offices/:id/hermes/tools"
+  },
+  {
+    "method": "POST",
+    "path": "/api/offices/:id/organization/confirm"
   }
 ]

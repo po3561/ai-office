@@ -58,6 +58,16 @@ function cleanMap(raw, what, old = {}) {
   return out;
 }
 
+// HTTP 헤더에는 영어·숫자·기호만 들어간다. 「Bearer 여기에_GitHub_토큰」 같은 안내 문구를 그대로 저장하면
+// Hermes 가 커넥터를 시작하다 멈춰(UnicodeEncodeError) 그 도구를 아예 못 쓴다.
+export function headerProblem(headers = {}) {
+  for (const [k, v] of Object.entries(headers)) {
+    if (/[^\x20-\x7e]/.test(v)) return `헤더 「${k}」에 영어가 아닌 글자가 들어 있어요. 안내 문구 대신 실제 토큰을 넣어 주세요.`;
+    if (/^authorization$/i.test(k) && /^\s*(Bearer|token|Basic)?\s*$/i.test(v)) return `헤더 「${k}」에 토큰이 비어 있어요. 「Bearer 」 뒤에 실제 토큰을 넣어 주세요.`;
+  }
+  return '';
+}
+
 export function cleanCustom(raw, old = []) {
   need(raw && typeof raw === 'object', '커넥터 형식이 올바르지 않습니다.');
   const name = String(raw.name || '').trim().toLowerCase();
@@ -69,7 +79,9 @@ export function cleanCustom(raw, old = []) {
     try { u = new URL(String(raw.url).trim()); } catch { u = null; }
     need(u && (u.protocol === 'https:' || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname))), '주소는 https:// 로 시작해야 합니다. (이 PC 안의 서버만 http://127.0.0.1 을 쓸 수 있어요)');
     need(u.href.length <= 500, '주소가 너무 깁니다.');
-    return { name, url: u.href, headers: cleanMap(raw.headers, '헤더', prev.headers) };
+    const headers = cleanMap(raw.headers, '헤더', prev.headers);
+    need(!headerProblem(headers), headerProblem(headers));
+    return { name, url: u.href, headers };
   }
   const command = String(raw.command || '').trim();
   need(command && command.length <= 300 && !/[\r\n\0]/.test(command), '주소(URL) 또는 실행할 명령을 적어 주세요.');
@@ -92,7 +104,10 @@ export function lapisServer(id) {
 function serversOf(id, entry) {
   const out = {};
   if (entry.lapis?.enabled) out[LAPIS] = lapisServer(id);
-  for (const c of entry.custom || []) out[c.name] = c.url ? { url: c.url, ...(Object.keys(c.headers || {}).length ? { headers: c.headers } : {}) } : { command: c.command, args: c.args || [], ...(Object.keys(c.env || {}).length ? { env: c.env } : {}) };
+  for (const c of entry.custom || []) {
+    if (c.url && headerProblem(c.headers)) continue;   // 잘못 저장된 헤더(안내 문구 등)는 봇에 넘기지 않는다
+    out[c.name] = c.url ? { url: c.url, ...(Object.keys(c.headers || {}).length ? { headers: c.headers } : {}) } : { command: c.command, args: c.args || [], ...(Object.keys(c.env || {}).length ? { env: c.env } : {}) };
+  }
   return out;
 }
 
