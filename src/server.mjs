@@ -42,17 +42,23 @@ let updater = createUpdater({ current: pkg.version });
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8' };
 
 // ── 진단 캐시(프로세스 목록 조회는 무거워서 몇 초에 한 번만) ──
-let diag = { at: 0, value: { supported: true, pollers: [] }, busy: null };
+let diag = { at: 0, value: { supported: true, pollers: [] }, busy: null, gen: 0 };
+// 출근·퇴근·재시작처럼 상태를 바꾸는 조작 뒤에는 12초 재사용을 버린다. 안 그러면 화면이 조작 전 상태를 다시 읽는다.
+let diagGen = 0;
 async function diagnostics(force = false) {
   if (!force && Date.now() - diag.at < 12000) return diag.value;
-  if (diag.busy) return diag.busy;
+  if (diag.busy && diag.gen === diagGen) return diag.busy;   // 조작 전에 시작한 조회는 기다리지 않는다
+  const gen = diagGen;
   // 조회가 실패하면(느린 PC 의 시간 초과 등) 직전의 좋은 결과를 유지한다. 실패를 "수신 프로세스 0개"로 보면 근무 중인 사무실을 꺼진 것으로 착각해 감시가 창을 또 띄운다.
-  diag.busy = tg.listPollers().then((v) => {
+  const run = tg.listPollers().then((v) => {
     const keep = v.error && diag.value && !diag.value.error ? { ...diag.value, stale: true } : v;
-    diag = { at: Date.now(), value: keep, busy: null }; return keep;
-  }, () => { diag.busy = null; return diag.value; });
-  return diag.busy;
+    if (diag.busy === run) diag = { at: gen === diagGen ? Date.now() : 0, value: keep, busy: null, gen: diagGen };
+    return keep;
+  }, () => { if (diag.busy === run) diag.busy = null; return diag.value; });
+  diag.busy = run; diag.gen = gen;
+  return run;
 }
+export function invalidateLive() { diagGen++; diag.at = 0; }
 const legitCount = (d) => (d.pollers || []).filter((p) => p.legit).length;
 
 // ── 사무실 요약·상세 ──
@@ -94,8 +100,8 @@ async function detail(o, d) {
 const teamList = (teams) => teams.map((t) => ({ key: t.key, name: t.name, emoji: t.emoji }));
 const pickStatus = (t = {}) => ({ state: t.state || 'idle', task: t.task || '', since: t.since || '', lastDone: t.lastDone || '', lastDoneAt: t.lastDoneAt || '', doneToday: t.doneToday || 0 });
 
-async function overview() {
-  const d = await diagnostics();
+async function overview({ fresh = false } = {}) {
+  const d = await diagnostics(fresh);
   const offices = listOffices().map((o) => summary(o, d));
   return {
     update: updater.view(),
@@ -134,6 +140,7 @@ function openInExplorer(path) {
 
 // ── 경로 → 처리기 ──
 const routes = [];
+const relaunched = new Map();   // 사무실 id → 마지막으로 켜거나 다시 출근시킨 시각(ms)
 const route = (method, pattern, handler) => {
   const keys = [];
   const re = new RegExp('^' + pattern.replace(/:([a-z]+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
@@ -141,7 +148,7 @@ const route = (method, pattern, handler) => {
 };
 
 route('GET', '/api/ping', async () => ({ app: 'ai-office', version: pkg.version }));
-route('GET', '/api/overview', async () => overview());
+route('GET', '/api/overview', async ({ url }) => overview({ fresh: url.searchParams.has('fresh') }));
 // 사무실 방 현황: 모든 봇(LAPIS 봇·Claude 사무실)이 초대되어 있는 방과 주제를 한곳에 모은다(읽기 전용).
 async function roomsOverview() {
   const groups = [];
@@ -462,8 +469,8 @@ export const tgApi = createTgApi();
 export const usage = createUsage({ home: DATA_HOME });
 // 이 프로그램 밖에서 일하는 봇(Claude 사무실·Hermes)은 그 봇이 남긴 기록에서 실제 사용량과 상태를 읽는다.
 const observer = createObserver({ claudeHome: CLAUDE_HOME });
-async function observe(o) {
-  try { return await observer.office(o); }
+async function observe(o, opts) {
+  try { return await observer.office(o, opts); }
   catch (e) { console.error('[ai-office] 봇 기록을 읽지 못했습니다:', o.id, e.message); return { available: false, events: [], incidents: [], error: '이 봇의 기록을 읽지 못했어요.' }; }
 }
 const observedOffices = () => listOffices().filter((o) => isDir(o.folder));
@@ -494,8 +501,9 @@ route('POST', '/api/bots/:id/telegram/rooms/:chat', async ({ p, body }) => bots.
 route('DELETE', '/api/bots/:id/telegram/rooms/:chat', async ({ p }) => { bots.forgetRoom(p.id, p.chat); return { ok: true }; });
 route('POST', '/api/bots/:id/telegram/rooms/:chat/topics/:thread', async ({ p, body }) => bots.setTopic(p.id, p.chat, p.thread, body));
 // 봇 상태: 켜져 있다는 것만이 아니라 실제로 답하고 있는지(한도·오류·지연)를 기록으로 판정한다.
-route('GET', '/api/health/bots', async () => {
-  const d = await diagnostics(), nowMs = Date.now(), out = [];
+route('GET', '/api/health/bots', async ({ url }) => {
+  const fresh = url.searchParams.has('fresh');
+  const d = await diagnostics(fresh), nowMs = Date.now(), out = [];
   // 같은 방에 있는 이 PC 의 다른 봇을 번호 대신 이름으로 보여 준다(토큰 앞부분이 봇 번호).
   const names = {};
   for (const o of listOffices()) { const id = String(summary(o, d).telegram?.masked || '').split(':')[0]; if (/^\d+$/.test(id)) names[id] = `${o.name} 봇`; }
@@ -503,7 +511,10 @@ route('GET', '/api/health/bots', async () => {
     const s = summary(o, d);
     if (!s.exists) { out.push({ id: o.id, name: o.name, kind: o.kind, running: false, state: 'bad', headline: '폴더를 찾을 수 없어요', reasons: [{ tone: 'bad', text: '등록된 폴더에 연결할 수 없어요. 외장 드라이브·폴더 경로를 확인해 주세요.' }], usage: null }); continue; }
     const tgState = o.kind === 'hermes' ? ((readJson(join(o.folder, 'gateway_state.json'), {}).platforms || {}).telegram || {}).state : '';
-    out.push(assess({ office: o, runtime: { running: s.running, detail: s.detail, telegram: s.running ? tgState : '' }, observed: await observe(o), nowMs, names }));
+    let seen = await observe(o, { fresh });
+    // 다시 출근시킨 뒤에는 옛 대화의 길이로 「대화가 길어요」 경고를 띄우지 않는다(새 대화가 첫 답을 남길 때까지 옛 값이 남아 있다).
+    if (seen.context && Date.parse(seen.context.at) < (relaunched.get(o.id) || 0)) seen = { ...seen, context: null };
+    out.push(assess({ office: o, runtime: { running: s.running, detail: s.detail, telegram: s.running ? tgState : '' }, observed: seen, nowMs, names }));
   }
   const ledger = usage.query({ from: new Date(nowMs - 7 * 86400000).toISOString() }, [], { eventsLimit: Infinity }).events;
   for (const b of bots.list()) {
@@ -595,7 +606,14 @@ export function startServer({ port, updater: custom, updateCheck = true } = {}) 
         if (!trusted(req, port)) throw new HttpError(403, '대시보드 화면에서만 조작할 수 있습니다.');
         body = await readBody(req);
       }
-      send(res, 200, (await hit.handler({ p: params, body, url })) ?? { ok: true });
+      const result = (await hit.handler({ p: params, body, url })) ?? { ok: true };
+      if (req.method !== 'GET') {
+        // 상태를 바꾸는 조작이 끝나면 프로세스·기록 재사용을 버려, 바로 이어지는 화면 갱신이 조작 전 상태를 읽지 않게 한다.
+        invalidateLive();
+        const act = /^\/api\/offices\/([^/]+)\/(start|restart)$/.exec(url.pathname);
+        if (act) relaunched.set(decodeURIComponent(act[1]), Date.now() + (act[2] === 'restart' ? 5000 : 0));
+      }
+      send(res, 200, result);
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, e.details === undefined ? { error: e.message } : { error: e.message, details: e.details });
       console.error('[ai-office]', e);
