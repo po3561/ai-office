@@ -154,6 +154,8 @@ export function createDashboardServer(options={}){
       if(url.pathname==='/api/telegram/sync'&&req.method==='GET')return json(res,200,await telegramSync.status());
       if(url.pathname==='/api/telegram/sync'&&req.method==='PUT'){const b=await readJson(req);return json(res,200,await telegramSync.configure({enabled:b.enabled,makeTasks:b.makeTasks}));}
       if(url.pathname==='/api/telegram/sync'&&req.method==='POST'){const result=await telegramSync.run();return json(res,200,result);}
+      // 예전 규칙으로 자동 등록된 잡음·반복 항목 정리. 기본은 미리보기(dryRun), {dryRun:false} 일 때만 지운다.
+      if(url.pathname==='/api/telegram/sync/cleanup'&&req.method==='POST'){const b=await readJson(req);return json(res,200,await telegramSync.cleanup({dryRun:b.dryRun!==false}));}
       if(url.pathname==='/api/drives'&&req.method==='GET')return json(res,200,{drives:await getDrives()});
       // 개인용 연결(물품 대여 등)은 주소가 설정돼 있을 때만 화면에 보인다.
       if(url.pathname==='/api/features'&&req.method==='GET')return json(res,200,{rental:Boolean(rentalUrl),cloud:true});

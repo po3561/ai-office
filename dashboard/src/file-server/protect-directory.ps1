@@ -7,7 +7,10 @@ try {
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
   $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
   $acl = New-Object Security.AccessControl.DirectorySecurity
-  $acl.SetOwner($sid)
+  # Changing the owner needs the "take ownership" right, which a user often lacks on a second drive
+  # (e.g. a folder moved to F: that only grants Modify). Only write the owner when it is not already us.
+  $owner = $directory.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier])
+  if ($owner -ne $sid) { $acl.SetOwner($sid) }
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($identity in @($sid, $systemSid)) {
     $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')

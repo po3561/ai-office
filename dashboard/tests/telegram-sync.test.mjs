@@ -138,3 +138,54 @@ test('서버: /api/telegram 이 새 일정·할 일을 반영하고 /api/telegra
   const saved=JSON.parse(await readFile(join(dir,'telegram-sync.json'),'utf8'));
   assert.equal(saved.enabled,false);
 });
+
+test('단체방 잡담·취합표·질문·부탁은 일정으로 만들지 않는다(2026-10-12 실제 대화)', () => {
+  const group=(text,at=WED)=>extractItems(text,{at,role:'user',group:true}).map(i=>[i.kind,i.date,i.time||'',i.title].join(' '));
+  assert.deepEqual(group('금일 23시 줌 아닌가영?!'),[]);
+  assert.deepEqual(group('@su351221 서기님 오늘이나 내일 최종 회의시간 잡아주세용'),[]);
+  assert.deepEqual(group('✅ 최종회의 가능 시간 취합 ❗️줌회의 기준으로 가능시간 취합 이름/월/화 김성하/ 권오영/23시 이후/16시이후 최주혁/23시 이후/20시 이후'),[]);
+  assert.deepEqual(group('금일 20시에 진행 하는 것으로 하겠습니다!'),[]);
+  assert.deepEqual(group('20시에 회의 제가 들어갈거에요'),[],'날짜가 없는 단체방 글');
+  assert.deepEqual(group('10월 15일 오후 2시 운영위원회 회의'),['event 2026-10-15 14:00 운영위원회 회의'],'날짜·회의가 분명하면 받는다');
+  // 내 개인 대화(단체방 아님)는 예전처럼 받는다.
+  assert.deepEqual(sum('20시에 회의'),['event 2026-10-07 20:00 회의']);
+  assert.deepEqual(sum('이름/월/화 김성하/23시 이후/16시이후 최주혁/20시 이후'),[],'표처럼 붙인 글');
+});
+
+test('"10. 13.(화) 22시 마감" 같은 공문서식 날짜, 24시·자정 마감은 그날 할 일이 된다', () => {
+  assert.deepEqual(sum('준비 일정: 10. 13.(화) 22시 부서별 업무보고 마감'),['task 2026-10-13 22:00 부서별 업무보고 마감']);
+  assert.deepEqual(sum('10/14(수) 자정 — 장기자랑 신청 마감'),['task 2026-10-14 23:59 장기자랑 신청 마감']);
+  assert.deepEqual(sum('10. 14.(수) 24시 신청 마감'),['task 2026-10-14 23:59 신청 마감']);
+  assert.deepEqual(sum('2026. 10. 7.(수) 15시 팀 회의'),['event 2026-10-07 15:00 팀 회의'],'연도가 있는 날짜는 그대로');
+});
+
+test('동기화: 고쳐 다시 올린 글·같은 날 비슷한 이름은 한 번만 만든다', async () => {
+  const {calendar,tasks,messages,sync,at}=await fixture();
+  messages.push({id:'a',botId:'kao',role:'assistant',text:'📌 핵심 • 🗓 10/13(화) 22:00 — 각 부서별 텍스트 업무보고 마감 • 🗓 10/14(수) 자정 — 장기자랑 신청 마감',at:at(30)});
+  messages.push({id:'b',botId:'kao',role:'assistant',text:'📅 준비 일정\n- 10. 13.(화) 22시 부서별 업무보고 마감\n- 10/14 장기자랑 신청 마감',at:at(20)});
+  messages.push({id:'c',botId:'kao',role:'user',text:'내일 오후 3시 팀 회의',at:at(15)});
+  messages.push({id:'d',botId:'kao',role:'user',text:'내일 오후 3시 팀 회의 (본관)',at:at(10)});
+  await sync.run();
+  assert.deepEqual((await tasks.list()).map(t=>t.title).sort(),['15:00 팀 회의','22:00 각 부서별 텍스트 업무보고 마감'.replace(/^22:00 /,''),'장기자랑 신청 마감'].sort());
+  assert.equal((await calendar.all()).length,1);
+});
+
+test('정리: 예전 규칙으로 들어간 잡음·반복 항목만 지우고 사람이 만든 것은 둔다', async () => {
+  const {calendar,tasks,sync,dir}=await fixture();
+  const {writeFile}=await import('node:fs/promises');
+  const mk=async(title,line,hour=23)=>calendar.create({title,allDay:false,start:new Date(2026,9,7,hour,0).toISOString(),end:new Date(2026,9,7,hour+1,0).toISOString(),notes:`텔레그램에서 자동 등록 · 내 메시지\n원문: ${line}`});
+  const poll=await mk('줌회의 기준으로 가능시간 취합 이름/월/화','줌회의 기준으로 가능시간 취합 이름/월/화 김성하/ 23시 이후');
+  const meet=await mk('팀 회의','오늘 23시 팀 회의');
+  const again=await mk('팀 회의 본관','오늘 23시 팀 회의 본관');
+  const mine=await calendar.create({title:'줌회의 가능시간 취합',allDay:true,start:'2026-10-07',end:'2026-10-07'});
+  const task=await tasks.create({title:'23:00 줌회의 기준으로 가능시간 취합 이름/월/화',due:'2026-10-07',owner:'me'});
+  const at='2026-10-07T00:00:00.000Z';
+  await writeFile(join(dir,'sync.json'),JSON.stringify({version:1,enabled:true,makeTasks:true,since:at,processed:[],changes:4,log:[],
+    created:{a:{type:'event',id:poll.id,at},b:{type:'event',id:meet.id,at:'2026-10-07T00:00:01.000Z'},c:{type:'event',id:again.id,at:'2026-10-07T00:00:02.000Z'},d:{type:'task',id:task.id,at}}}));
+  const preview=await sync.cleanup({dryRun:true});
+  assert.deepEqual(preview.removed.map(r=>[r.type,r.reason]).sort(),[['event','비슷한 항목 중복'],['event','잡음'],['task','잡음']]);
+  assert.equal((await calendar.all()).length,4,'미리보기는 지우지 않는다');
+  await sync.cleanup({dryRun:false});
+  assert.deepEqual((await calendar.all()).map(e=>e.id).sort(),[meet.id,mine.id].sort());
+  assert.deepEqual(await tasks.list(),[]);
+});
