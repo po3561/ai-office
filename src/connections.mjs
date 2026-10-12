@@ -108,7 +108,7 @@ export function createConnections({ components, secrets, ollama, fetchImpl = fet
     const om = s.ollama.installed && ollama ? await ollama.models().catch(() => ({ models: [] })) : { models: [] };
     const fix = (ready, reason, action) => ({ ready, reason: ready ? '' : reason, action: ready ? '' : action });
     return {
-      ollama: { ...fix(s.ollama.installed && om.models.length > 0, s.ollama.installed ? '내려받은 모델이 없습니다.' : 'Ollama 가 설치되어 있지 않습니다.', s.ollama.installed ? 'models' : 'install:ollama'), models: om.models.map((m) => m.name) },
+      ollama: { ...fix(s.ollama.installed && om.models.length > 0, s.ollama.installed ? '내려받은 모델이 없습니다.' : 'Ollama 가 설치되어 있지 않습니다.', s.ollama.installed ? 'models' : 'install:ollama'), models: om.models.map((m) => m.name).sort((a, b) => (b === om.active) - (a === om.active)) },
       openai: fix(s.gpt.apiKey.set, 'OpenAI API 키가 없습니다.', 'key:openai'),
       anthropic: fix(s.anthropic.apiKey.set, 'Anthropic API 키가 없습니다.', 'key:anthropic'),
       claude: fix(s.claude.installed && s.claude.loggedIn, s.claude.installed ? 'Claude 에 로그인되어 있지 않습니다.' : 'Claude Code 가 설치되어 있지 않습니다.', s.claude.installed ? 'login:claude' : 'install:claude'),

@@ -1,7 +1,10 @@
 // Ollama(내 PC에서 돌리는 AI): 서버 켜기, 설치된 모델 목록, 모델 내려받기(진행률), 대화.
 // 서버는 항상 이 PC(127.0.0.1:11434) 것만 쓴다.
 import { spawn } from 'node:child_process';
-import { HttpError, need } from './util.mjs';
+import { statfsSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { HttpError, need, readJson, writeJson } from './util.mjs';
 import { normalizeUsage } from './usage.mjs';
 
 export const OLLAMA_URL = process.env.OLLAMA_HOST && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(process.env.OLLAMA_HOST) ? process.env.OLLAMA_HOST : 'http://127.0.0.1:11434';
@@ -17,7 +20,19 @@ export const RECOMMENDED = [
 const MODEL_RE = /^[a-z0-9][a-z0-9._\-/]{0,60}(:[a-zA-Z0-9._\-]{1,40})?$/;
 export const validModel = (name) => MODEL_RE.test(String(name || ''));
 
-export function createOllama({ fetchImpl = fetch, baseUrl = OLLAMA_URL, bin = () => '' } = {}) {
+// 모델이 저장되는 폴더(OLLAMA_MODELS 로 옮겼으면 그 위치). 남은 용량을 확인할 때 쓴다.
+export const modelsDir = () => process.env.OLLAMA_MODELS || join(homedir(), '.ollama', 'models');
+export function diskFreeBytes(dir = modelsDir()) {
+  let d = dir;
+  while (d && !existsSync(d) && dirname(d) !== d) d = dirname(d);
+  try { const s = statfsSync(d); return Number(s.bavail) * Number(s.bsize); } catch { return null; }
+}
+
+// prefsFile: 「이 모델로 쓰기」로 고른 기본 모델을 적어 두는 파일(없으면 기억만 한다).
+export function createOllama({ fetchImpl = fetch, baseUrl = OLLAMA_URL, bin = () => '', prefsFile = '' } = {}) {
+  let activeMem = '';
+  const getActive = () => (prefsFile ? readJson(prefsFile, {}).active || '' : activeMem);
+  const setActive = (name) => { if (prefsFile) writeJson(prefsFile, { ...readJson(prefsFile, {}), active: name || '' }); else activeMem = name || ''; return name || ''; };
   const get = async (path, ms = 4000) => fetchImpl(baseUrl + path, { signal: AbortSignal.timeout(ms) });
 
   async function running() {
@@ -33,10 +48,13 @@ export function createOllama({ fetchImpl = fetch, baseUrl = OLLAMA_URL, bin = ()
     throw new HttpError(503, 'Ollama 서버를 켜지 못했습니다.');
   }
   async function models() {
-    if (!(await running())) return { running: false, models: [] };
+    if (!(await running())) return { running: false, models: [], active: getActive() };
     const r = await get('/api/tags', 5000);
     const j = await r.json();
-    return { running: true, models: (j.models || []).map((m) => ({ name: m.name, size: m.size || 0, modified: m.modified_at || '' })) };
+    const list = (j.models || []).map((m) => ({ name: m.name, size: m.size || 0, modified: m.modified_at || '' }));
+    // 기본 모델이 지워졌거나 없으면 기본값을 비운다(남아 있으면 그대로).
+    const a = getActive();
+    return { running: true, models: list, active: list.some((m) => m.name === a) ? a : '' };
   }
   // 모델 내려받기: /api/pull 의 줄 단위 JSON 진행 상황을 ctx(작업 기록)에 전달한다.
   async function pull(name, ctx) {
@@ -59,6 +77,15 @@ export function createOllama({ fetchImpl = fetch, baseUrl = OLLAMA_URL, bin = ()
     }
     return { name };
   }
+  // 모델 지우기. 이미 없으면(404) 지운 것으로 본다.
+  async function remove(name) {
+    need(validModel(name), '모델 이름이 올바르지 않습니다.', 400);
+    await ensureServer();
+    const res = await fetchImpl(baseUrl + '/api/delete', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: name, name }), signal: AbortSignal.timeout(30000) });
+    if (!res.ok && res.status !== 404) { const j = await res.json().catch(() => ({})); throw new HttpError(502, j.error || `모델을 지우지 못했습니다(응답 ${res.status}).`); }
+    if (getActive() === name) setActive('');
+    return { name };
+  }
   // 한 번 묻고 답 받기(스트리밍 없음). messages: [{role, content}]
   async function chatDetailed({ model, messages, system, timeout = 180000 }) {
     need(validModel(model), '모델 이름이 올바르지 않습니다.', 400);
@@ -70,5 +97,5 @@ export function createOllama({ fetchImpl = fetch, baseUrl = OLLAMA_URL, bin = ()
     return { text: String(j.message?.content || '').trim(), model: j.model || model, usage: normalizeUsage('ollama', j) };
   }
   const chat = async options => (await chatDetailed(options)).text;
-  return { running, ensureServer, models, pull, chat, chatDetailed, baseUrl };
+  return { running, ensureServer, models, pull, remove, getActive, setActive, chat, chatDetailed, baseUrl };
 }
