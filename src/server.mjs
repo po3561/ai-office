@@ -23,7 +23,8 @@ import * as RV from './roomsview.mjs';
 import * as RL from './roomlog.mjs';
 import { createJobs } from './jobs.mjs';
 import { createComponents } from './components.mjs';
-import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED } from './ollama.mjs';
+import { createOllama, RECOMMENDED as OLLAMA_RECOMMENDED, validModel as validOllamaModel, diskFreeBytes } from './ollama.mjs';
+import { createCatalog, buildCards, describeInstalled, pcInfo } from './ollama-catalog.mjs';
 import { createSecrets } from './secrets.mjs';
 import { createConnections } from './connections.mjs';
 import { createTgApi } from './tgapi.mjs';
@@ -372,7 +373,8 @@ route('POST', '/api/market/uninstall', async ({ body }) => { const o = marketTar
 // 설치는 화면에서 사용자가 누를 때만 시작하고, 진행 상황은 작업(jobs)으로 읽는다.
 export const jobs = createJobs();
 export const components = createComponents({ jobs });
-export const ollama = createOllama({ bin: () => cachedOllamaBin });
+export const ollama = createOllama({ bin: () => cachedOllamaBin, prefsFile: join(DATA_HOME, 'ollama.json') });
+export const ollamaCatalog = createCatalog({ cacheFile: join(DATA_HOME, 'ollama-catalog.json') });
 let cachedOllamaBin = '';
 components.detect('ollama').then((d) => { cachedOllamaBin = d.path; }).catch(() => {});
 route('GET', '/api/components', async ({ url }) => ({ components: await components.list({ fresh: url.searchParams.get('fresh') === '1' }) }));
@@ -380,6 +382,69 @@ route('POST', '/api/components/:id/install', async ({ p }) => { const j = compon
 route('GET', '/api/jobs', async () => ({ jobs: jobs.list() }));
 route('GET', '/api/jobs/:id', async ({ p }) => jobs.get(p.id));
 route('GET', '/api/ollama', async () => { const d = await components.detect('ollama'); cachedOllamaBin = d.path; return { installed: d.installed, version: d.version, recommended: OLLAMA_RECOMMENDED, ...(d.installed ? await ollama.models() : { running: false, models: [] }) }; });
+// 로컬 AI 모델 장터: 실시간 목록 → 한국어 설명 카드, 한 번에 설치(Ollama 설치 → 서버 켜기 → 모델 받기), 바꾸기·다시 설치·지우기.
+let pcCache = null;
+const pcNow = async () => { if (!pcCache || Date.now() - pcCache.at > 10 * 60 * 1000) pcCache = { at: Date.now(), value: await pcInfo() }; return pcCache.value; };
+const exactSizes = new Map();   // '이름:태그' → 바이트(레지스트리에서 한 번 읽으면 기억)
+const sizeMiss = new Map();     // 못 읽은 것은 1시간 뒤에 다시 시도
+let ollamaSetupInstalling = false;   // 모델 설치 작업 둘이 동시에 Ollama 를 설치하지 않게
+const ollamaName = (v) => { const n = String(v || '').trim(); need(validOllamaModel(n), '모델 이름이 올바르지 않습니다.', 400); return n; };
+route('GET', '/api/ollama/catalog', async ({ url }) => {
+  const d = await components.detect('ollama'); cachedOllamaBin = d.path;
+  if (d.installed) await ollama.ensureServer().catch(() => {});
+  const [cat, pc, om] = await Promise.all([ollamaCatalog.get({ force: url.searchParams.get('refresh') === '1' }), pcNow(), d.installed ? ollama.models() : { running: false, models: [], active: '' }]);
+  const names = om.models.map((m) => m.name);
+  let items = buildCards(cat.entries, pc, names, Object.fromEntries(exactSizes));
+  // 위쪽 30개와, 크기를 아직 모르는 최신 모델(태그가 latest 뿐인 것)은 실제 크기를 확인한다.
+  const want = items.filter((c, i) => c.best && !c.outdated && (i < 30 || !c.sizeGB)).map((c) => `${c.name}:${c.best}`).filter((n) => !exactSizes.has(n) && !(sizeMiss.get(n) > Date.now()));
+  if (want.length) { await Promise.all(want.map(async (n) => { const b = await ollamaCatalog.exactSize(n); if (b) exactSizes.set(n, b); else sizeMiss.set(n, Date.now() + 3600e3); })); items = buildCards(cat.entries, pc, names, Object.fromEntries(exactSizes)); }
+  // 이름만으로 받을 수 없는(레지스트리에 latest 가 없는) 모델은 목록에서 뺀다.
+  items = items.filter((c) => !(c.best === 'latest' && !exactSizes.has(`${c.name}:latest`) && sizeMiss.has(`${c.name}:latest`)));
+  return {
+    installed: d.installed, version: d.version, running: om.running, active: om.active, pc,
+    source: cat.source, fetchedAt: cat.fetchedAt, error: cat.error || '',
+    mine: om.models.map((m) => ({ ...describeInstalled(m, cat.entries, pc), active: m.name === om.active })),
+    items,
+  };
+});
+route('GET', '/api/ollama/preflight', async ({ url }) => {
+  const name = ollamaName(url.searchParams.get('name'));
+  const d = await components.detect('ollama');
+  const exact = await ollamaCatalog.exactSize(name);
+  const free = diskFreeBytes();
+  const sizeBytes = exact || 0;
+  const needBytes = Math.round(sizeBytes * 1.1) + (d.installed ? 0 : 2e9);
+  const warnings = [];
+  if (free != null && needBytes && free < needBytes) warnings.push(`저장 공간이 부족해요. 필요 약 ${(needBytes / 1e9).toFixed(1)}GB, 남은 공간 ${(free / 1e9).toFixed(1)}GB.`);
+  return { name, sizeBytes, exact: !!exact, diskFreeBytes: free, needsOllamaInstall: !d.installed, ok: !warnings.length, warnings };
+});
+route('POST', '/api/ollama/install', async ({ body }) => {
+  const name = ollamaName(body.name), reinstall = body.reinstall === true, makeActive = body.makeActive !== false;
+  return jobs.start('ollama-setup:' + name, (reinstall ? '모델 다시 설치: ' : '모델 설치: ') + name, async (ctx) => {
+    const d0 = await components.detect('ollama', { fresh: true });
+    const exact = await ollamaCatalog.exactSize(name), free = diskFreeBytes();
+    need(!(exact && free != null && free < exact * 1.1 + (d0.installed ? 0 : 2e9)), `저장 공간이 부족해서 설치를 시작하지 않았어요. 필요 약 ${((exact || 0) / 1e9).toFixed(1)}GB, 남은 공간 ${((free || 0) / 1e9).toFixed(1)}GB.`, 507);
+    need(!jobs.running('component:ollama'), 'Ollama 설치가 이미 진행 중이에요. 끝난 뒤 다시 눌러 주세요.', 409);
+    if (!d0.installed) {
+      need(!ollamaSetupInstalling, '다른 모델을 준비하면서 Ollama 를 설치하는 중이에요. 끝난 뒤 다시 눌러 주세요.', 409);
+      ollamaSetupInstalling = true;
+      try { ctx.step('1단계 · Ollama 설치(내 PC에서 AI를 돌리는 프로그램)'); await components.installWith('ollama', ctx); } finally { ollamaSetupInstalling = false; }
+    }
+    cachedOllamaBin = (await components.detect('ollama', { fresh: true })).path;
+    ctx.step('2단계 · AI 엔진 켜기'); await ollama.ensureServer();
+    if (reinstall) { ctx.step('다시 설치 · 기존 모델 지우기'); await ollama.remove(name); }
+    await ollama.pull(name, ctx);
+    const om = await ollama.models();
+    if (makeActive || !om.active) ollama.setActive(name);
+    return { name, active: ollama.getActive() };
+  });
+});
+route('POST', '/api/ollama/remove', async ({ body }) => { const name = ollamaName(body.name); await ollama.remove(name); return { ok: true, name }; });
+route('POST', '/api/ollama/active', async ({ body }) => {
+  const name = ollamaName(body.name);
+  need((await ollama.models()).models.some((m) => m.name === name), '아직 내려받지 않은 모델이에요. 먼저 설치해 주세요.', 409);
+  return { ok: true, active: ollama.setActive(name) };
+});
 route('POST', '/api/ollama/pull', async ({ body }) => { const name = String(body.name || '').trim(); return jobs.start('ollama-pull:' + name, '모델 받기: ' + name, (ctx) => ollama.pull(name, ctx)); });
 
 // ── 연결 허브: GPT(ChatGPT 로그인·API 키)·Anthropic·Cloudflare 키. 키 값은 응답에 담지 않는다. ──

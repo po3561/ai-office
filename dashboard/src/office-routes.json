@@ -281,6 +281,26 @@
   },
   {
     "method": "GET",
+    "path": "/api/ollama/catalog"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ollama/preflight"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ollama/install"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ollama/remove"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ollama/active"
+  },
+  {
+    "method": "GET",
     "path": "/api/connections"
   },
   {

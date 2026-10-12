@@ -45,7 +45,8 @@ export function createEngines({ ollama, secrets, components, usage, onAccounting
 
   const impl = {
     async ollama({ model, system, messages }) {
-      need(model, 'Ollama 모델을 골라 주세요.');
+      model = model || ollama.getActive?.() || '';   // 비워 두면 연결 허브에서 고른 기본 모델
+      need(model, 'Ollama 모델을 골라 주세요. 연결 허브 「로컬 AI」에서 모델을 고르면 기본 모델로 쓰여요.');
       return ollama.chatDetailed ? ollama.chatDetailed({ model, system, messages }) : ollama.chat({ model, system, messages });
     },
     async openai({ model, system, messages }) {

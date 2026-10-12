@@ -1,6 +1,7 @@
 // 연결 허브: Claude · GPT · Google · 로컬 AI · Hermes · API 키를 한 화면에서 연결하고 상태를 본다.
 import {q,node,put,button,pill,link,api,registerPage,toast,errorText,doing,confirmDialog,input} from './ui.js';
 import {eng,watchJob,progressBox,installComponent} from './platform.js';
+import {mountLocalAi} from './models.js';
 
 function card(title,sub,status,...body){
   const c=node('section','card hub-card');
@@ -31,11 +32,10 @@ function keyForm(name,label,hint,state,refresh){
 
 async function render(){
   const root=q('#hub-body');
-  let s,comps,cloud,om;
+  let s,comps,cloud;
   try{[s,comps]=await Promise.all([eng('/api/connections'),eng('/api/components')]);}
   catch(e){root.replaceChildren(node('p','banner bad','앱 엔진에 연결하지 못했어요: '+errorText(e)));return;}
   cloud=await api('/api/cloud/state').catch(()=>({signedIn:false}));
-  om=await eng('/api/ollama').catch(()=>({installed:false,models:[],recommended:[]}));
   const det=id=>comps.components.find(c=>c.id===id)||{installed:false};
   const refresh=()=>render();
   const grid=node('div','grid cols-2');
@@ -63,22 +63,12 @@ async function render(){
   grid.append(card('Google (라피스 계정)','캘린더·드라이브·문서·시트·메일을 연결해요. 파일을 바꾸는 작업은 항상 미리보기와 승인을 거쳐요.',badge(cloud.signedIn,cloud.user?.email||'로그인됨','로그인 필요'),
     put(node('div','row'),link(cloud.signedIn?'Google 서비스 설정 →':'라피스 계정 로그인 →','#account','btn primary'),link('캘린더 연동 →','#calendar','btn sm'))));
 
-  // 로컬 AI
-  const ob=[];
-  if(!om.installed)ob.push(installBar('ollama','Ollama',det('ollama'),refresh));
-  else{
-    ob.push(node('p','small muted',om.running?`실행 중 · v${om.version}`:`설치됨 · v${om.version} (쓸 때 자동으로 켜져요)`));
-    const list=node('div','chips');
-    for(const m of om.models)list.append(put(node('span','chip on'),node('b','',m.name)));
-    if(!om.models.length)list.append(node('p','small muted','내려받은 모델이 아직 없어요.'));
-    ob.push(list);
-    const prog=progressBox(),sel=node('select');
-    for(const r of om.recommended){const o=node('option','',`${r.name} — ${r.label} (${r.size})`);o.value=r.name;sel.append(o);}
-    const custom=input({placeholder:'다른 모델 이름 (선택)',maxLength:60});
-    const pull=button('받기',async()=>{const name=custom.value.trim()||sel.value;pull.disabled=true;try{const job=await eng('/api/ollama/pull',{method:'POST',body:{name}});prog.update(job);const done=await watchJob(job.id,j=>prog.update(j));if(done.state==='error')throw new Error(done.error);toast('모델을 받았어요: '+name);refresh();}catch(e){toast(errorText(e),true);}finally{pull.disabled=false;}},'btn primary');
-    ob.push(put(node('div','row wrap'),sel,custom,pull),prog.box);
-  }
-  grid.append(card('로컬 AI (Ollama)','내 PC에서 직접 돌리는 무료 AI. 인터넷 없이도, 요금 없이도 써요.',badge(om.installed&&om.models.length>0,`모델 ${om.models.length}개`,om.installed?'모델 필요':'설치 필요'),...ob));
+  // 로컬 AI: 실시간 모델 장터(3D 카드). 목록을 받는 동안 다른 카드가 늦어지지 않게 따로 채운다.
+  const laiStatus=node('span'),laiHost=node('div','lai-host');
+  put(laiStatus,pill('확인 중'));
+  const laiCard=card('로컬 AI','내 PC에서 돌리는 무료 AI',laiStatus,laiHost);
+  laiCard.classList.add('wide');grid.append(laiCard);
+  mountLocalAi(laiHost,{onData(d){laiStatus.replaceChildren(badge(d.mine.length>0,`모델 ${d.mine.length}개`,d.installed?'모델 필요':'설치 필요'));}});
 
   // Hermes
   grid.append(card('Hermes','스스로 배우는 개인 비서 에이전트.',badge(s.hermes.installed,'v'+s.hermes.version,'설치 필요'),

@@ -175,23 +175,26 @@ export function createComponents({ jobs, fetchImpl = fetch, toolsDir = TOOLS_DIR
     },
   };
 
+  // 이미 돌고 있는 작업(ctx) 안에서 설치한다. 모델 한 번에 설치처럼 여러 단계를 한 작업으로 묶을 때 쓴다.
+  async function installWith(id, ctx) {
+    need(INSTALLERS[id], '알 수 없는 구성 요소입니다.', 404);
+    const before = await detect(id, { fresh: true });
+    if (before.installed) { ctx.log(`이미 설치되어 있습니다 (${before.version}).`); return before; }
+    await INSTALLERS[id](ctx);
+    forget(id);
+    if (id === 'claude') { try { await (await import('./claude.mjs')).claudeInfo({ fresh: true }); } catch { } }
+    const after = await detect(id, { fresh: true });
+    need(after.installed, `${META[id].name} 설치를 마쳤지만 아직 찾을 수 없습니다. 앱을 다시 시작하면 인식될 수 있습니다.`, 500);
+    onChange(id, after);
+    ctx.log(`${META[id].name} ${after.version} 설치 확인.`);
+    return after;
+  }
   function install(id) {
     need(INSTALLERS[id], '알 수 없는 구성 요소입니다.', 404);
-    return jobs.start('component:' + id, `${META[id].name} 설치`, async (ctx) => {
-      const before = await detect(id, { fresh: true });
-      if (before.installed) { ctx.log(`이미 설치되어 있습니다 (${before.version}).`); return before; }
-      await INSTALLERS[id](ctx);
-      forget(id);
-      if (id === 'claude') { try { await (await import('./claude.mjs')).claudeInfo({ fresh: true }); } catch { } }
-      const after = await detect(id, { fresh: true });
-      need(after.installed, `${META[id].name} 설치를 마쳤지만 아직 찾을 수 없습니다. 앱을 다시 시작하면 인식될 수 있습니다.`, 500);
-      onChange(id, after);
-      ctx.log(`${META[id].name} ${after.version} 설치 확인.`);
-      return after;
-    });
+    return jobs.start('component:' + id, `${META[id].name} 설치`, (ctx) => installWith(id, ctx));
   }
 
-  return { detect, list, install, extraPath, forget, ids: ORDER };
+  return { detect, list, install, installWith, extraPath, forget, ids: ORDER };
 }
 
 export const _test = { semver };
