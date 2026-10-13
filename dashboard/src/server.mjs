@@ -19,6 +19,9 @@ import {createFileServerManager} from './file-server/manager.mjs';
 import {createFileHost} from './file-server/host.mjs';
 import {createFileServerRoutes,startAutoResume} from './file-server/routes.mjs';
 import {pickFolderNative} from './file-server/pick-folder.mjs';
+import {createMailService} from './mail/service.mjs';
+import {createMailRoutes} from './mail/routes.mjs';
+import {localConfig} from './config.mjs';
 
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const OFFICE_ROUTES=JSON.parse(readFileSync(join(ROOT,'src/office-routes.json'),'utf8')).map(r=>({
@@ -107,6 +110,9 @@ export function createDashboardServer(options={}){
   const fileManager=options.fileManager||createFileServerManager({dataDir:fileData,vault:createVault(join(fileData,'host-vault.bin'),options.vaultCrypto||dpapi),
     pickFolder:options.pickFolder||pickFolderNative,onStart:(config,changed)=>fileHost.start(config,changed),onStop:()=>fileHost.stop(),hostStats:()=>fileHost.stats?.()});
   const fileRoutes=createFileServerRoutes({manager:fileManager,cloud,auditDir:join(fileData,'audit')});
+  // 메일 브리지: 이미 쓰는 메일 계정(IMAP/SMTP·Outlook)을 이 PC 에서 연결한다. 비밀번호는 금고(DPAPI)에만 둔다.
+  const mail=options.mail||createMailService({dataDir,vault,cloud,outlookClientId:String(localConfig().outlookClientId||process.env.LAPIS_OUTLOOK_CLIENT_ID||''),watch:options.mailWatch!==false});
+  const mailRoutes=createMailRoutes({service:mail});
   const sessions=new RentalSessions();
   const getTelegram=options.telegramSnapshot||(()=>import('./telegram.mjs').then(m=>m.telegramSnapshot()));
   // 텔레그램 대화에서 일정·할 일을 찾아 캘린더와 할 일에 자동으로 반영한다(읽기만 한다). 기록은 계정마다 따로 둔다.
@@ -138,6 +144,7 @@ export function createDashboardServer(options={}){
       if(await extra(req,res,url,{json,readJson,readRaw:(request,limit)=>readLimited(request,limit),port}))return;
       if(await connectors(req,res,url,{json,readJson}))return;
       if(await fileRoutes(req,res,url,{json,readJson}))return;
+      if(await mailRoutes(req,res,url,{json,readJson}))return;
       if(url.pathname==='/api/overview'&&req.method==='GET'){
         if(!overviewCache||Date.now()-overviewCache.at>5000){
           overviewPending??=Promise.all([safeJson(officeUrl+'/api/overview'),safeJson(rentalUrl+'/list/data')])
@@ -218,6 +225,8 @@ export function createDashboardServer(options={}){
   });
   server.fileServer={manager:fileManager,cloud};
   server.telegramSync=telegramSync;
+  server.mail=mail;
+  server.on('close',()=>mail.stop?.());
   return server;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
@@ -227,6 +236,8 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
   server.listen(port,'127.0.0.1',()=>{
     console.log('LAPIS Office: http://127.0.0.1:'+port);
     startAutoResume({...server.fileServer,log:m=>console.log(m)});
+    // 연결한 메일 계정의 새 메일 감시(IDLE)·5분 동기화·예약 메일 보내기.
+    server.mail.start();
   });
   // 화면이 닫혀 있어도 1분마다 텔레그램에서 새 일정·할 일을 찾아 반영한다. (로그인 전에는 건너뜀)
   const syncTimer=setInterval(()=>server.telegramSync.run().catch(()=>undefined),60000);
