@@ -33,6 +33,9 @@ export const CLOUD_ROUTES=[
   ['GET',/^\/memories$/],['POST',/^\/memories$/],['POST',new RegExp('^/memories/'+ID+'/retract$')],['GET',new RegExp('^/memories/'+ID+'/history$')],
   ['GET',/^\/core-link\/consciousness$/],
   ['GET',/^\/training\/(readiness|fine-tune\/jobs|dataset\.jsonl)$/],['POST',/^\/training\/fine-tune$/],
+  // 그룹웨어: 요금제 판정(메일 브리지가 10분마다 읽음)과 메일 계정 표시 정보(주소만, 비밀번호 없음).
+  ['GET',/^\/lapis\/entitlements$/],
+  ['GET',/^\/lapis\/gw\/mail\/accounts$/],['POST',/^\/lapis\/gw\/mail\/accounts$/],['DELETE',/^\/lapis\/gw\/mail\/accounts\/[A-Za-z0-9_-]{1,64}$/],
 ];
 export const cloudRouteAllowed=(method,path)=>CLOUD_ROUTES.some(([m,re])=>m===method&&re.test(path));
 const FILE_SERVER_PATH=/^\/(?:file-servers(?:\/[^?#]*)?|file-server-invitations\/redeem)(?:\?[^#]*)?$/;
